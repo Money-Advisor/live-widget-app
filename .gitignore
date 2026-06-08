@@ -1,0 +1,15 @@
+# Build artifacts — never commit the exe/installer (host on GitHub Releases)
+dist/
+build/
+installer/Output/
+*.spec
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+Thumbs.db
+.DS_Store
