@@ -1,6 +1,6 @@
 # Nexcall Desktop Widget
 
-PyQt6 desktop call-compliance widget (Phase 3). The agent logs in, the widget
+PyQt6 desktop call-compliance widget. The agent logs in, the widget
 loads the company's compliance config, records mic + speaker audio to the
 recording server, and shows live compliance alerts pushed back over the same
 WebSocket. Closes to the Windows system tray.
@@ -59,9 +59,3 @@ python build_all.py
 `assets/` (the login page) is bundled with the binary; `main.py` resolves it via
 `resource_path()` (PyInstaller `_MEIPASS`-aware).
 
-## Constraints preserved (CLAUDE.md §14)
-
-Binary packet framing, WAV `writeframes()`, the identify → session_start → start
-→ audio → stop → session_end handshake, and QThread-only audio capture are all
-unchanged. UI updates from the receiver thread go through `QTimer.singleShot`.
-spaCy is never imported here (server-side only).
