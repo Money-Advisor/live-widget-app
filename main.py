@@ -592,8 +592,8 @@ class ComplianceAlertPanel(QFrame):
         head.setSpacing(8)
         self._heading = QLabel("COMPLIANCE")
         self._heading.setStyleSheet(
-            f"font-size:11px; font-family:{FF}; font-weight:800;"
-            " color:#9CA0C4; letter-spacing:1.5px;")
+            f"background:transparent; font-size:11px; font-family:{FF};"
+            " font-weight:800; color:#9CA0C4; letter-spacing:1.5px;")
         head.addWidget(self._heading)
         head.addStretch(1)
         self._count = QLabel("0")
@@ -693,7 +693,10 @@ class SummaryScreen(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedWidth(340)
-        self.setStyleSheet("QFrame { background:white; border-radius:18px; }")
+        self.setObjectName("summaryCard")
+        # scope to this frame only — bare "QFrame" cascades to every child
+        # (QLabel inherits QFrame, so labels would get white boxes)
+        self.setStyleSheet("QFrame#summaryCard { background:white; border-radius:18px; }")
         lay = QVBoxLayout(self)
         lay.setContentsMargins(24, 24, 24, 24)
         lay.setSpacing(10)
@@ -1091,7 +1094,9 @@ class MainWindow(QMainWindow):
         # ── FRONT CARD ────────────────────────────────────────
         self._front_card = QFrame()
         self._front_card.setFixedWidth(340)
-        self._front_card.setStyleSheet("QFrame { background:white; border-radius:18px; }")
+        self._front_card.setObjectName("frontCard")
+        self._front_card.setStyleSheet(
+            "QFrame#frontCard { background:white; border-radius:18px; }")
         front_lay = QVBoxLayout(self._front_card)
         front_lay.setSpacing(10)
         front_lay.setContentsMargins(24, 24, 24, 24)
@@ -1182,7 +1187,9 @@ class MainWindow(QMainWindow):
         # ── SETTINGS CARD (audio + advanced only) ─────────────
         self._settings_card = QFrame()
         self._settings_card.setFixedWidth(340)
-        self._settings_card.setStyleSheet("QFrame { background:white; border-radius:18px; }")
+        self._settings_card.setObjectName("settingsCard")
+        self._settings_card.setStyleSheet(
+            "QFrame#settingsCard { background:white; border-radius:18px; }")
         self._settings_card.setVisible(False)
         settings_lay = QVBoxLayout(self._settings_card)
         settings_lay.setSpacing(10)
@@ -1265,7 +1272,8 @@ class MainWindow(QMainWindow):
         # ── PILL SIDEBAR ──────────────────────────────────────
         pill = QFrame()
         pill.setFixedWidth(52)
-        pill.setStyleSheet("QFrame { background:#1C1C2E; border-radius:26px; }")
+        pill.setObjectName("sidebarPill")
+        pill.setStyleSheet("QFrame#sidebarPill { background:#1C1C2E; border-radius:26px; }")
         pill_lay = QVBoxLayout(pill)
         pill_lay.setContentsMargins(6, 16, 6, 16)
         pill_lay.setSpacing(10)
