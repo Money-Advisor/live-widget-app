@@ -571,33 +571,53 @@ class AudioStreamer:
 class ComplianceAlertPanel(QFrame):
     """Live compliance checklist. update_missing() must be called on the UI thread."""
 
+    # severity palette: (accent, soft tint bg) on the dark panel
+    _LEVELS = {
+        "red":   ("#F87171", "#33181F"),
+        "amber": ("#FBBF24", "#2C2614"),
+    }
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setVisible(False)
-        self.setStyleSheet("QFrame { background:#1C1C2E; border-radius:14px; }")
+        self.setObjectName("compliancePanel")
+        self.setStyleSheet("QFrame#compliancePanel { background:#1C1C2E; border-radius:16px; }")
         self._lay = QVBoxLayout(self)
-        self._lay.setContentsMargins(14, 12, 14, 12)
-        self._lay.setSpacing(6)
+        self._lay.setContentsMargins(16, 14, 16, 14)
+        self._lay.setSpacing(10)
 
-        self._heading = QLabel("Compliance")
+        # ── heading row: title + count pill ──
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        self._heading = QLabel("COMPLIANCE")
         self._heading.setStyleSheet(
-            f"font-size:11px; font-family:{FF}; font-weight:700;"
-            " color:#B9B9D6; letter-spacing:1px;")
-        self._lay.addWidget(self._heading)
+            f"font-size:11px; font-family:{FF}; font-weight:800;"
+            " color:#9CA0C4; letter-spacing:1.5px;")
+        head.addWidget(self._heading)
+        head.addStretch(1)
+        self._count = QLabel("0")
+        self._count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._count.setStyleSheet(
+            f"font-size:10px; font-family:{FF}; font-weight:800; color:#1C1C2E;"
+            " background:#6B4EFF; border-radius:8px; padding:1px 8px;")
+        head.addWidget(self._count)
+        self._lay.addLayout(head)
 
         self._items_box = QVBoxLayout()
-        self._items_box.setSpacing(5)
+        self._items_box.setSpacing(7)
         self._lay.addLayout(self._items_box)
 
+        # ── suggestion hint card ──
         self._suggestion = QLabel("")
         self._suggestion.setWordWrap(True)
         self._suggestion.setStyleSheet(
-            f"font-size:11px; font-family:{FF}; color:#FCA5A5;")
+            f"QLabel {{ font-size:11px; font-family:{FF}; color:#FECACA;"
+            " background:#2A1620; border-radius:8px; padding:8px 10px; }}")
         self._suggestion.setVisible(False)
         self._lay.addWidget(self._suggestion)
 
         self._anim = QPropertyAnimation(self, b"maximumHeight")
-        self._anim.setDuration(200)
+        self._anim.setDuration(220)
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
     def _clear_items(self):
@@ -607,21 +627,31 @@ class ComplianceAlertPanel(QFrame):
             if w is not None:
                 w.deleteLater()
 
-    def _chip(self, item: dict) -> QLabel:
+    def _chip(self, item: dict) -> QFrame:
         level = (item.get("level") or "amber").lower()
+        accent, bg = self._LEVELS.get(level, self._LEVELS["amber"])
         label = item.get("label", "Requirement")
-        if level == "red":
-            border, color, bg = "#F87171", "#FCA5A5", "#2A1620"
-            prefix = "●"
-        else:
-            border, color, bg = "#FBBF24", "#FDE68A", "#241F12"
-            prefix = "▲"
-        chip = QLabel(f"{prefix}  {label}")
-        chip.setWordWrap(True)
+
+        chip = QFrame()
         chip.setStyleSheet(
-            f"QLabel {{ background:{bg}; color:{color};"
-            f" border-left:4px solid {border}; border-radius:6px;"
-            f" padding:6px 10px; font-size:12px; font-family:{FF}; }}")
+            f"QFrame {{ background:{bg}; border-radius:9px;"
+            f" border-left:3px solid {accent}; }}")
+        row = QHBoxLayout(chip)
+        row.setContentsMargins(12, 9, 12, 9)
+        row.setSpacing(10)
+
+        dot = QLabel()
+        dot.setFixedSize(9, 9)
+        dot.setStyleSheet(f"background:{accent}; border-radius:4px;")
+        row.addWidget(dot, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        text = QLabel(label)
+        text.setWordWrap(True)
+        text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        text.setStyleSheet(
+            f"background:transparent; border:none; color:#ECEEF8;"
+            f" font-size:12px; font-family:{FF}; font-weight:600;")
+        row.addWidget(text, 1)
         return chip
 
     def update_missing(self, missing_items: list):
@@ -632,6 +662,7 @@ class ComplianceAlertPanel(QFrame):
             self.setVisible(False)
             return
 
+        self._count.setText(str(len(missing_items)))
         for item in missing_items:
             self._items_box.addWidget(self._chip(item))
 
@@ -639,7 +670,7 @@ class ComplianceAlertPanel(QFrame):
         suggestion = ""
         for item in missing_items:
             if (item.get("level") or "").lower() == "red" and item.get("suggestion_text"):
-                suggestion = item["suggestion_text"]
+                suggestion = "💡  " + item["suggestion_text"]
                 break
         if suggestion:
             self._suggestion.setText(suggestion)
