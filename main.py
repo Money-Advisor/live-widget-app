@@ -571,17 +571,17 @@ class AudioStreamer:
 class ComplianceAlertPanel(QFrame):
     """Live compliance checklist. update_missing() must be called on the UI thread."""
 
-    # severity palette: (accent, soft tint bg) on the dark panel
+    # severity palette: (accent, soft tint bg) on the white panel
     _LEVELS = {
-        "red":   ("#F87171", "#3A1A22"),
-        "amber": ("#FBBF24", "#332B15"),
+        "red":   ("#DC2626", "#FEE2E2"),
+        "amber": ("#D97706", "#FEF3C7"),
     }
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setVisible(False)
         self.setObjectName("compliancePanel")
-        self.setStyleSheet("QFrame#compliancePanel { background:#1C1C2E; border-radius:16px; }")
+        self.setStyleSheet("QFrame#compliancePanel { background:white; border-radius:18px; }")
         self.setFixedWidth(300)   # own floating column beside the call card
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
         self._lay = QVBoxLayout(self)
@@ -594,13 +594,13 @@ class ComplianceAlertPanel(QFrame):
         self._heading = QLabel("COMPLIANCE")
         self._heading.setStyleSheet(
             f"background:transparent; font-size:11px; font-family:{FF};"
-            " font-weight:800; color:#9CA0C4; letter-spacing:1.5px;")
+            " font-weight:800; color:#1A1A2E; letter-spacing:1.5px;")
         head.addWidget(self._heading)
         head.addStretch(1)
         self._count = QLabel("0")
         self._count.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._count.setStyleSheet(
-            f"font-size:10px; font-family:{FF}; font-weight:800; color:#1C1C2E;"
+            f"font-size:10px; font-family:{FF}; font-weight:800; color:white;"
             " background:#6B4EFF; border-radius:8px; padding:1px 8px;")
         head.addWidget(self._count)
         self._lay.addLayout(head)
@@ -613,8 +613,8 @@ class ComplianceAlertPanel(QFrame):
         self._suggestion = QLabel("")
         self._suggestion.setWordWrap(True)
         self._suggestion.setStyleSheet(
-            f"QLabel {{ font-size:11px; font-family:{FF}; color:#FECACA;"
-            " background:#2A1620; border-radius:8px; padding:8px 10px; }}")
+            f"QLabel {{ font-size:11px; font-family:{FF}; color:#B91C1C;"
+            " background:#FEF2F2; border-radius:8px; padding:8px 10px; }}")
         self._suggestion.setVisible(False)
         self._lay.addWidget(self._suggestion)
 
@@ -648,7 +648,7 @@ class ComplianceAlertPanel(QFrame):
         text.setWordWrap(True)
         text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         text.setStyleSheet(
-            f"background:transparent; border:none; color:#F3F4FB;"
+            f"background:transparent; border:none; color:#1A1A2E;"
             f" font-size:13px; font-family:{FF}; font-weight:600;")
         row.addWidget(text, 1)
         return chip
@@ -879,6 +879,29 @@ class MainWindow(QMainWindow):
             self._validate_stored_token()
         else:
             self._stack.setCurrentWidget(self._page_login)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Per-monitor DPI: when the window is dragged to a screen with a
+        # different scale factor, stale geometry mangles the frameless layout
+        # and text renders soft. Re-sync after Qt finishes the DPI switch.
+        wh = self.windowHandle()
+        if wh is not None and not getattr(self, "_screen_hook_installed", False):
+            self._screen_hook_installed = True
+            wh.screenChanged.connect(self._on_screen_changed)
+
+    def _on_screen_changed(self, _screen):
+        QTimer.singleShot(0, self._refit_after_screen_change)
+
+    def _refit_after_screen_change(self):
+        self._apply_font_smoothing()
+        lay = self.centralWidget().layout() if self.centralWidget() else None
+        if lay is not None:
+            lay.activate()
+        # re-fit width to the (possibly rescaled) layout, keep height behavior
+        hint = self.sizeHint()
+        self.resize(max(hint.width(), self.minimumWidth()),
+                    max(hint.height(), self.minimumHeight()))
 
     def _apply_font_smoothing(self):
         """Force antialiased / fully-hinted text on every label & button.
