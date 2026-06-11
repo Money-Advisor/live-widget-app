@@ -13,3 +13,4 @@ venv/
 # OS
 Thumbs.db
 .DS_Store
+scripts/panel_preview.png
