@@ -535,18 +535,22 @@ class AudioStreamer:
         })
 
     def end_session(self):
+        """Send session_end but KEEP the socket open — the Phase 4 server
+        sends session_summary / upload_complete after this. Call close()
+        once those arrive (or on timeout)."""
+        self._send_json({
+            "command":    "session_end",
+            "client_id":  self.client_id,
+            "session_id": self.session_id,
+        })
+
+    def close(self):
+        """Release the connection after post-call messages have arrived."""
         self._receiver_stop.set()
         try:
-            self._send_json({
-                "command":    "session_end",
-                "client_id":  self.client_id,
-                "session_id": self.session_id,
-            })
-        finally:
-            try:
-                self._ws.close()
-            except Exception:
-                pass
+            self._ws.close()
+        except Exception:
+            pass
         if self._receiver_thread is not None:
             self._receiver_thread.join(timeout=3)
             self._receiver_thread = None
@@ -1586,6 +1590,10 @@ class MainWindow(QMainWindow):
                 self._streamer.end_session()
             except Exception:
                 pass
+            # Phase 4: hold the socket open so session_summary /
+            # upload_complete can arrive; close on upload_complete or timeout.
+            self._closing_streamer = self._streamer
+            QTimer.singleShot(15000, self._close_finished_streamer)
             self._streamer = None
 
         self._mic_thread = None
@@ -1635,6 +1643,17 @@ class MainWindow(QMainWindow):
             self._show_server_summary(msg)
         elif mtype == "upload_complete":
             self._summary_card.mark_saved()
+            # post-call messages all received — release the connection
+            QTimer.singleShot(500, self._close_finished_streamer)
+
+    def _close_finished_streamer(self):
+        s = getattr(self, "_closing_streamer", None)
+        if s is not None:
+            self._closing_streamer = None
+            try:
+                s.close()
+            except Exception:
+                pass
 
     def _show_local_summary(self, duration: int):
         """Summary derived from the last live compliance state (pre-Phase 4)."""
