@@ -582,7 +582,8 @@ class ComplianceAlertPanel(QFrame):
         self.setVisible(False)
         self.setObjectName("compliancePanel")
         self.setStyleSheet("QFrame#compliancePanel { background:#1C1C2E; border-radius:16px; }")
-        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        self.setFixedWidth(300)   # own floating column beside the call card
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(16, 14, 16, 16)
         self._lay.setSpacing(10)
@@ -652,12 +653,25 @@ class ComplianceAlertPanel(QFrame):
         row.addWidget(text, 1)
         return chip
 
+    def _sync_window(self):
+        """Grow/shrink the (frameless, translucent) window leftward so the
+        panel slides in beside the card without shifting it on screen."""
+        win = self.window()
+        if win is None or not win.isVisible():
+            return
+        old_w = win.width()
+        new_w = max(win.sizeHint().width(), win.minimumWidth())
+        if new_w != old_w:
+            win.move(win.x() - (new_w - old_w), win.y())
+            win.resize(new_w, win.height())
+
     def update_missing(self, missing_items: list):
         """Render missing requirements. Empty list -> hide the panel."""
         self._clear_items()
         if not missing_items:
             self._suggestion.setVisible(False)
             self.setVisible(False)
+            QTimer.singleShot(0, self._sync_window)
             return
 
         self._count.setText(str(len(missing_items)))
@@ -680,6 +694,7 @@ class ComplianceAlertPanel(QFrame):
         # word-wrap cards into thin lines and cut the suggestion text off)
         self.setVisible(True)
         self.updateGeometry()
+        QTimer.singleShot(0, self._sync_window)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -1158,10 +1173,6 @@ class MainWindow(QMainWindow):
         self._timer_lbl.setStyleSheet("font-size:12px; color:#8888A8;")
         front_lay.addWidget(self._timer_lbl)
 
-        # Live compliance panel
-        self._compliance_panel = ComplianceAlertPanel()
-        front_lay.addWidget(self._compliance_panel)
-
         front_lay.addStretch()
 
         self._rec_btn = QPushButton("Start Call Recording")
@@ -1175,6 +1186,12 @@ class MainWindow(QMainWindow):
             "QPushButton:hover { background:#5438D6; }")
         self._rec_btn.clicked.connect(self._toggle_recording)
         front_lay.addWidget(self._rec_btn)
+
+        # ── LIVE COMPLIANCE PANEL — own floating column, left of the card ──
+        # (inside the card it fought the form for vertical space and the
+        #  chips collapsed once 2+ alerts were showing)
+        self._compliance_panel = ComplianceAlertPanel()
+        outer.addWidget(self._compliance_panel, 0, Qt.AlignmentFlag.AlignTop)
 
         outer.addWidget(self._front_card)
 

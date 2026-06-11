@@ -12,33 +12,29 @@ import main as widget_main  # noqa: E402
 
 app = QApplication(sys.argv)
 
-# replicate the REAL context: panel lives inside the white 340px front card
-from PyQt6.QtWidgets import QFrame, QLabel  # noqa: E402
+# replicate the REAL context: panel = own floating column LEFT of the card
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel  # noqa: E402
+from PyQt6.QtCore import Qt  # noqa: E402
 
 host = QWidget()
 host.setStyleSheet("background:#0E0E1A;")
-host.setFixedWidth(380)
-lay = QVBoxLayout(host)
+lay = QHBoxLayout(host)
 lay.setContentsMargins(16, 16, 16, 16)
+lay.setSpacing(6)
+
+panel = widget_main.ComplianceAlertPanel()
+lay.addWidget(panel, 0, Qt.AlignmentFlag.AlignTop)
 
 card = QFrame()
 card.setObjectName("frontCard")
 card.setFixedWidth(340)
+card.setMinimumHeight(420)
 card.setStyleSheet("QFrame#frontCard { background:white; border-radius:18px; }")
 card_lay = QVBoxLayout(card)
 card_lay.setContentsMargins(24, 24, 24, 24)
-card_lay.setSpacing(10)
-
-timer_lbl = QLabel("00:05")
-timer_lbl.setStyleSheet("font-size:12px; color:#8888A8;")
-card_lay.addWidget(timer_lbl)
-
-panel = widget_main.ComplianceAlertPanel()
-card_lay.addWidget(panel)
+card_lay.addWidget(QLabel("call form placeholder"))
 card_lay.addStretch(1)
-
 lay.addWidget(card)
-lay.addStretch(1)
 
 panel.update_missing([
     {"id": "1", "level": "red", "label": "Recording disclosure",
