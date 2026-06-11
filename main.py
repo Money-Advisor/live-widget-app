@@ -573,8 +573,8 @@ class ComplianceAlertPanel(QFrame):
 
     # severity palette: (accent, soft tint bg) on the dark panel
     _LEVELS = {
-        "red":   ("#F87171", "#33181F"),
-        "amber": ("#FBBF24", "#2C2614"),
+        "red":   ("#F87171", "#3A1A22"),
+        "amber": ("#FBBF24", "#332B15"),
     }
 
     def __init__(self, parent=None):
@@ -582,8 +582,9 @@ class ComplianceAlertPanel(QFrame):
         self.setVisible(False)
         self.setObjectName("compliancePanel")
         self.setStyleSheet("QFrame#compliancePanel { background:#1C1C2E; border-radius:16px; }")
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         self._lay = QVBoxLayout(self)
-        self._lay.setContentsMargins(16, 14, 16, 14)
+        self._lay.setContentsMargins(16, 14, 16, 16)
         self._lay.setSpacing(10)
 
         # ── heading row: title + count pill ──
@@ -616,10 +617,6 @@ class ComplianceAlertPanel(QFrame):
         self._suggestion.setVisible(False)
         self._lay.addWidget(self._suggestion)
 
-        self._anim = QPropertyAnimation(self, b"maximumHeight")
-        self._anim.setDuration(220)
-        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-
     def _clear_items(self):
         while self._items_box.count():
             it = self._items_box.takeAt(0)
@@ -633,24 +630,25 @@ class ComplianceAlertPanel(QFrame):
         label = item.get("label", "Requirement")
 
         chip = QFrame()
+        chip.setObjectName("chip")
+        chip.setMinimumHeight(40)
         chip.setStyleSheet(
-            f"QFrame {{ background:{bg}; border-radius:9px;"
-            f" border-left:3px solid {accent}; }}")
+            f"QFrame#chip {{ background:{bg}; border-radius:10px; }}")
         row = QHBoxLayout(chip)
-        row.setContentsMargins(12, 9, 12, 9)
-        row.setSpacing(10)
+        row.setContentsMargins(14, 10, 14, 10)
+        row.setSpacing(11)
 
         dot = QLabel()
-        dot.setFixedSize(9, 9)
-        dot.setStyleSheet(f"background:{accent}; border-radius:4px;")
+        dot.setFixedSize(10, 10)
+        dot.setStyleSheet(f"background:{accent}; border-radius:5px;")
         row.addWidget(dot, 0, Qt.AlignmentFlag.AlignVCenter)
 
         text = QLabel(label)
         text.setWordWrap(True)
         text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         text.setStyleSheet(
-            f"background:transparent; border:none; color:#ECEEF8;"
-            f" font-size:12px; font-family:{FF}; font-weight:600;")
+            f"background:transparent; border:none; color:#F3F4FB;"
+            f" font-size:13px; font-family:{FF}; font-weight:600;")
         row.addWidget(text, 1)
         return chip
 
@@ -678,14 +676,10 @@ class ComplianceAlertPanel(QFrame):
         else:
             self._suggestion.setVisible(False)
 
-        if not self.isVisible():
-            self.setVisible(True)
-            self.setMaximumHeight(16777215)
-            target = self.sizeHint().height()
-            self._anim.stop()
-            self._anim.setStartValue(0)
-            self._anim.setEndValue(target)
-            self._anim.start()
+        # size to content — no height clamp (clamping mid-layout collapsed the
+        # word-wrap cards into thin lines and cut the suggestion text off)
+        self.setVisible(True)
+        self.updateGeometry()
 
 
 # ──────────────────────────────────────────────────────────────
