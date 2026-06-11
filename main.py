@@ -776,8 +776,14 @@ class _DraggableWidget(QWidget):
 
 # ──────────────────────────────────────────────────────────────
 class MainWindow(QMainWindow):
+    # Cross-thread bridge: the ws receiver thread emits this; Qt delivers it
+    # on the GUI thread (QueuedConnection). QTimer can't be used from a worker
+    # thread — it has no event loop, so the callback would never fire.
+    server_message = pyqtSignal(object)
+
     def __init__(self):
         super().__init__()
+        self.server_message.connect(self._handle_server_message)
         self.setWindowTitle("Nexcall")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -1636,8 +1642,9 @@ class MainWindow(QMainWindow):
 
     # ── Inbound server messages (Phase 3) ─────────────────────
     def _on_inbound_message(self, msg: dict):
-        """Called from the receiver thread – marshal to the UI thread."""
-        QTimer.singleShot(0, lambda: self._handle_server_message(msg))
+        """Called from the receiver thread – marshal to the UI thread via a
+        queued signal (QTimer would not fire on this thread)."""
+        self.server_message.emit(msg)
 
     def _handle_server_message(self, msg: dict):
         mtype = msg.get("type")
