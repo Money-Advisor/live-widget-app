@@ -489,15 +489,18 @@ class AudioStreamer:
             self._ws.settimeout(1.0)
         except Exception:
             pass
+        print("[recv] receiver loop started")
         while not self._receiver_stop.is_set():
             try:
                 raw = self._ws.recv()
             except _websocket.WebSocketTimeoutException:
                 continue                      # idle tick – re-check stop flag
-            except Exception:
+            except Exception as exc:
+                print(f"[recv] loop EXIT on {type(exc).__name__}: {exc}")
                 break                         # socket closed / error – exit
             if not raw:
                 continue
+            print(f"[recv] {str(raw)[:90]}")
             try:
                 msg = json.loads(raw)
             except (json.JSONDecodeError, TypeError, ValueError):
@@ -507,6 +510,7 @@ class AudioStreamer:
                     self.on_message(msg)
                 except Exception:
                     pass
+        print("[recv] receiver loop ended")
 
     def start_stream(self, stream_type: str, channels: int, sample_rate: int):
         self._send_json({
@@ -1583,7 +1587,7 @@ class MainWindow(QMainWindow):
         for t in (self._mic_thread, self._spk_thread):
             if t is not None:
                 t.stop()
-                t.wait(5000)
+                t.wait(1500)   # daemon threads; don't freeze the GUI waiting
 
         if self._streamer is not None:
             try:
