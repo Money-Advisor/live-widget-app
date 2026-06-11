@@ -424,6 +424,7 @@ class AudioStreamer:
         customer_name: str,
         customer_id: str,
         reference_id: str,
+        token: str = "",
     ):
         self.server_url = server_url
         self.client_id = client_id
@@ -432,6 +433,7 @@ class AudioStreamer:
         self.customer_name = customer_name
         self.customer_id = customer_id
         self.reference_id = reference_id
+        self.token = token  # Phase 4: server validates this at session_start
         self._ws = None
         self._lock = threading.Lock()
         self._receiver_stop = threading.Event()
@@ -462,6 +464,7 @@ class AudioStreamer:
             "customer_name": self.customer_name,
             "customer_id":   self.customer_id,
             "reference_id":  self.reference_id,
+            "token":         self.token,
             "timestamp":     datetime.datetime.now().isoformat(),
         })
         resp = json.loads(self._ws.recv())
@@ -1487,6 +1490,7 @@ class MainWindow(QMainWindow):
             customer_name=customer_name,
             customer_id=customer_name,
             reference_id=reference_id,
+            token=self._token,
         )
         try:
             streamer.connect()
