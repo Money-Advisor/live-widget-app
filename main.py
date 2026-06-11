@@ -565,6 +565,20 @@ class AudioStreamer:
             self._ws.send(json.dumps(data))
 
 
+def _smooth_fonts(root: "QWidget"):
+    """Antialias + full hinting on root and every descendant widget.
+
+    Needed wherever widgets are created dynamically (e.g. live compliance
+    chips) — they miss the startup smoothing pass and render soft otherwise.
+    """
+    widgets = [root] + root.findChildren(QWidget)
+    for w in widgets:
+        f = w.font()
+        f.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+        f.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
+        w.setFont(f)
+
+
 # ──────────────────────────────────────────────────────────────
 # Compliance alert panel  (live checklist during a call)
 # ──────────────────────────────────────────────────────────────
@@ -613,8 +627,9 @@ class ComplianceAlertPanel(QFrame):
         self._suggestion = QLabel("")
         self._suggestion.setWordWrap(True)
         self._suggestion.setStyleSheet(
-            f"QLabel {{ font-size:11px; font-family:{FF}; color:#B91C1C;"
-            " background:#FEF2F2; border-radius:8px; padding:8px 10px; }}")
+            f"QLabel {{ font-size:13px; font-family:{FF}; font-weight:600;"
+            " color:#B91C1C; background:#FEF2F2; border-radius:8px;"
+            " padding:9px 12px; }}")
         self._suggestion.setVisible(False)
         self._lay.addWidget(self._suggestion)
 
@@ -649,7 +664,7 @@ class ComplianceAlertPanel(QFrame):
         text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         text.setStyleSheet(
             f"background:transparent; border:none; color:#1A1A2E;"
-            f" font-size:13px; font-family:{FF}; font-weight:600;")
+            f" font-size:14px; font-family:{FF}; font-weight:600;")
         row.addWidget(text, 1)
         return chip
 
@@ -692,6 +707,7 @@ class ComplianceAlertPanel(QFrame):
 
         # size to content — no height clamp (clamping mid-layout collapsed the
         # word-wrap cards into thin lines and cut the suggestion text off)
+        _smooth_fonts(self)   # chips are dynamic; they miss the startup pass
         self.setVisible(True)
         self.updateGeometry()
         QTimer.singleShot(0, self._sync_window)
@@ -910,11 +926,7 @@ class MainWindow(QMainWindow):
         the smoothing strategy set on the application font — this re-applies it
         per widget while preserving each one's size/weight/family.
         """
-        for w in self.findChildren(QWidget):
-            f = w.font()
-            f.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
-            f.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
-            w.setFont(f)
+        _smooth_fonts(self)
 
     # ── Top-level layout: stacked login / main ────────────────
     def _build_ui(self):
