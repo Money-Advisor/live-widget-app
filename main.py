@@ -538,6 +538,7 @@ class AudioStreamer:
         """Send session_end but KEEP the socket open — the Phase 4 server
         sends session_summary / upload_complete after this. Call close()
         once those arrive (or on timeout)."""
+        print("[widget] session_end sent — holding socket for server summary")
         self._send_json({
             "command":    "session_end",
             "client_id":  self.client_id,
@@ -1736,6 +1737,7 @@ class MainWindow(QMainWindow):
 # Entry point
 # ──────────────────────────────────────────────────────────────
 def main():
+    print(">>> Nexcall widget BUILD phase4-r2 (token + hold-socket) <<<")
     # Crisp text on fractional-DPI displays (must be set before QApplication).
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
