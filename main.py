@@ -1518,6 +1518,7 @@ class MainWindow(QMainWindow):
 
         # Reset live compliance state for this call.
         self._missing_ids = set()
+        self._server_summary_shown = False  # server summary is authoritative
         self._compliance_panel.update_missing([])
 
         mic_dev = self._mic_devices[self._mic_combo.currentIndex()]
@@ -1641,6 +1642,8 @@ class MainWindow(QMainWindow):
             self._missing_ids = {i.get("id") for i in items if i.get("id")}
             self._compliance_panel.update_missing(items)
         elif mtype == "session_summary":
+            print(f"[widget] session_summary received: score={msg.get('score')} "
+                  f"covered={msg.get('covered')} missing={msg.get('missing')}")
             self._show_server_summary(msg)
         elif mtype == "upload_complete":
             self._summary_card.mark_saved()
@@ -1657,7 +1660,12 @@ class MainWindow(QMainWindow):
                 pass
 
     def _show_local_summary(self, duration: int):
-        """Summary derived from the last live compliance state (pre-Phase 4)."""
+        """Provisional summary from the last live state. The server sends an
+        authoritative session_summary that overrides this; once that arrives,
+        this must never clobber it."""
+        if getattr(self, "_server_summary_shown", False):
+            return
+        print("[widget] showing LOCAL summary (provisional)")
         total = self._all_criteria_labels
         missing = {i for i in self._missing_ids if i in total}
         covered_ids = [i for i in total if i not in missing]
@@ -1670,6 +1678,8 @@ class MainWindow(QMainWindow):
         self._summary_card.setVisible(True)
 
     def _show_server_summary(self, msg: dict):
+        self._server_summary_shown = True  # authoritative — wins over local
+        print("[widget] showing SERVER summary (authoritative)")
         score = float(msg.get("score", 0.0) or 0.0)
         covered = msg.get("covered", []) or []
         missed = msg.get("missing", []) or []
