@@ -1,4 +1,4 @@
-"""Headless smoke test for the Nexcall widget (offscreen Qt, no network)."""
+"""Headless smoke test for the Spark Flow widget (offscreen Qt, no network)."""
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 

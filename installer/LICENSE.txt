@@ -1,26 +1,26 @@
-NEXCALL DESKTOP WIDGET — END USER LICENCE AGREEMENT
+SPARK FLOW DESKTOP WIDGET — END USER LICENCE AGREEMENT
 
-This software ("Nexcall") is provided by Nexcall to authorised users of a
-Nexcall company account for the purpose of recording and compliance-coaching
+This software ("Spark Flow") is provided by Spark Flow to authorised users of a
+Spark Flow company account for the purpose of recording and compliance-coaching
 business calls.
 
 By installing or using this software you agree that:
 
 1. You are an authorised agent, supervisor or administrator of a company that
-   holds a valid Nexcall account, and you will sign in with credentials issued
+   holds a valid Spark Flow account, and you will sign in with credentials issued
    to you by your company administrator.
 
 2. Call audio and related data captured by this software are processed on
-   behalf of your company and stored within your company's Nexcall tenant.
+   behalf of your company and stored within your company's Spark Flow tenant.
    Use of the software must comply with your company's policies and all
    applicable laws, including call-recording consent requirements in your
    jurisdiction.
 
 3. The software is provided "as is" without warranty of any kind. To the
-   maximum extent permitted by law, Nexcall is not liable for any damages
+   maximum extent permitted by law, Spark Flow is not liable for any damages
    arising from its use.
 
 4. You will not copy, modify, reverse-engineer, or redistribute the software
-   except as expressly permitted by your agreement with Nexcall.
+   except as expressly permitted by your agreement with Spark Flow.
 
 If you do not agree to these terms, do not install or use this software.

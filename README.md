@@ -1,4 +1,4 @@
-# Nexcall Desktop Widget
+# Spark Flow Desktop Widget
 
 PyQt6 desktop call-compliance widget. The agent logs in, the widget
 loads the company's compliance config, records mic + speaker audio to the
@@ -15,7 +15,7 @@ python main.py
 ## Configuration
 
 No server addresses are hardcoded into the UI flow. Defaults (overridable in the
-in-app **Settings ▸ Advanced** panel, persisted in `QSettings("Nexcall","Widget")`):
+in-app **Settings ▸ Advanced** panel, persisted in `QSettings("Spark Flow","Widget")`):
 
 | Setting               | Default                 | Used for                          |
 | --------------------- | ----------------------- | --------------------------------- |
@@ -53,8 +53,8 @@ The recording server pushes JSON over the existing WebSocket; the widget handles
 python build_all.py
 ```
 
-- Windows → `dist/Nexcall.exe`
-- macOS  → `dist/Nexcall.app` + `dist/Nexcall.dmg`
+- Windows → `dist/SparkFlow.exe`
+- macOS  → `dist/SparkFlow.app` + `dist/SparkFlow.dmg`
 
 `assets/` (the login page) is bundled with the binary; `main.py` resolves it via
 `resource_path()` (PyInstaller `_MEIPASS`-aware).

@@ -2,15 +2,15 @@
 """
 build_all.py
 ------------
-Builds the Nexcall desktop widget (main.py) into a standalone app with
+Builds the Spark Flow desktop widget (main.py) into a standalone app with
 PyInstaller. Produces a Windows .exe or a macOS .app + .dmg depending on the
 host OS. The login web page (assets/login.html) is bundled alongside the binary.
 
 Usage:
     python build_all.py
 
-Output (Windows):  dist/Nexcall.exe
-Output (macOS):    dist/Nexcall.app  +  dist/Nexcall.dmg
+Output (Windows):  dist/SparkFlow.exe
+Output (macOS):    dist/SparkFlow.app  +  dist/SparkFlow.dmg
 """
 
 import subprocess
@@ -22,7 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PYTHON = sys.executable
 IS_MAC = sys.platform == "darwin"
 
-APP_NAME = "Nexcall"
+APP_NAME = "SparkFlow"
 
 # Bundle the assets folder (icon.png). --add-data uses os.pathsep as the
 # SRC{sep}DEST separator (';' on Windows, ':' elsewhere).
@@ -89,7 +89,7 @@ def run_build() -> bool:
 
 
 def make_dmg() -> bool:
-    """Package dist/Nexcall.app into dist/Nexcall.dmg (macOS only)."""
+    """Package dist/SparkFlow.app into dist/SparkFlow.dmg (macOS only)."""
     app_path = os.path.join(HERE, "dist", f"{APP_NAME}.app")
     dmg_path = os.path.join(HERE, "dist", f"{APP_NAME}.dmg")
     if not os.path.isdir(app_path):

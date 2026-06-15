@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Nexcall Widget
---------------
+Spark Flow Widget
+-----------------
 Desktop call-compliance widget (Phase 3).
 
 Agent logs in (native PyQt6 login -> POST /auth/login-widget), the widget fetches
@@ -69,7 +69,7 @@ AUDIO_FORMAT = pyaudio.paInt16
 DEFAULT_API_BASE_URL = "http://localhost:8000"
 DEFAULT_RECORDING_WS = "ws://localhost:8765"
 
-ORG = "Nexcall"
+ORG = "Spark Flow"
 APP = "Widget"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
@@ -450,7 +450,7 @@ class AudioStreamer:
         self._send_json({
             "command":     "identify",
             "client_id":   self.client_id,
-            "client_name": "NexcallWidget",
+            "client_name": "SparkFlowWidget",
         })
         resp = json.loads(self._ws.recv())
         if resp.get("status") != "identified":
@@ -843,7 +843,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.server_message.connect(self._handle_server_message)
-        self.setWindowTitle("Nexcall")
+        self.setWindowTitle("Spark Flow")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMinimumSize(460, 600)
@@ -1003,7 +1003,7 @@ class MainWindow(QMainWindow):
         c.addWidget(logo)
         c.addSpacing(14)
 
-        title = QLabel("Nexcall")
+        title = QLabel("Spark Flow")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet(
             f"color:#FFFFFF; font-size:27px; font-weight:700; font-family:{FF};")
@@ -1151,7 +1151,7 @@ class MainWindow(QMainWindow):
         front_lay.setSpacing(10)
         front_lay.setContentsMargins(24, 24, 24, 24)
 
-        self._company_lbl = QLabel("Nexcall")
+        self._company_lbl = QLabel("Spark Flow")
         self._company_lbl.setStyleSheet(
             f"font-size:17px; font-weight:700; font-family:{FF}; color:#1A1A2E;")
         front_lay.addWidget(self._company_lbl)
@@ -1443,9 +1443,9 @@ class MainWindow(QMainWindow):
         self._refresh_identity_labels()
 
     def _refresh_identity_labels(self):
-        company = self._company_name or "Nexcall"
+        company = self._company_name or "Spark Flow"
         self.setWindowTitle(
-            f"Nexcall — {company}" if self._company_name else "Nexcall")
+            f"Spark Flow — {company}" if self._company_name else "Spark Flow")
         if hasattr(self, "_company_lbl"):
             self._company_lbl.setText(company)
         # full_name may be None (invited agents) -> fall back to email.
@@ -1496,7 +1496,7 @@ class MainWindow(QMainWindow):
     # ── Tray ──────────────────────────────────────────────────
     def _build_tray(self):
         self._tray = QSystemTrayIcon(ICON_IDLE, self)
-        self._tray.setToolTip("Nexcall – idle")
+        self._tray.setToolTip("Spark Flow – idle")
         self._tray.activated.connect(self._tray_activated)
 
         menu = QMenu()
@@ -1527,7 +1527,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(
                 self, "Error",
                 "WASAPI host API is not available on this system.\n"
-                "Nexcall requires Windows + WASAPI.",
+                "Spark Flow requires Windows + WASAPI.",
             )
             return
 
@@ -1596,7 +1596,7 @@ class MainWindow(QMainWindow):
             streamer.connect()
         except Exception as exc:
             self._tray.showMessage(
-                "Nexcall",
+                "Spark Flow",
                 "Connection issue – could not reach the server. Please check your connection.",
                 QSystemTrayIcon.MessageIcon.Warning, 3000)
             QMessageBox.critical(
@@ -1659,9 +1659,9 @@ class MainWindow(QMainWindow):
         self._timer_lbl.setText("00:00")
         self._tray_rec_act.setText("⏹  Stop Recording")
         self._tray.setIcon(ICON_RECORDING)
-        self._tray.setToolTip("Nexcall – RECORDING")
+        self._tray.setToolTip("Spark Flow – RECORDING")
         self._tray.showMessage(
-            "Nexcall", "Recording started",
+            "Spark Flow", "Recording started",
             QSystemTrayIcon.MessageIcon.Information, 2000)
 
     def _on_stream_ready(self, stream_type: str, channels: int, sample_rate: int):
@@ -1717,9 +1717,9 @@ class MainWindow(QMainWindow):
         self._compliance_panel.update_missing([])
         self._tray_rec_act.setText("⏺  Start Recording")
         self._tray.setIcon(ICON_IDLE)
-        self._tray.setToolTip("Nexcall – idle")
+        self._tray.setToolTip("Spark Flow – idle")
         self._tray.showMessage(
-            "Nexcall", "Recording stopped",
+            "Spark Flow", "Recording stopped",
             QSystemTrayIcon.MessageIcon.Information, 3000)
 
         if was_recording:
@@ -1800,7 +1800,7 @@ class MainWindow(QMainWindow):
     def _on_error(self, message: str):
         self._stop_recording()
         self._tray.showMessage(
-            "Nexcall",
+            "Spark Flow",
             "Connection issue – recording stopped. Please reconnect.",
             QSystemTrayIcon.MessageIcon.Warning, 4000)
         QMessageBox.critical(
@@ -1821,7 +1821,7 @@ class MainWindow(QMainWindow):
         event.ignore()
         self.hide()
         self._tray.showMessage(
-            "Nexcall",
+            "Spark Flow",
             "Running in the system tray.  Right-click the icon to quit.",
             QSystemTrayIcon.MessageIcon.Information, 2500)
 
@@ -1843,12 +1843,12 @@ class MainWindow(QMainWindow):
 # Entry point
 # ──────────────────────────────────────────────────────────────
 def main():
-    print(">>> Nexcall widget BUILD phase4-r2 (token + hold-socket) <<<")
+    print(">>> Spark Flow widget BUILD phase4-r2 (token + hold-socket) <<<")
     # Crisp text on fractional-DPI displays (must be set before QApplication).
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
-    app.setApplicationName("Nexcall")
+    app.setApplicationName("Spark Flow")
     app.setOrganizationName(ORG)
     app.setQuitOnLastWindowClosed(False)
     _icon_path = resource_path("assets/icon.png")
