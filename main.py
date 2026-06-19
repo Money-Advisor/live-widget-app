@@ -64,6 +64,17 @@ from PyQt6.QtSvg import QSvgRenderer
 CHUNK = 4096                       # Phase 3: was 1024
 AUDIO_FORMAT = pyaudio.paInt16
 
+# Virtual / processed input devices we must never record from: they carry
+# noise-cancelled and accent-converted audio (e.g. Krisp), not the raw agent
+# voice the audit pipeline needs. We want the physical headset mic underneath.
+_EXCLUDED_MIC_SUBSTRINGS = ("krisp",)
+
+
+def _is_excluded_mic(name: str) -> bool:
+    """True if a mic device name belongs to an excluded virtual/processed source."""
+    lowered = (name or "").lower()
+    return any(sub in lowered for sub in _EXCLUDED_MIC_SUBSTRINGS)
+
 # Backend API (login + config) and recording-server WebSocket.
 # Defaults target local dev; both are overridable via QSettings (Settings panel).
 DEFAULT_API_BASE_URL = "http://localhost:8000"
@@ -206,18 +217,52 @@ def api_login(base_url: str, email: str, password: str) -> dict:
     raise BackendError(f"Login failed (server error {r.status_code}).")
 
 
-def api_get_config(base_url: str, token: str, etag: str | None = None):
-    """GET /api/widget/config. Returns the requests.Response (caller inspects)."""
+def api_get_config(base_url: str, token: str, etag: str | None = None,
+                   department: str | None = None):
+    """GET /api/widget/config. Returns the requests.Response (caller inspects).
+
+    `department` (a department key) scopes the config to shared ∪ that
+    department. Omitted -> the backend falls back to the agent's home
+    department, else the whole company (backward compatible)."""
     headers = {"Authorization": f"Bearer {token}"}
     if etag:
         headers["If-None-Match"] = etag
+    params = {"department": department} if department else None
     try:
         return requests.get(
             f"{base_url.rstrip('/')}/api/widget/config",
-            headers=headers, timeout=15,
+            headers=headers, params=params, timeout=15,
         )
     except requests.RequestException:
         raise BackendError("Could not reach the server. Check your connection.")
+
+
+def api_get_me(base_url: str, token: str) -> dict:
+    """GET /api/me -> the current user's profile (id, full_name, email, role,
+    company, department). Raises BackendError on any non-200."""
+    try:
+        r = requests.get(
+            f"{base_url.rstrip('/')}/api/me",
+            headers={"Authorization": f"Bearer {token}"}, timeout=15,
+        )
+    except requests.RequestException:
+        raise BackendError("Could not reach the server. Check your connection.")
+    if r.status_code == 200:
+        return r.json()
+    raise BackendError(f"Could not load your profile (server error {r.status_code}).")
+
+
+def _user_from_me(me: dict) -> dict:
+    """Map a /api/me payload to the widget's internal _user shape
+    ({id, name, email, company_name, role}), as returned by login-widget."""
+    me = me or {}
+    return {
+        "id": me.get("id", "") or "",
+        "name": me.get("full_name") or "",
+        "email": me.get("email", "") or "",
+        "company_name": (me.get("company") or {}).get("name", "") or "",
+        "role": me.get("role", "") or "",
+    }
 
 
 # ──────────────────────────────────────────────────────────────
@@ -254,8 +299,10 @@ class LoginWorker(QThread):
 
 
 class ValidateWorker(QThread):
-    """Validate a stored token at launch (supports If-None-Match -> 304)."""
-    valid = pyqtSignal(dict, str)   # config, etag  (config={} on 304 -> use cache)
+    """Validate a stored token at launch (supports If-None-Match -> 304) and
+    re-fetch the user profile so a remembered session restores the agent's
+    identity (name/id/email), not just the token."""
+    valid = pyqtSignal(dict, str, dict)   # config, etag, user  (config={} on 304)
     invalid = pyqtSignal()
 
     def __init__(self, base_url, token, etag, parent=None):
@@ -270,12 +317,40 @@ class ValidateWorker(QThread):
         except BackendError:
             self.invalid.emit()
             return
-        if resp.status_code == 304:
-            self.valid.emit({}, self.etag)
-        elif resp.status_code == 200:
-            self.valid.emit(resp.json(), resp.headers.get("ETag", ""))
-        else:
+        if resp.status_code not in (200, 304):
             self.invalid.emit()
+            return
+        # Token is valid -> restore the agent's profile. Best-effort: a /api/me
+        # hiccup must not fail the launch (the token is still good).
+        user = {}
+        try:
+            user = _user_from_me(api_get_me(self.base_url, self.token))
+        except Exception:
+            pass
+        if resp.status_code == 304:
+            self.valid.emit({}, self.etag, user)
+        else:
+            self.valid.emit(resp.json(), resp.headers.get("ETag", ""), user)
+
+
+class ConfigRefreshWorker(QThread):
+    """Re-fetch the widget config scoped to a department (dialer leg switch).
+    Best-effort: on any failure we keep the current config."""
+    loaded = pyqtSignal(dict, str)   # config, etag
+
+    def __init__(self, base_url, token, department, parent=None):
+        super().__init__(parent)
+        self.base_url = base_url
+        self.token = token
+        self.department = department
+
+    def run(self):
+        try:
+            resp = api_get_config(self.base_url, self.token, department=self.department)
+            if resp.status_code == 200:
+                self.loaded.emit(resp.json(), resp.headers.get("ETag", ""))
+        except Exception:
+            pass   # keep existing config
 
 
 # ──────────────────────────────────────────────────────────────
@@ -425,11 +500,19 @@ class AudioStreamer:
         customer_id: str,
         reference_id: str,
         token: str = "",
+        agent_email: str = "",
+        department: str = "",
+        dialer_metadata: dict | None = None,
     ):
+        self.department = department  # call-leg department key (scopes the checklist)
+        # Dialer call metadata (lead id, campaign, direction, transfer flag) for a
+        # dialer-originated call; the server stores it on the session. None = manual.
+        self.dialer_metadata = dialer_metadata
         self.server_url = server_url
         self.client_id = client_id
         self.session_id = session_id
         self.agent_id = agent_id
+        self.agent_email = agent_email
         self.customer_name = customer_name
         self.customer_id = customer_id
         self.reference_id = reference_id
@@ -451,12 +534,16 @@ class AudioStreamer:
             "command":     "identify",
             "client_id":   self.client_id,
             "client_name": "SparkFlowWidget",
+            # Phase 4: let the server index this widget by agent so the dialer
+            # webhook can target it. Server lowercases + maps these.
+            "agent_email": self.agent_email,
+            "agent_id":    self.agent_id,
         })
         resp = json.loads(self._ws.recv())
         if resp.get("status") != "identified":
             raise RuntimeError(f"Server identification failed: {resp}")
 
-        self._send_json({
+        session_payload = {
             "command":       "session_start",
             "client_id":     self.client_id,
             "session_id":    self.session_id,
@@ -466,7 +553,16 @@ class AudioStreamer:
             "reference_id":  self.reference_id,
             "token":         self.token,
             "timestamp":     datetime.datetime.now().isoformat(),
-        })
+        }
+        # Scope the server-side compliance checklist to this call's department
+        # (omitted -> server uses the agent's home department / company-wide).
+        if self.department:
+            session_payload["department"] = self.department
+        # Forward dialer call metadata so the server can label the stored session
+        # (omitted for manual calls -> backward compatible).
+        if self.dialer_metadata:
+            session_payload["dialer_metadata"] = self.dialer_metadata
+        self._send_json(session_payload)
         resp = json.loads(self._ws.recv())
         if resp.get("status") != "session_started":
             raise RuntimeError(f"Server session_start failed: {resp}")
@@ -619,6 +715,30 @@ class ComplianceAlertPanel(QFrame):
         head.addWidget(self._count)
         self._lay.addLayout(head)
 
+        # ── transcription status notice (R2): shown when live checking is
+        # degraded / down so the agent knows the safety net dropped. ──
+        self._status_label = QLabel("")
+        self._status_label.setWordWrap(True)
+        self._status_label.setVisible(False)
+        self._status_label.setStyleSheet(
+            f"QLabel {{ font-size:12px; font-family:{FF}; font-weight:700;"
+            " color:white; background:#D97706; border-radius:8px; padding:7px 11px; }}")
+        self._lay.addWidget(self._status_label)
+
+        # ── forbidden-phrase violations (persistent red banners; a breach the
+        # agent already committed, surfaced live). Survives checklist updates. ──
+        self._forbidden_box = QVBoxLayout()
+        self._forbidden_box.setSpacing(7)
+        self._lay.addLayout(self._forbidden_box)
+
+        # ── customer cues (R4): amber banners surfaced when the customer says
+        # something noteworthy (e.g. discloses vulnerability). Not agent tasks. ──
+        self._cue_box = QVBoxLayout()
+        self._cue_box.setSpacing(7)
+        self._lay.addLayout(self._cue_box)
+        self._cue_seen: set = set()
+        self._forbidden_seen: set = set()
+
         self._items_box = QVBoxLayout()
         self._items_box.setSpacing(7)
         self._lay.addLayout(self._items_box)
@@ -639,6 +759,111 @@ class ComplianceAlertPanel(QFrame):
             w = it.widget()
             if w is not None:
                 w.deleteLater()
+
+    def _forbidden_banner(self, item: dict) -> QFrame:
+        label = item.get("label", "Forbidden phrase used")
+        banner = QFrame()
+        banner.setObjectName("forbidden")
+        banner.setMinimumHeight(40)
+        banner.setStyleSheet(
+            "QFrame#forbidden { background:#DC2626; border-radius:10px; }")
+        row = QHBoxLayout(banner)
+        row.setContentsMargins(14, 10, 14, 10)
+        row.setSpacing(11)
+        text = QLabel(f"⚠  Said: {label}")
+        text.setWordWrap(True)
+        text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        text.setStyleSheet(
+            f"background:transparent; border:none; color:white;"
+            f" font-size:14px; font-family:{FF}; font-weight:700;")
+        row.addWidget(text, 1)
+        return banner
+
+    def add_forbidden(self, forbidden_hits: list):
+        """Surface forbidden-phrase breaches as persistent red banners. Called on
+        the UI thread. De-duplicated per call; never cleared by checklist updates."""
+        new = [f for f in forbidden_hits if f.get("id") not in self._forbidden_seen]
+        if not new:
+            return
+        for f in new:
+            self._forbidden_seen.add(f.get("id"))
+            self._forbidden_box.addWidget(self._forbidden_banner(f))
+        _smooth_fonts(self)
+        self.setVisible(True)
+        self.updateGeometry()
+        QTimer.singleShot(0, self._sync_window)
+
+    def clear_forbidden(self):
+        """Reset forbidden banners (call at the start of a new call)."""
+        self._forbidden_seen.clear()
+        while self._forbidden_box.count():
+            it = self._forbidden_box.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.deleteLater()
+
+    def _cue_banner(self, item: dict) -> QFrame:
+        label = item.get("label", "Customer cue")
+        suggestion = item.get("suggestion_text") or ""
+        banner = QFrame()
+        banner.setObjectName("cue")
+        banner.setStyleSheet("QFrame#cue { background:#FEF3C7; border-radius:10px; }")
+        col = QVBoxLayout(banner)
+        col.setContentsMargins(14, 10, 14, 10)
+        col.setSpacing(3)
+        title = QLabel(f"👤  {label}")
+        title.setWordWrap(True)
+        title.setStyleSheet(
+            f"background:transparent; border:none; color:#1A1A2E;"
+            f" font-size:14px; font-family:{FF}; font-weight:700;")
+        col.addWidget(title)
+        if suggestion:
+            hint = QLabel(suggestion)
+            hint.setWordWrap(True)
+            hint.setStyleSheet(
+                f"background:transparent; border:none; color:#92400E;"
+                f" font-size:12px; font-family:{FF}; font-weight:600;")
+            col.addWidget(hint)
+        return banner
+
+    def add_cues(self, cue_hits: list):
+        """Surface just-fired customer cues (amber, deduped per call)."""
+        new = [c for c in cue_hits if c.get("id") not in self._cue_seen]
+        if not new:
+            return
+        for c in new:
+            self._cue_seen.add(c.get("id"))
+            self._cue_box.addWidget(self._cue_banner(c))
+        _smooth_fonts(self)
+        self.setVisible(True)
+        self.updateGeometry()
+        QTimer.singleShot(0, self._sync_window)
+
+    def clear_cues(self):
+        self._cue_seen.clear()
+        while self._cue_box.count():
+            it = self._cue_box.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.deleteLater()
+
+    def set_transcription_status(self, state: str):
+        """R2: show/clear a notice when live transcription drops or recovers."""
+        if state == "recovered":
+            self._status_label.setVisible(False)
+        else:
+            msg = ("⚠  Live checking unavailable — transcription stopped."
+                   if state == "failed"
+                   else "⚠  Live checking interrupted — reconnecting…")
+            self._status_label.setText(msg)
+            self._status_label.setStyleSheet(
+                f"QLabel {{ font-size:12px; font-family:{FF}; font-weight:700;"
+                " color:white; background:"
+                + ("#DC2626" if state == "failed" else "#D97706")
+                + "; border-radius:8px; padding:7px 11px; }}")
+            self._status_label.setVisible(True)
+            self.setVisible(True)
+        QTimer.singleShot(0, self._sync_window)
 
     def _chip(self, item: dict) -> QFrame:
         level = (item.get("level") or "amber").lower()
@@ -685,7 +910,11 @@ class ComplianceAlertPanel(QFrame):
         self._clear_items()
         if not missing_items:
             self._suggestion.setVisible(False)
-            self.setVisible(False)
+            # keep the panel visible if forbidden breaches, cues, or a status
+            # notice are showing
+            self.setVisible(self._forbidden_box.count() > 0
+                            or self._cue_box.count() > 0
+                            or self._status_label.isVisible())
             QTimer.singleShot(0, self._sync_window)
             return
 
@@ -855,6 +1084,12 @@ class MainWindow(QMainWindow):
         self._token: str = self._settings.value("auth/token", "") or ""
         self._user: dict = {}
         self._config: dict = {}
+        # Active department key for this widget (from the loaded config; the
+        # dialer can switch it per call leg, e.g. on a transfer).
+        self._active_department: str = ""
+        # Dialer call metadata stashed by _handle_dialer_activate and consumed
+        # (one-shot) by the next _start_recording. None for manual calls.
+        self._pending_dialer_meta: dict | None = None
         self._company_name: str = ""
         self._remember: bool = True
         self._api_base = self._settings.value("api/base_url", DEFAULT_API_BASE_URL)
@@ -997,7 +1232,7 @@ class MainWindow(QMainWindow):
         if not pix.isNull():
             dpr = _dpr()
             pix = pix.scaledToHeight(
-                round(54 * dpr), Qt.TransformationMode.SmoothTransformation)
+                round(72 * dpr), Qt.TransformationMode.SmoothTransformation)
             pix.setDevicePixelRatio(dpr)
             logo.setPixmap(pix)
         c.addWidget(logo)
@@ -1409,7 +1644,12 @@ class MainWindow(QMainWindow):
         self._validate_worker.invalid.connect(self._on_validate_bad)
         self._validate_worker.start()
 
-    def _on_validate_ok(self, config: dict, etag: str):
+    def _on_validate_ok(self, config: dict, etag: str, user: dict):
+        # Restore the agent's identity from /api/me so a remembered session shows
+        # the name and sends a real agent_id (not 'unknown'). Empty user (e.g.
+        # /api/me hiccup) -> keep whatever we had rather than wiping it.
+        if user and user.get("id"):
+            self._user = user
         if config:   # 200 with fresh config; {} means 304 -> keep cache
             self._apply_config(config, etag)
         self._enter_main()
@@ -1421,6 +1661,9 @@ class MainWindow(QMainWindow):
 
     def _apply_config(self, config: dict, etag: str, persist: bool = True):
         self._config = config or {}
+        # The backend echoes which department this config was scoped to (None =
+        # company-wide). Track it so session_start tells the server the same.
+        self._active_department = self._config.get("department") or ""
         self._company_name = self._config.get("company_name", "") or \
             self._user.get("company_name", "")
         # Build id -> label map across criteria + railguards for summaries.
@@ -1538,6 +1781,10 @@ class MainWindow(QMainWindow):
                 self._spk_devices.append(dev)
                 self._spk_combo.addItem(dev["name"])
             elif int(dev.get("maxInputChannels", 0)) > 0:
+                # Skip Krisp's virtual mic (and similar) so we record the raw
+                # physical headset, not the accent-converted / denoised feed.
+                if _is_excluded_mic(dev.get("name", "")):
+                    continue
                 self._mic_devices.append(dev)
                 self._mic_combo.addItem(dev["name"])
 
@@ -1556,7 +1803,9 @@ class MainWindow(QMainWindow):
         # their fonts — re-apply text smoothing so they stay crisp.
         self._apply_font_smoothing()
 
-    def _start_recording(self):
+    def _start_recording(self, require_name: bool = True):
+        # require_name=True for the manual Start button (agent must type a name);
+        # the dialer auto-start passes False (name is blank, resolved via CRM).
         if not self._token:
             self._stack.setCurrentWidget(self._page_login)
             return
@@ -1573,10 +1822,14 @@ class MainWindow(QMainWindow):
         customer_name = self._customer_name_edit.text().strip()
         reference_id = self._reference_edit.text().strip()
 
-        if not all([customer_name, reference_id]):
+        # Reference ID is always required. Customer Name is required for the
+        # manual flow, but optional for dialer auto-start (resolved via CRM).
+        if not all([customer_name, reference_id]) if require_name else not reference_id:
             QMessageBox.warning(
                 self, "Missing Info",
-                "Please fill in Customer Name and Reference ID before starting a recording.",
+                "Please fill in Customer Name and Reference ID before starting a recording."
+                if require_name else
+                "Please fill in the Reference ID before starting a recording.",
             )
             return
 
@@ -1591,7 +1844,12 @@ class MainWindow(QMainWindow):
             customer_id=customer_name,
             reference_id=reference_id,
             token=self._token,
+            agent_email=self._user.get("email", ""),
+            department=self._active_department,
+            dialer_metadata=self._pending_dialer_meta,
         )
+        # One-shot: a later manual call must not inherit this dialer metadata.
+        self._pending_dialer_meta = None
         try:
             streamer.connect()
         except Exception as exc:
@@ -1614,6 +1872,9 @@ class MainWindow(QMainWindow):
         # Reset live compliance state for this call.
         self._missing_ids = set()
         self._server_summary_shown = False  # server summary is authoritative
+        self._compliance_panel.clear_forbidden()
+        self._compliance_panel.clear_cues()
+        self._compliance_panel.set_transcription_status("recovered")  # hide any stale notice
         self._compliance_panel.update_missing([])
 
         mic_dev = self._mic_devices[self._mic_combo.currentIndex()]
@@ -1734,9 +1995,22 @@ class MainWindow(QMainWindow):
     def _handle_server_message(self, msg: dict):
         mtype = msg.get("type")
         if mtype == "compliance_alert":
+            forbidden = msg.get("forbidden_hits") or []
+            if forbidden:
+                # forbidden-only message: show the red breach banner without
+                # disturbing the live checklist (missing_items is empty here).
+                self._compliance_panel.add_forbidden(forbidden)
+                return
+            cues = msg.get("cue_hits") or []
+            if cues:
+                # customer-cue message (R4): amber, doesn't touch the checklist.
+                self._compliance_panel.add_cues(cues)
+                return
             items = msg.get("missing_items", []) or []
             self._missing_ids = {i.get("id") for i in items if i.get("id")}
             self._compliance_panel.update_missing(items)
+        elif mtype == "transcription_status":
+            self._compliance_panel.set_transcription_status(msg.get("state", ""))
         elif mtype == "session_summary":
             print(f"[widget] session_summary received: score={msg.get('score')} "
                   f"covered={msg.get('covered')} missing={msg.get('missing')}")
@@ -1745,6 +2019,51 @@ class MainWindow(QMainWindow):
             self._summary_card.mark_saved()
             # post-call messages all received — release the connection
             QTimer.singleShot(500, self._close_finished_streamer)
+        elif mtype == "dialer_activate":
+            self._handle_dialer_activate(msg)
+        elif mtype == "dialer_stop":
+            # Mirror the Stop button. Ignore if not on a call.
+            if self._recording:
+                self._stop_recording()
+        # Unknown types are ignored quietly.
+
+    def _handle_dialer_activate(self, msg: dict):
+        """Dialer-driven auto-start — behaves exactly like clicking Start."""
+        # Guard against double-start: never start a second call.
+        if self._recording:
+            return
+        # Stash the call metadata so the upcoming session_start can store it on
+        # the session (one-shot; cleared after _start_recording consumes it).
+        self._pending_dialer_meta = {
+            "customer_reference": msg.get("customer_reference"),
+            "lead_id": msg.get("lead_id"),
+            "campaign_id": msg.get("campaign_id"),
+            "call_direction": msg.get("call_direction"),
+            "is_transfer": msg.get("is_transfer"),
+            "department": msg.get("department"),
+        }
+        # Prefill the reference (fall back to lead_id); leave Customer Name blank
+        # — CRM resolves the name later.
+        ref = msg.get("customer_reference") or msg.get("lead_id") or ""
+        if ref:
+            self._reference_edit.setText(str(ref))
+        self._customer_name_edit.clear()
+        # Honor the call leg's department (e.g. a transfer routes to Advisor).
+        # Set it now so session_start scopes the server checklist correctly, and
+        # refresh the on-screen config to match (best-effort, non-blocking).
+        dept = (msg.get("department") or "").strip()
+        if dept and dept != self._active_department:
+            self._active_department = dept
+            if self._token:
+                self._cfg_refresh_worker = ConfigRefreshWorker(self._api_base, self._token, dept)
+                self._cfg_refresh_worker.loaded.connect(
+                    lambda cfg, etag: self._apply_config(cfg, etag))
+                self._cfg_refresh_worker.start()
+        # Bring the widget to the foreground for the agent.
+        self._show_window()
+        # Reuse the SAME start path as the manual button — no parallel logic.
+        # Name is blank (CRM resolves it later), so skip the name requirement.
+        self._start_recording(require_name=False)
 
     def _close_finished_streamer(self):
         s = getattr(self, "_closing_streamer", None)

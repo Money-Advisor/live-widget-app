@@ -47,8 +47,8 @@ class _Resp:
     def json(self): return {"token": "t", "user": {"id": "u1", "name": "Ada"}}
 def _fake_post(url, json=None, timeout=None):
     captured["post_url"] = url; captured["body"] = json; return _Resp()
-def _fake_get(url, headers=None, timeout=None):
-    captured["get_url"] = url; captured["headers"] = headers; return _Resp()
+def _fake_get(url, headers=None, timeout=None, params=None):
+    captured["get_url"] = url; captured["headers"] = headers; captured["params"] = params; return _Resp()
 m.requests.post = _fake_post
 m.requests.get = _fake_get
 data = m.api_login("http://localhost:8000/", "a@b.com", "pw")
