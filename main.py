@@ -151,9 +151,10 @@ def _needs_mic_gate(token: str, saved_mic: str) -> bool:
     return bool(token) and not saved_mic
 
 # Backend API (login + config) and recording-server WebSocket.
-# Defaults target local dev; both are overridable via QSettings (Settings panel).
-DEFAULT_API_BASE_URL = "http://localhost:8000"
-DEFAULT_RECORDING_WS = "ws://localhost:8765"
+# Point at the deployed server; both are overridable via QSettings (Settings panel).
+# (Update these to the public subdomain — https:// + wss:// — once DNS/HTTPS is live.)
+DEFAULT_API_BASE_URL = "http://192.168.80.52:8080"
+DEFAULT_RECORDING_WS = "ws://192.168.80.52:8765"
 
 ORG = "Spark Flow"
 APP = "Widget"
