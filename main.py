@@ -75,6 +75,81 @@ def _is_excluded_mic(name: str) -> bool:
     lowered = (name or "").lower()
     return any(sub in lowered for sub in _EXCLUDED_MIC_SUBSTRINGS)
 
+
+def _pick_stream_format(is_supported, channels_list, rates_list):
+    """First (channels, rate) combo the device actually supports, else None.
+
+    Used to capture a WASAPI *loopback* stream at the render device's true mix
+    format. Guessing a format the device doesn't natively support (the old
+    behaviour) yields misaligned/garbled samples — distortion + noise."""
+    for ch in channels_list:
+        for rate in rates_list:
+            if is_supported(ch, rate):
+                return (ch, rate)
+    return None
+
+
+def _norm_dev(name: str) -> str:
+    """Normalize a device name for tolerant matching: lowercase, collapse spaces,
+    and fold typographic apostrophes to a plain one. Bluetooth/AirPods names vary
+    by exactly these between sessions/profiles, which broke exact-string matching."""
+    s = (name or "").lower().strip()
+    for ch in ("’", "‘", "ʼ", "`"):   # curly/modifier apostrophes
+        s = s.replace(ch, "'")
+    return " ".join(s.split())
+
+
+def _match_device_index(names: list[str], target: str) -> int:
+    """Index of the device best matching `target`, or -1. Exact (normalized) first,
+    then a substring match either direction (handles profile-renamed suffixes)."""
+    if not target:
+        return -1
+    nt = _norm_dev(target)
+    norm = [_norm_dev(n) for n in names]
+    if nt in norm:
+        return norm.index(nt)
+    for i, n in enumerate(norm):
+        if n and (nt in n or n in nt):
+            return i
+    return -1
+
+
+def _index_for_saved_mic(names: list[str], saved_name: str) -> int:
+    """Index of the agent's remembered mic in the dropdown list, else 0.
+
+    The agent picks their device (e.g. a Bluetooth headset) once; we persist the
+    name and re-select it on every launch so they never re-pick. Tolerant matching
+    (see _match_device_index) handles Bluetooth/AirPods name variance. Falls back
+    to 0 when nothing is saved or the saved device isn't currently connected."""
+    i = _match_device_index(names, saved_name)
+    return i if i >= 0 else 0
+
+
+def _index_for_saved_or_default_spk(spk_names: list[str], saved_name: str,
+                                    default_output_name: str) -> int:
+    """Index of the speaker-loopback to capture the customer's audio.
+
+    Priority: (1) the agent's remembered manual override, (2) the loopback of the
+    Windows default output device — which follows the headset when connected, so
+    the customer side auto-pairs with the chosen mic — (3) first device. WASAPI
+    loopback names embed the output device name (e.g. 'Headset (PLT) [Loopback]'),
+    so we match the default output name as a substring."""
+    i = _match_device_index(spk_names, saved_name)
+    if i >= 0:
+        return i
+    i = _match_device_index(spk_names, default_output_name)
+    if i >= 0:
+        return i
+    return 0
+
+
+def _needs_mic_gate(token: str, saved_mic: str) -> bool:
+    """First-run mic setup gate: True when the agent is logged in but has never
+    picked a microphone. Blocks recording (incl. dialer auto-start) behind a
+    one-time setup overlay so we never record a silent/wrong default device.
+    Not logged in -> the login screen handles it, so no gate."""
+    return bool(token) and not saved_mic
+
 # Backend API (login + config) and recording-server WebSocket.
 # Defaults target local dev; both are overridable via QSettings (Settings panel).
 DEFAULT_API_BASE_URL = "http://localhost:8000"
@@ -105,6 +180,11 @@ _LUCIDE = {
                '<path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/>'
                '<path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 '
                '10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/>',
+    # lucide "refresh-cw" — crisp vector rescan glyph (replaces the ↻ text char).
+    "refresh": '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>'
+               '<path d="M21 3v5h-5"/>'
+               '<path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>'
+               '<path d="M3 21v-5h5"/>',
 }
 
 
@@ -333,6 +413,100 @@ class ValidateWorker(QThread):
             self.valid.emit(resp.json(), resp.headers.get("ETag", ""), user)
 
 
+class StartCallWorker(QThread):
+    """Runs AudioStreamer.connect() (WebSocket + identify + session_start, which
+    includes server-side token validation) OFF the UI thread, so pressing Start
+    never freezes the widget for the handshake."""
+    connected = pyqtSignal()
+    failed = pyqtSignal(str)
+
+    def __init__(self, streamer, parent=None):
+        super().__init__(parent)
+        self.streamer = streamer
+
+    def run(self):
+        try:
+            self.streamer.connect()
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.connected.emit()
+
+
+class ControlConnection(QThread):
+    """Persistent login-time WebSocket. It `identify`s the agent so the dialer can
+    reach an IDLE widget (registers in the server's agent index) and forwards
+    inbound control messages (dialer_activate / dialer_stop) to the widget. It
+    does NO recording/session — that's the per-call AudioStreamer. Reconnects with
+    a short backoff so the widget stays reachable across drops/server restarts."""
+    message = pyqtSignal(dict)
+
+    _BACKOFF_SECONDS = 3.0
+
+    def __init__(self, server_url, client_id, agent_id, agent_email, parent=None):
+        super().__init__(parent)
+        self.server_url = server_url
+        self.client_id = client_id
+        self.agent_id = agent_id
+        self.agent_email = agent_email
+        self._stop = threading.Event()
+        self._ws = None
+
+    def _serve_once(self):
+        """One connect → identify → receive-until-error pass (no reconnect)."""
+        ws = _websocket.create_connection(
+            self.server_url, timeout=10, enable_multithread=True)
+        self._ws = ws
+        try:
+            ws.send(json.dumps({
+                "command": "identify",
+                "client_id": self.client_id,
+                "client_name": "SparkFlowWidget-control",
+                "agent_email": self.agent_email,
+                "agent_id": self.agent_id,
+            }))
+            if json.loads(ws.recv()).get("status") != "identified":
+                return   # server didn't accept us — let run() back off + retry
+            ws.settimeout(1.0)
+            while not self._stop.is_set():
+                try:
+                    raw = ws.recv()
+                except _websocket.WebSocketTimeoutException:
+                    continue                 # idle tick — re-check stop flag
+                except Exception:
+                    break                    # dropped — reconnect
+                if not raw:
+                    continue
+                try:
+                    msg = json.loads(raw)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    continue
+                if isinstance(msg, dict):
+                    self.message.emit(msg)
+        finally:
+            try:
+                ws.close()
+            except Exception:
+                pass
+
+    def run(self):
+        while not self._stop.is_set():
+            try:
+                self._serve_once()
+            except Exception:
+                pass                         # connect failed — back off + retry
+            if not self._stop.is_set():
+                self._stop.wait(self._BACKOFF_SECONDS)
+
+    def stop(self):
+        self._stop.set()
+        try:
+            if self._ws is not None:
+                self._ws.close()
+        except Exception:
+            pass
+
+
 class ConfigRefreshWorker(QThread):
     """Re-fetch the widget config scoped to a department (dialer leg switch).
     Best-effort: on any failure we keep the current config."""
@@ -401,8 +575,30 @@ class RecordingThread(QThread):
         stream = None
         try:
             if self.is_loopback:
-                actual_channels = max(1, self.channels)
-                actual_rate = self.sample_rate if self.sample_rate > 0 else 48000
+                # Capture the customer side at the render device's TRUE mix format.
+                # Probe device-supported (channels, rate) — guessing a wrong format
+                # (the old blind open) produced misaligned/garbled audio. Candidates
+                # lead with the device's reported values; 16000 covers Bluetooth HFP.
+                def _supported(ch, rate, _p=p, _idx=self.device_index):
+                    try:
+                        return bool(_p.is_format_supported(
+                            rate, input_device=_idx, input_channels=ch,
+                            input_format=AUDIO_FORMAT))
+                    except Exception:
+                        return False
+
+                ch_candidates = list(dict.fromkeys([max(1, self.channels), 2, 1]))
+                reported = self.sample_rate if self.sample_rate > 0 else 48000
+                rate_candidates = list(dict.fromkeys([reported, 48000, 44100, 16000]))
+                chosen = _pick_stream_format(_supported, ch_candidates, rate_candidates)
+
+                if chosen is not None:
+                    actual_channels, actual_rate = chosen
+                else:
+                    # Nothing reported supported — fall back to the device's values
+                    # so we still record (better degraded than nothing).
+                    actual_channels = max(1, self.channels)
+                    actual_rate = reported
                 stream = p.open(
                     format=AUDIO_FORMAT,
                     channels=actual_channels,
@@ -503,7 +699,13 @@ class AudioStreamer:
         agent_email: str = "",
         department: str = "",
         dialer_metadata: dict | None = None,
+        register_for_dialer: bool = True,
     ):
+        # When False, the identify message omits agent_email/agent_id so this
+        # connection does NOT register in the server's dialer index. The per-call
+        # recording connection uses False so it won't clobber the persistent
+        # ControlConnection's registration.
+        self.register_for_dialer = register_for_dialer
         self.department = department  # call-leg department key (scopes the checklist)
         # Dialer call metadata (lead id, campaign, direction, transfer flag) for a
         # dialer-originated call; the server stores it on the session. None = manual.
@@ -518,6 +720,10 @@ class AudioStreamer:
         self.reference_id = reference_id
         self.token = token  # Phase 4: server validates this at session_start
         self._ws = None
+        # Whether the server runs the live transcription/compliance pipeline for
+        # this session (from the session_started ack). Default True = behave as
+        # before (show compliance summary) for older servers that don't send it.
+        self.live_pipeline = True
         self._lock = threading.Lock()
         self._receiver_stop = threading.Event()
         self._receiver_thread: threading.Thread | None = None
@@ -530,15 +736,18 @@ class AudioStreamer:
             self.server_url, timeout=10, enable_multithread=True
         )
 
-        self._send_json({
+        identify_msg = {
             "command":     "identify",
             "client_id":   self.client_id,
             "client_name": "SparkFlowWidget",
-            # Phase 4: let the server index this widget by agent so the dialer
-            # webhook can target it. Server lowercases + maps these.
-            "agent_email": self.agent_email,
-            "agent_id":    self.agent_id,
-        })
+        }
+        # Only register this connection for dialer targeting when asked. The
+        # persistent ControlConnection registers; the per-call recording
+        # connection does NOT (so it can't clobber that registration).
+        if self.register_for_dialer:
+            identify_msg["agent_email"] = self.agent_email
+            identify_msg["agent_id"] = self.agent_id
+        self._send_json(identify_msg)
         resp = json.loads(self._ws.recv())
         if resp.get("status") != "identified":
             raise RuntimeError(f"Server identification failed: {resp}")
@@ -566,6 +775,7 @@ class AudioStreamer:
         resp = json.loads(self._ws.recv())
         if resp.get("status") != "session_started":
             raise RuntimeError(f"Server session_start failed: {resp}")
+        self.live_pipeline = bool(resp.get("live_pipeline", True))
 
         self._receiver_stop.clear()
         self._receiver_thread = threading.Thread(
@@ -1028,6 +1238,17 @@ class SummaryScreen(QFrame):
             "✗ Missed: " + (", ".join(missed) if missed else "none"))
         self._saved_lbl.setText("Saving recording…")
 
+    def show_saved_only(self, duration_seconds: int):
+        """Recording-only confirmation — no compliance score (pipeline is off)."""
+        self._score.setStyleSheet(
+            f"font-size:44px; font-weight:800; font-family:{FF}; color:#16A34A;")
+        self._score.setText("✓")
+        m, s = divmod(int(duration_seconds or 0), 60)
+        self._duration.setText(f"Duration  {m:02d}:{s:02d}")
+        self._covered_lbl.setText("")
+        self._missed_lbl.setText("")
+        self._saved_lbl.setText("Saving recording…")
+
     def mark_saved(self):
         self._saved_lbl.setText("✓ Recording saved")
 
@@ -1090,6 +1311,22 @@ class MainWindow(QMainWindow):
         # Dialer call metadata stashed by _handle_dialer_activate and consumed
         # (one-shot) by the next _start_recording. None for manual calls.
         self._pending_dialer_meta: dict | None = None
+        # First-run mic-setup gate: dims the widget + shows a setup card until the
+        # agent picks a microphone. Blocks recording (incl. dialer auto-start).
+        self._mic_gate_active: bool = False
+        self._mic_gate_overlay = None   # lazily built QFrame overlay
+        # Whether the current call's server runs live transcription/compliance.
+        # Set from the session_started ack; gates the post-call compliance summary.
+        self._live_pipeline: bool = True
+        # Connecting-to-server state: connect() runs on a worker thread so Start
+        # never freezes the UI. _pending_streamer holds it until the worker reports.
+        self._starting: bool = False
+        self._pending_streamer = None
+        self._start_worker = None
+        # Persistent control connection (Option A): identifies the agent at login
+        # so the dialer can reach an idle widget. Stable client id per widget run.
+        self._control = None
+        self._control_client_id = str(uuid.uuid4())
         self._company_name: str = ""
         self._remember: bool = True
         self._api_base = self._settings.value("api/base_url", DEFAULT_API_BASE_URL)
@@ -1116,6 +1353,13 @@ class MainWindow(QMainWindow):
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
+
+        # Polls for hot-plugged audio devices (e.g. a Bluetooth headset connected
+        # after launch). Runs only while the setup gate or Settings panel is open
+        # — never during a call. See _start_rescan_poll / _stop_rescan_poll.
+        self._rescan_timer = QTimer(self)
+        self._rescan_timer.setInterval(2000)
+        self._rescan_timer.timeout.connect(self._rescan_devices)
 
         self._build_ui()
         self._build_tray()
@@ -1496,6 +1740,10 @@ class MainWindow(QMainWindow):
         settings_lay.addWidget(mic_lbl)
         self._mic_combo = QComboBox()
         self._mic_combo.setStyleSheet(INPUT_STYLE)
+        # Remember the agent's manual mic pick. `activated` fires only on a real
+        # user selection (not programmatic setCurrentIndex), so re-selecting the
+        # saved device on launch won't loop back and overwrite it.
+        self._mic_combo.activated.connect(self._on_mic_selected)
         settings_lay.addWidget(self._mic_combo)
 
         spk_lbl = QLabel("Customer Voice")
@@ -1503,7 +1751,19 @@ class MainWindow(QMainWindow):
         settings_lay.addWidget(spk_lbl)
         self._spk_combo = QComboBox()
         self._spk_combo.setStyleSheet(INPUT_STYLE)
+        # Remember the agent's manual speaker pick (same one-shot rule as the mic).
+        self._spk_combo.activated.connect(self._on_spk_selected)
         settings_lay.addWidget(self._spk_combo)
+
+        rescan_btn = QPushButton("  Rescan devices")
+        rescan_btn.setIcon(svg_icon("refresh", "#6B4EFF", 16))
+        rescan_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        rescan_btn.setStyleSheet(
+            "QPushButton { background:transparent; color:#6B4EFF; border:none;"
+            " font-size:12px; font-weight:600; text-align:left; }"
+            " QPushButton:hover { color:#5438D6; }")
+        rescan_btn.clicked.connect(self._rescan_devices)
+        settings_lay.addWidget(rescan_btn)
 
         hr2 = QFrame()
         hr2.setFrameShape(QFrame.Shape.HLine)
@@ -1700,10 +1960,39 @@ class MainWindow(QMainWindow):
         self._refresh_identity_labels()
         self._show_front()
         self._stack.setCurrentWidget(self._page_main)
+        # Re-scan + re-apply the saved device selection on login, so a headset
+        # connected before login (or that enumerated late at startup) is used —
+        # the selection isn't otherwise refreshed between logout and login.
+        self._rescan_devices()
+        # Open the persistent control connection so the dialer can reach this
+        # widget while it sits idle (auto-start from XDial).
+        self._start_control_connection()
+        # First-run: block use behind the mic-setup gate until a mic is chosen.
+        self._maybe_show_mic_gate()
+
+    def _start_control_connection(self):
+        """Open the persistent dialer-reachable control connection (idempotent)."""
+        if self._control is not None or not self._token:
+            return
+        self._control = ControlConnection(
+            self._ws_url, self._control_client_id,
+            self._user.get("id", "") or "", self._user.get("email", "") or "")
+        self._control.message.connect(self._on_inbound_message)
+        self._control.start()
+
+    def _stop_control_connection(self):
+        if self._control is not None:
+            try:
+                self._control.stop()
+                self._control.wait(2000)
+            except Exception:
+                pass
+            self._control = None
 
     def _logout(self):
         if self._recording:
             self._stop_recording()
+        self._stop_control_connection()
         self._settings.remove("auth/token")
         self._token = ""
         self._user = {}
@@ -1728,12 +2017,17 @@ class MainWindow(QMainWindow):
         self._front_card.setVisible(showing_settings)
         if not showing_settings:
             self._summary_card.setVisible(False)
+            self._rescan_devices()      # refresh list on open
+            self._start_rescan_poll()   # keep catching hot-plugged devices
+        else:
+            self._stop_rescan_poll()
 
     def _save_settings(self):
         self._api_base = self._api_edit.text().strip() or DEFAULT_API_BASE_URL
         self._ws_url = self._ws_edit.text().strip() or DEFAULT_RECORDING_WS
         self._settings.setValue("api/base_url", self._api_base)
         self._settings.setValue("ws/url", self._ws_url)
+        self._stop_rescan_poll()
         self._show_front()
 
     # ── Tray ──────────────────────────────────────────────────
@@ -1793,8 +2087,181 @@ class MainWindow(QMainWindow):
         if not self._mic_devices:
             self._mic_combo.addItem("⚠  No microphone devices found")
 
+        # Re-select the agent's remembered mic (saved on a previous manual pick)
+        # so a connected headset is used automatically — no re-picking each launch.
+        if self._mic_devices:
+            saved = self._settings.value("audio/mic_name", "") or ""
+            names = [d["name"] for d in self._mic_devices]
+            self._mic_combo.setCurrentIndex(_index_for_saved_mic(names, saved))
+
+        # Auto-select the customer-audio loopback: saved override -> loopback of
+        # the Windows default output (follows the headset) -> first.
+        if self._spk_devices:
+            saved_spk = self._settings.value("audio/spk_name", "") or ""
+            default_out = ""
+            try:
+                out_idx = int(wasapi_info.get("defaultOutputDevice", -1))
+                if out_idx >= 0:
+                    default_out = self._pa.get_device_info_by_index(out_idx).get("name", "")
+            except Exception:
+                default_out = ""
+            spk_names = [d["name"] for d in self._spk_devices]
+            self._spk_combo.setCurrentIndex(
+                _index_for_saved_or_default_spk(spk_names, saved_spk, default_out))
+
+    def _on_mic_selected(self, index: int):
+        """Persist the agent's manual mic choice (by name) for future launches."""
+        if 0 <= index < len(self._mic_devices):
+            self._settings.setValue("audio/mic_name", self._mic_devices[index]["name"])
+            # Setup complete -> release the first-run gate if it was up.
+            self._clear_mic_gate()
+
+    def _on_spk_selected(self, index: int):
+        """Persist the agent's manual speaker (customer-audio) choice by name."""
+        if 0 <= index < len(self._spk_devices):
+            self._settings.setValue("audio/spk_name", self._spk_devices[index]["name"])
+
+    def _start_rescan_poll(self):
+        """Begin polling for hot-plugged devices (gate/Settings open, idle only)."""
+        if not self._recording:
+            self._rescan_timer.start()
+
+    def _stop_rescan_poll(self):
+        self._rescan_timer.stop()
+
+    def _rescan_devices(self):
+        """Re-detect audio devices so a hot-plugged headset appears without a
+        restart. PortAudio caches its device list at init, so we recreate the
+        PyAudio instance. NEVER while recording — that would break live streams."""
+        if self._recording:
+            return
+        try:
+            self._pa.terminate()
+        except Exception:
+            pass
+        self._pa = pyaudio.PyAudio()
+        self._enumerate_devices()   # preserves selection via saved names
+        # Keep the gate's picker in sync if the gate is currently up.
+        if self._mic_gate_active and self._mic_gate_overlay is not None:
+            cur = self._gate_combo.currentText()
+            self._gate_combo.clear()
+            for d in self._mic_devices:
+                self._gate_combo.addItem(d["name"])
+            i = self._gate_combo.findText(cur)
+            if i >= 0:
+                self._gate_combo.setCurrentIndex(i)
+
+    # ── First-run mic-setup gate (dim overlay) ────────────────
+    def _build_mic_gate_overlay(self):
+        """Lazily build the dim overlay + centered setup card (mic picker)."""
+        overlay = QFrame(self._page_main)
+        overlay.setObjectName("micGate")
+        # Dim, semi-opaque scrim (reliable on the translucent window — true blur
+        # renders unpredictably with WA_TranslucentBackground).
+        overlay.setStyleSheet(
+            "QFrame#micGate { background: rgba(10,12,20,0.78); }"
+            "QFrame#micGateCard { background:white; border-radius:18px; }"
+            "QLabel#micGateTitle { color:#0B1220; font-size:18px; font-weight:700; }"
+            "QLabel#micGateBody  { color:#5B6577; font-size:13px; }"
+        )
+        outer = QVBoxLayout(overlay)
+        outer.setContentsMargins(24, 24, 24, 24)
+        outer.addStretch(1)
+
+        card = QFrame(overlay)
+        card.setObjectName("micGateCard")
+        card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(22, 20, 22, 20)
+        cl.setSpacing(12)
+
+        title = QLabel("Choose your microphone")
+        title.setObjectName("micGateTitle")
+        body = QLabel("Select your headset so we record your voice clearly. "
+                      "You only need to do this once.")
+        body.setObjectName("micGateBody")
+        body.setWordWrap(True)
+        self._gate_combo = QComboBox()
+        # Self-contained style (INPUT_STYLE is local to _build_main_page).
+        self._gate_combo.setStyleSheet(
+            "QComboBox { height:40px; border-radius:10px; border:1px solid #E8E8F0;"
+            " padding:0 12px; font-size:13px; background:#F7F7FB; color:#1A1A2E; }"
+            "QComboBox QAbstractItemView { background:#FFFFFF; color:#1A1A2E; }")
+        confirm = QPushButton("Confirm microphone")
+        confirm.setStyleSheet(
+            "QPushButton { background:#6B4EFF; color:#FFFFFF; border:none;"
+            " border-radius:12px; padding:10px 16px; font-weight:600; }"
+            "QPushButton:hover { background:#5438D6; }")
+        confirm.clicked.connect(self._confirm_gate_mic)
+
+        rescan = QPushButton("  Don't see your headset? Rescan")
+        rescan.setIcon(svg_icon("refresh", "#6B4EFF", 15))
+        rescan.setStyleSheet(
+            "QPushButton { background:transparent; color:#6B4EFF; border:none;"
+            " font-size:12px; font-weight:600; } QPushButton:hover { color:#5438D6; }")
+        rescan.setCursor(Qt.CursorShape.PointingHandCursor)
+        rescan.clicked.connect(self._rescan_devices)
+
+        cl.addWidget(title)
+        cl.addWidget(body)
+        cl.addWidget(self._gate_combo)
+        cl.addWidget(confirm)
+        cl.addWidget(rescan)
+
+        wrap = QHBoxLayout()
+        wrap.addStretch(1)
+        wrap.addWidget(card, 3)
+        wrap.addStretch(1)
+        outer.addLayout(wrap)
+        outer.addStretch(1)
+
+        self._mic_gate_overlay = overlay
+        # Dynamically-built widgets miss the startup smoothing pass and render
+        # soft — apply antialias + full hinting so the card text/buttons are crisp.
+        _smooth_fonts(overlay)
+
+    def _show_mic_gate(self):
+        """Dim the widget and present the one-time mic-setup card."""
+        self._mic_gate_active = True
+        if self._mic_gate_overlay is None:
+            self._build_mic_gate_overlay()
+        self._gate_combo.clear()
+        for d in self._mic_devices:
+            self._gate_combo.addItem(d["name"])
+        self._mic_gate_overlay.setGeometry(self._page_main.rect())
+        self._mic_gate_overlay.raise_()
+        self._mic_gate_overlay.setVisible(True)
+        _smooth_fonts(self._mic_gate_overlay)   # keep card text/buttons crisp
+        self._start_rescan_poll()   # catch a headset connected after this opens
+
+    def _confirm_gate_mic(self):
+        """Save the mic chosen in the gate card; this also clears the gate."""
+        i = self._gate_combo.currentIndex()
+        if 0 <= i < len(self._mic_devices):
+            self._mic_combo.setCurrentIndex(i)   # keep Settings in sync
+            self._on_mic_selected(i)             # persists + clears the gate
+
+    def _clear_mic_gate(self):
+        """Release the gate and hide the overlay (safe if never shown)."""
+        self._mic_gate_active = False
+        self._stop_rescan_poll()
+        if self._mic_gate_overlay is not None:
+            self._mic_gate_overlay.setVisible(False)
+
+    def _maybe_show_mic_gate(self):
+        """Show the setup gate after login if the agent hasn't picked a mic yet."""
+        if _needs_mic_gate(self._token, self._settings.value("audio/mic_name", "") or ""):
+            self._show_mic_gate()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._mic_gate_active and self._mic_gate_overlay is not None:
+            self._mic_gate_overlay.setGeometry(self._page_main.rect())
+
     # ── Recording control ─────────────────────────────────────
     def _toggle_recording(self):
+        if self._starting:
+            return   # a connection is already in flight — ignore extra presses
         if self._recording:
             self._stop_recording()
         else:
@@ -1833,6 +2300,13 @@ class MainWindow(QMainWindow):
             )
             return
 
+        # Guard against double-launch while a connection is already in flight.
+        if self._starting:
+            return
+
+        # Never re-enumerate/recreate PyAudio during a live recording.
+        self._stop_rescan_poll()
+
         client_id = str(uuid.uuid4())
         session_id = str(uuid.uuid4())
         streamer = AudioStreamer(
@@ -1847,24 +2321,62 @@ class MainWindow(QMainWindow):
             agent_email=self._user.get("email", ""),
             department=self._active_department,
             dialer_metadata=self._pending_dialer_meta,
+            # The persistent ControlConnection holds the dialer registration; this
+            # per-call connection must not register (it would clobber it on close).
+            register_for_dialer=False,
         )
         # One-shot: a later manual call must not inherit this dialer metadata.
         self._pending_dialer_meta = None
-        try:
-            streamer.connect()
-        except Exception as exc:
-            self._tray.showMessage(
-                "Spark Flow",
-                "Connection issue – could not reach the server. Please check your connection.",
-                QSystemTrayIcon.MessageIcon.Warning, 3000)
-            QMessageBox.critical(
-                self, "Connection Issue",
-                f"Could not connect to the recording server.\n"
-                f"Please check your connection and try again.\n\nDetail: {exc}")
-            return
-
         # Phase 3: receive inbound server messages (compliance alerts etc.)
         streamer.on_message = self._on_inbound_message
+
+        # Connect on a worker thread so the UI stays responsive ("Starting…").
+        self._pending_streamer = streamer
+        self._starting = True
+        self._set_starting_ui()
+        self._start_worker = StartCallWorker(streamer)
+        self._start_worker.connected.connect(self._on_call_connected)
+        self._start_worker.failed.connect(self._on_call_failed)
+        self._start_worker.start()
+
+    def _set_starting_ui(self):
+        """Show an immediate 'connecting' state while the worker handshakes."""
+        self._rec_btn.setText("Starting…")
+        self._rec_btn.setEnabled(False)
+        self._status_chip.setText("● Connecting…")
+        self._status_chip.setStyleSheet(
+            "background:#FFF7ED; color:#D97706; border-radius:12px;"
+            f"padding:4px 12px; font-size:12px; font-family:{FF}; font-weight:700;")
+
+    def _on_call_failed(self, detail: str):
+        """Worker could not connect — surface the error and return to idle."""
+        self._starting = False
+        self._pending_streamer = None
+        self._rec_btn.setEnabled(True)
+        self._rec_btn.setText("Start Call Recording")
+        self._status_chip.setText("● Ready to Record")
+        self._status_chip.setStyleSheet(
+            "background:#F0FDF4; color:#22C55E; border-radius:12px;"
+            f"padding:4px 12px; font-size:12px; font-family:{FF}; font-weight:700;")
+        self._tray.showMessage(
+            "Spark Flow",
+            "Connection issue – could not reach the server. Please check your connection.",
+            QSystemTrayIcon.MessageIcon.Warning, 3000)
+        QMessageBox.critical(
+            self, "Connection Issue",
+            f"Could not connect to the recording server.\n"
+            f"Please check your connection and try again.\n\nDetail: {detail}")
+
+    def _on_call_connected(self):
+        """Worker connected — start the audio streams and enter recording state."""
+        streamer = self._pending_streamer
+        self._pending_streamer = None
+        self._starting = False
+        self._rec_btn.setEnabled(True)
+        if streamer is None:
+            return
+        # The server told us whether live compliance runs (gates the summary).
+        self._live_pipeline = getattr(streamer, "live_pipeline", True)
 
         self._streamer = streamer
         self._streams_started = 0
@@ -1921,9 +2433,8 @@ class MainWindow(QMainWindow):
         self._tray_rec_act.setText("⏹  Stop Recording")
         self._tray.setIcon(ICON_RECORDING)
         self._tray.setToolTip("Spark Flow – RECORDING")
-        self._tray.showMessage(
-            "Spark Flow", "Recording started",
-            QSystemTrayIcon.MessageIcon.Information, 2000)
+        # No tray toast on start/stop: its Windows notification ding is captured
+        # by the customer-side loopback. The status chip already shows state.
 
     def _on_stream_ready(self, stream_type: str, channels: int, sample_rate: int):
         if self._streamer is None:
@@ -1979,12 +2490,14 @@ class MainWindow(QMainWindow):
         self._tray_rec_act.setText("⏺  Start Recording")
         self._tray.setIcon(ICON_IDLE)
         self._tray.setToolTip("Spark Flow – idle")
-        self._tray.showMessage(
-            "Spark Flow", "Recording stopped",
-            QSystemTrayIcon.MessageIcon.Information, 3000)
+        # No "Recording stopped" toast — its ding can be caught by the loopback tail.
 
         if was_recording:
-            self._show_local_summary(duration)
+            if self._live_pipeline:
+                self._show_local_summary(duration)
+            else:
+                # Recording-only: no compliance to summarise — just confirm the save.
+                self._show_saved_confirmation(duration)
 
     # ── Inbound server messages (Phase 3) ─────────────────────
     def _on_inbound_message(self, msg: dict):
@@ -2032,6 +2545,13 @@ class MainWindow(QMainWindow):
         # Guard against double-start: never start a second call.
         if self._recording:
             return
+        # First-run gate: if the agent hasn't picked a mic yet, do NOT record on
+        # a default/wrong device — surface the setup overlay and bail. The dialer
+        # re-fires on the next call once setup is done.
+        if _needs_mic_gate(self._token, self._settings.value("audio/mic_name", "") or ""):
+            self._show_window()
+            self._show_mic_gate()
+            return
         # Stash the call metadata so the upcoming session_start can store it on
         # the session (one-shot; cleared after _start_recording consumes it).
         self._pending_dialer_meta = {
@@ -2074,6 +2594,14 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+    def _show_saved_confirmation(self, duration: int):
+        """Recording-only: show a simple 'recording saved' card (no compliance)."""
+        self._server_summary_shown = True   # block any stale compliance summary
+        self._summary_card.show_saved_only(duration)
+        self._front_card.setVisible(False)
+        self._settings_card.setVisible(False)
+        self._summary_card.setVisible(True)
+
     def _show_local_summary(self, duration: int):
         """Provisional summary from the last live state. The server sends an
         authoritative session_summary that overrides this; once that arrives,
@@ -2094,6 +2622,14 @@ class MainWindow(QMainWindow):
 
     def _show_server_summary(self, msg: dict):
         self._server_summary_shown = True  # authoritative — wins over local
+        # Recording-only: ignore any compliance numbers, just confirm the save.
+        if not self._live_pipeline:
+            self._summary_card.show_saved_only(
+                int(msg.get("duration_seconds", self._elapsed) or 0))
+            self._front_card.setVisible(False)
+            self._settings_card.setVisible(False)
+            self._summary_card.setVisible(True)
+            return
         print("[widget] showing SERVER summary (authoritative)")
         score = float(msg.get("score", 0.0) or 0.0)
         covered = msg.get("covered", []) or []
@@ -2154,6 +2690,7 @@ class MainWindow(QMainWindow):
     def _quit(self):
         if self._recording:
             self._stop_recording()
+        self._stop_control_connection()
         self._pa.terminate()
         QApplication.quit()
 
