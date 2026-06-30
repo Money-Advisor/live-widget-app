@@ -186,6 +186,10 @@ _LUCIDE = {
                '<path d="M21 3v5h-5"/>'
                '<path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>'
                '<path d="M3 21v-5h5"/>',
+    # Filled glyphs for the PCI pause/resume buttons (rendered solid via fill).
+    "pause": '<rect x="6" y="4" width="4.2" height="16" rx="1.4"/>'
+             '<rect x="13.8" y="4" width="4.2" height="16" rx="1.4"/>',
+    "play":  '<path d="M7 4.2a1 1 0 0 1 1.52-.85l11 7.8a1 1 0 0 1 0 1.7l-11 7.8A1 1 0 0 1 7 19.8z"/>',
 }
 
 
@@ -200,12 +204,15 @@ def _dpr() -> float:
     return 1.0
 
 
-def svg_icon(name: str, color: str = "#9AA0B4", size: int = 18) -> QIcon:
-    """Render a lucide outline icon to a crisp, hi-DPI-aware QIcon."""
+def svg_icon(name: str, color: str = "#9AA0B4", size: int = 18, fill: bool = False) -> QIcon:
+    """Render a lucide icon to a crisp, hi-DPI-aware QIcon. fill=True draws a
+    solid glyph (for the pause/play buttons); default is an outline stroke."""
     body = _LUCIDE[name]
+    fill_attr = color if fill else "none"
+    stroke_w = 0 if fill else 2
     svg = (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" '
-        f'viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" '
+        f'viewBox="0 0 24 24" fill="{fill_attr}" stroke="{color}" stroke-width="{stroke_w}" '
         f'stroke-linecap="round" stroke-linejoin="round">{body}</svg>'
     )
     renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
@@ -1724,8 +1731,9 @@ class MainWindow(QMainWindow):
         # ── PCI PAUSE — drop audio while the customer reads card details ──
         # Hidden until recording starts. State-driven (see _set_paused) so a
         # future dialer pause/resume trigger drives the same machine.
-        self._pause_btn = QPushButton("⏸  Pause for Card Payment")
-        self._pause_btn.setFixedHeight(40)
+        self._pause_btn = QPushButton("Pause for Card Payment")
+        self._pause_btn.setFixedHeight(44)
+        self._pause_btn.setIconSize(QSize(19, 19))
         self._pause_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._pause_btn.setVisible(False)
         self._pause_btn.clicked.connect(self._toggle_pause)
@@ -2303,21 +2311,26 @@ class MainWindow(QMainWindow):
 
     # ── PCI pause (card capture) ──────────────────────────────
     def _style_pause_btn(self):
-        """Amber outline when ready to pause; solid amber when paused (resume)."""
+        """Clean filled-yellow buttons with crisp vector icons. Amber while
+        recording (pause), brighter yellow while paused (resume)."""
         if self._paused:
+            # Paused → bright yellow "resume" affordance, dark ink + play glyph.
+            self._pause_btn.setIcon(svg_icon("play", "#7C2D12", 19, fill=True))
             self._pause_btn.setStyleSheet(
                 "QPushButton {"
-                "  background:#D97706; color:white; border:none;"
-                f"  border-radius:11px; font-size:13px; font-family:{FF}; font-weight:700;"
+                "  background:#FBBF24; color:#7C2D12; border:none;"
+                f"  border-radius:12px; font-size:14px; font-family:{FF}; font-weight:800;"
                 "}"
-                "QPushButton:hover { background:#B45309; }")
+                "QPushButton:hover { background:#F59E0B; }")
         else:
+            # Recording → amber "pause for card" button, white ink + pause glyph.
+            self._pause_btn.setIcon(svg_icon("pause", "#FFFFFF", 19, fill=True))
             self._pause_btn.setStyleSheet(
                 "QPushButton {"
-                "  background:transparent; color:#D97706; border:1.5px solid #F0C68A;"
-                f"  border-radius:11px; font-size:13px; font-family:{FF}; font-weight:700;"
+                "  background:#F59E0B; color:white; border:none;"
+                f"  border-radius:12px; font-size:14px; font-family:{FF}; font-weight:700;"
                 "}"
-                "QPushButton:hover { background:#FFF7ED; }")
+                "QPushButton:hover { background:#E08C07; }")
 
     def _toggle_pause(self):
         """Manual Pause/Resume button — flips the pause state."""
@@ -2341,14 +2354,14 @@ class MainWindow(QMainWindow):
     def _update_pause_ui(self):
         """Reflect the pause state on the button, status chip and timer."""
         if self._paused:
-            self._pause_btn.setText("▶  Resume Recording")
+            self._pause_btn.setText("Resume Recording")
             self._status_chip.setText("❚❚ Paused — not recording")
             self._status_chip.setStyleSheet(
                 "background:#FFF7ED; color:#D97706; border-radius:12px;"
                 f"padding:4px 12px; font-size:12px; font-family:{FF}; font-weight:700;")
             self._tray.setToolTip("Spark Flow – PAUSED (not recording)")
         else:
-            self._pause_btn.setText("⏸  Pause for Card Payment")
+            self._pause_btn.setText("Pause for Card Payment")
             self._status_chip.setText("● Recording Live")
             self._status_chip.setStyleSheet(
                 "background:#FFF5F5; color:#EF4444; border-radius:12px;"
