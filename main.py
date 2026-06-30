@@ -728,8 +728,22 @@ class AudioStreamer:
         self._lock = threading.Lock()
         self._receiver_stop = threading.Event()
         self._receiver_thread: threading.Thread | None = None
+        # PCI pause: when set, send_audio drops chunks so nothing is recorded
+        # during card capture. A STATE (not a toggle) so the manual button and a
+        # future dialer pause/resume trigger can both drive it without fighting.
+        self._pause_event = threading.Event()
         # Phase 3: set by MainWindow to receive inbound server messages.
         self.on_message = None
+
+    def set_paused(self, paused: bool):
+        """Set the pause state (idempotent). Paused = audio chunks dropped."""
+        if paused:
+            self._pause_event.set()
+        else:
+            self._pause_event.clear()
+
+    def is_paused(self) -> bool:
+        return self._pause_event.is_set()
 
     def connect(self):
         """Open WebSocket, identify the client, and start a session."""
@@ -830,6 +844,10 @@ class AudioStreamer:
 
     def send_audio(self, stream_type: str, audio_data: bytes):
         """Send a raw PCM chunk with the binary framing the server expects."""
+        # PCI pause: drop the chunk while paused so card audio is never sent or
+        # written. Both mic and speaker flow through here, so both pause together.
+        if self._pause_event.is_set():
+            return
         type_bytes = stream_type.encode("utf-8")
         packet = struct.pack("I", len(type_bytes)) + type_bytes + audio_data
         try:
@@ -1335,6 +1353,7 @@ class MainWindow(QMainWindow):
 
         # Recording state
         self._recording = False
+        self._paused = False        # PCI pause: True = audio dropped (card capture)
         self._elapsed = 0
         self._mic_thread: RecordingThread | None = None
         self._spk_thread: RecordingThread | None = None
@@ -1701,6 +1720,17 @@ class MainWindow(QMainWindow):
             "QPushButton:hover { background:#5438D6; }")
         self._rec_btn.clicked.connect(self._toggle_recording)
         front_lay.addWidget(self._rec_btn)
+
+        # ── PCI PAUSE — drop audio while the customer reads card details ──
+        # Hidden until recording starts. State-driven (see _set_paused) so a
+        # future dialer pause/resume trigger drives the same machine.
+        self._pause_btn = QPushButton("⏸  Pause for Card Payment")
+        self._pause_btn.setFixedHeight(40)
+        self._pause_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._pause_btn.setVisible(False)
+        self._pause_btn.clicked.connect(self._toggle_pause)
+        front_lay.addWidget(self._pause_btn)
+        self._style_pause_btn()
 
         # ── LIVE COMPLIANCE PANEL — own floating column, left of the card ──
         # (inside the card it fought the form for vertical space and the
@@ -2271,6 +2301,61 @@ class MainWindow(QMainWindow):
         # their fonts — re-apply text smoothing so they stay crisp.
         self._apply_font_smoothing()
 
+    # ── PCI pause (card capture) ──────────────────────────────
+    def _style_pause_btn(self):
+        """Amber outline when ready to pause; solid amber when paused (resume)."""
+        if self._paused:
+            self._pause_btn.setStyleSheet(
+                "QPushButton {"
+                "  background:#D97706; color:white; border:none;"
+                f"  border-radius:11px; font-size:13px; font-family:{FF}; font-weight:700;"
+                "}"
+                "QPushButton:hover { background:#B45309; }")
+        else:
+            self._pause_btn.setStyleSheet(
+                "QPushButton {"
+                "  background:transparent; color:#D97706; border:1.5px solid #F0C68A;"
+                f"  border-radius:11px; font-size:13px; font-family:{FF}; font-weight:700;"
+                "}"
+                "QPushButton:hover { background:#FFF7ED; }")
+
+    def _toggle_pause(self):
+        """Manual Pause/Resume button — flips the pause state."""
+        self._set_paused(not self._paused)
+
+    def _set_paused(self, paused: bool):
+        """Pause/resume recording as a STATE (idempotent). While paused, audio is
+        dropped at the streamer so nothing is captured — for PCI card capture.
+        The manual button AND a future dialer pause/resume trigger both call this,
+        so the two paths converge and never fight."""
+        if not self._recording or self._streamer is None:
+            return
+        paused = bool(paused)
+        if paused == self._paused:
+            return                      # already in this state — no-op
+        self._paused = paused
+        self._streamer.set_paused(paused)
+        self._update_pause_ui()
+        self._apply_font_smoothing()
+
+    def _update_pause_ui(self):
+        """Reflect the pause state on the button, status chip and timer."""
+        if self._paused:
+            self._pause_btn.setText("▶  Resume Recording")
+            self._status_chip.setText("❚❚ Paused — not recording")
+            self._status_chip.setStyleSheet(
+                "background:#FFF7ED; color:#D97706; border-radius:12px;"
+                f"padding:4px 12px; font-size:12px; font-family:{FF}; font-weight:700;")
+            self._tray.setToolTip("Spark Flow – PAUSED (not recording)")
+        else:
+            self._pause_btn.setText("⏸  Pause for Card Payment")
+            self._status_chip.setText("● Recording Live")
+            self._status_chip.setStyleSheet(
+                "background:#FFF5F5; color:#EF4444; border-radius:12px;"
+                f"padding:4px 12px; font-size:12px; font-family:{FF}; font-weight:700;")
+            self._tray.setToolTip("Spark Flow – RECORDING")
+        self._style_pause_btn()
+
     def _start_recording(self, require_name: bool = True):
         # require_name=True for the manual Start button (agent must type a name);
         # the dialer auto-start passes False (name is blank, resolved via CRM).
@@ -2413,10 +2498,14 @@ class MainWindow(QMainWindow):
         self._spk_thread.start()
 
         self._recording = True
+        self._paused = False           # every call starts actively recording
         self._elapsed = 0
         self._timer.start(1000)
 
         self._show_front()
+        # PCI pause control becomes available once recording.
+        self._pause_btn.setVisible(True)
+        self._update_pause_ui()
         self._customer_name_edit.setEnabled(False)
         self._reference_edit.setEnabled(False)
         self._rec_btn.setText("Stop Recording")
@@ -2471,8 +2560,10 @@ class MainWindow(QMainWindow):
         was_recording = self._recording
         duration = self._elapsed
         self._recording = False
+        self._paused = False
         self._timer.stop()
 
+        self._pause_btn.setVisible(False)
         self._customer_name_edit.setEnabled(True)
         self._reference_edit.setEnabled(True)
         self._rec_btn.setText("Start Call Recording")
@@ -2539,6 +2630,12 @@ class MainWindow(QMainWindow):
             # Mirror the Stop button. Ignore if not on a call.
             if self._recording:
                 self._stop_recording()
+        elif mtype == "dialer_pause":
+            # Future: dialer-driven PCI pause. Same state machine as the manual
+            # button, so manual and dialer control never fight.
+            self._set_paused(True)
+        elif mtype == "dialer_resume":
+            self._set_paused(False)
         # Unknown types are ignored quietly.
 
     def _handle_dialer_activate(self, msg: dict):

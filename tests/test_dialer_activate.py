@@ -747,6 +747,94 @@ def test_mic_gate_overlay_lifecycle(monkeypatch):
     w._settings.remove("audio/mic_name")
 
 
+def test_send_audio_dropped_while_paused():
+    """PCI pause: send_audio drops chunks while paused, sends when resumed."""
+    sent = []
+
+    class FakeWS:
+        def send_binary(self, packet): sent.append(packet)
+
+    s = main.AudioStreamer(server_url="ws://x", client_id="c1", session_id="s1",
+                           agent_id="u1", customer_name="C", customer_id="C",
+                           reference_id="R1", token="tok", agent_email="a@x.test")
+    s._ws = FakeWS()
+
+    s.send_audio("mic", b"\x01\x02")
+    assert len(sent) == 1                 # recording: chunk sent
+
+    s.set_paused(True)
+    assert s.is_paused() is True
+    s.send_audio("mic", b"\x03\x04")
+    s.send_audio("speaker", b"\x05\x06")
+    assert len(sent) == 1                 # paused: both streams dropped
+
+    s.set_paused(False)
+    s.send_audio("mic", b"\x07\x08")
+    assert len(sent) == 2                 # resumed: chunk sent again
+
+
+def test_set_paused_toggles_state_and_button(monkeypatch):
+    """Manual pause flips state + button label; resume restores. Idempotent."""
+    app = QApplication.instance() or QApplication([])
+    w = _win(app)
+    flags = []
+
+    class FakeStreamer:
+        def set_paused(self, p): flags.append(p)
+
+    w._recording = True
+    w._streamer = FakeStreamer()
+    w._pause_btn.setVisible(True)
+
+    w._toggle_pause()
+    assert w._paused is True
+    assert flags == [True]
+    assert "Resume" in w._pause_btn.text()
+
+    w._toggle_pause()
+    assert w._paused is False
+    assert flags == [True, False]
+    assert "Pause" in w._pause_btn.text()
+
+
+def test_set_paused_is_idempotent(monkeypatch):
+    """Setting the same state twice is a no-op (won't double-fire the streamer)."""
+    app = QApplication.instance() or QApplication([])
+    w = _win(app)
+    flags = []
+    w._recording = True
+    w._streamer = type("S", (), {"set_paused": lambda self, p: flags.append(p)})()
+
+    w._set_paused(True)
+    w._set_paused(True)
+    assert flags == [True]                # second call ignored
+
+
+def test_set_paused_noop_when_not_recording():
+    """Pause does nothing if there's no active call."""
+    app = QApplication.instance() or QApplication([])
+    w = _win(app)
+    w._recording = False
+    w._streamer = None
+    w._set_paused(True)
+    assert w._paused is False
+
+
+def test_dialer_pause_resume_use_same_state(monkeypatch):
+    """A future dialer pause/resume trigger drives the SAME state machine."""
+    app = QApplication.instance() or QApplication([])
+    w = _win(app)
+    flags = []
+    w._recording = True
+    w._streamer = type("S", (), {"set_paused": lambda self, p: flags.append(p)})()
+
+    w._handle_server_message({"type": "dialer_pause"})
+    assert w._paused is True
+    w._handle_server_message({"type": "dialer_resume"})
+    assert w._paused is False
+    assert flags == [True, False]
+
+
 def test_dialer_activate_honors_department(monkeypatch):
     """A dialer leg's department becomes the active scope for the call."""
     app = QApplication.instance() or QApplication([])
