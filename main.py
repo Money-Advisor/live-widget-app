@@ -2631,11 +2631,20 @@ class MainWindow(QMainWindow):
             self._compliance_panel.set_transcription_status(msg.get("state", ""))
         elif mtype == "session_summary":
             print(f"[widget] session_summary received: score={msg.get('score')} "
-                  f"covered={msg.get('covered')} missing={msg.get('missing')}")
+                  f"covered={msg.get('covered')} missing={msg.get('missing')} "
+                  f"recording_saved={msg.get('recording_saved')}")
             self._show_server_summary(msg)
+            # Fix 2: the server confirms the audio is safely captured right here
+            # in session_summary. Mark saved and release the socket NOW — don't
+            # wait on upload_complete, which is the background merge and can be
+            # minutes away on a long call (that wait was the "Saving…" freeze).
+            if msg.get("recording_saved"):
+                self._summary_card.mark_saved()
+            QTimer.singleShot(500, self._close_finished_streamer)
         elif mtype == "upload_complete":
+            # Background merge finished. The socket is usually already closed;
+            # if it's still open this just reaffirms the saved state.
             self._summary_card.mark_saved()
-            # post-call messages all received — release the connection
             QTimer.singleShot(500, self._close_finished_streamer)
         elif mtype == "dialer_activate":
             self._handle_dialer_activate(msg)
