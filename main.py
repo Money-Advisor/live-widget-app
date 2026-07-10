@@ -2682,12 +2682,17 @@ class MainWindow(QMainWindow):
             "is_transfer": msg.get("is_transfer"),
             "department": msg.get("department"),
         }
-        # Prefill the reference (fall back to lead_id); leave Customer Name blank
-        # — CRM resolves the name later.
+        # Prefill the reference (fall back to lead_id) and the customer name when the
+        # dialer resolved it (via the CRM phone->client lookup). If no name came
+        # through, leave the field blank rather than showing a stale value.
         ref = msg.get("customer_reference") or msg.get("lead_id") or ""
         if ref:
             self._reference_edit.setText(str(ref))
-        self._customer_name_edit.clear()
+        name = (msg.get("customer_name") or "").strip()
+        if name:
+            self._customer_name_edit.setText(name)
+        else:
+            self._customer_name_edit.clear()
         # Honor the call leg's department (e.g. a transfer routes to Advisor).
         # Set it now so session_start scopes the server checklist correctly, and
         # refresh the on-screen config to match (best-effort, non-blocking).
@@ -2701,8 +2706,8 @@ class MainWindow(QMainWindow):
                 self._cfg_refresh_worker.start()
         # Bring the widget to the foreground for the agent.
         self._show_window()
-        # Reuse the SAME start path as the manual button — no parallel logic.
-        # Name is blank (CRM resolves it later), so skip the name requirement.
+        # Reuse the SAME start path as the manual button — no parallel logic. The
+        # name may be blank (if the CRM lookup found nothing), so don't require it.
         self._start_recording(require_name=False)
 
     def _close_finished_streamer(self):

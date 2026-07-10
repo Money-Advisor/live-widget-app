@@ -38,6 +38,20 @@ def test_dialer_activate_starts_like_button(monkeypatch):
     assert w._customer_name_edit.text() == ""        # customer name left blank (CRM resolves)
 
 
+def test_dialer_activate_fills_customer_name(monkeypatch):
+    # When the dialer resolved the customer name (CRM phone->client lookup), the
+    # widget auto-fills the Customer Name field so the recording is labelled with it.
+    app = QApplication.instance() or QApplication([])
+    w = _win(app)
+    monkeypatch.setattr(w, "_start_recording", lambda *a, **k: None)
+    w._handle_server_message({
+        "type": "dialer_activate", "action": "start",
+        "customer_reference": "REF123", "customer_name": "James Hart",
+    })
+    assert w._reference_edit.text() == "REF123"
+    assert w._customer_name_edit.text() == "James Hart"    # name auto-filled
+
+
 def test_activate_falls_back_to_lead_id(monkeypatch):
     app = QApplication.instance() or QApplication([])
     w = _win(app)
