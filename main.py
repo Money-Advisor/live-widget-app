@@ -15,6 +15,7 @@ Requirements:
 
 import os
 import sys
+import time
 import wave
 import datetime
 import threading
@@ -305,6 +306,22 @@ def api_login(base_url: str, email: str, password: str) -> dict:
     raise BackendError(f"Login failed (server error {r.status_code}).")
 
 
+def api_refresh(base_url: str, refresh_token: str) -> dict:
+    """POST /auth/refresh-widget -> {token, refresh_token, expires_in}. Renews the
+    session's id token from the long-lived refresh token (no password needed)."""
+    try:
+        r = requests.post(
+            f"{base_url.rstrip('/')}/auth/refresh-widget",
+            json={"refresh_token": refresh_token},
+            timeout=15,
+        )
+    except requests.RequestException:
+        raise BackendError("Could not reach the server. Check your connection.")
+    if r.status_code == 200:
+        return r.json()
+    raise BackendError(f"Session refresh failed (server error {r.status_code}).")
+
+
 def api_get_config(base_url: str, token: str, etag: str | None = None,
                    department: str | None = None):
     """GET /api/widget/config. Returns the requests.Response (caller inspects).
@@ -356,8 +373,25 @@ def _user_from_me(me: dict) -> dict:
 # ──────────────────────────────────────────────────────────────
 # Login worker: authenticate then load config, off the UI thread
 # ──────────────────────────────────────────────────────────────
+def _as_expires_in(value) -> int:
+    """Firebase returns expiresIn as a string of seconds; be tolerant."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 3600
+
+
+def _needs_token_refresh(token, refresh_token, inflight, expiry, now=None) -> bool:
+    """Pure decision (unit-testable without Qt): renew when we hold a session that's
+    within 10 min of expiry (or of unknown age, expiry=0) plus a refresh token to
+    renew it, and no refresh is already running."""
+    now = time.time() if now is None else now
+    return bool(token and refresh_token and not inflight and now >= expiry - 600)
+
+
 class LoginWorker(QThread):
-    succeeded = pyqtSignal(str, dict, dict, str)   # token, user, config, etag
+    # token, refresh_token, expires_in, user, config, etag
+    succeeded = pyqtSignal(str, str, int, dict, dict, str)
     failed = pyqtSignal(str)
 
     def __init__(self, base_url, email, password, parent=None):
@@ -370,6 +404,8 @@ class LoginWorker(QThread):
         try:
             data = api_login(self.base_url, self.email, self.password)
             token = data.get("token", "")
+            refresh_token = data.get("refresh_token", "") or ""
+            expires_in = _as_expires_in(data.get("expires_in"))
             user = data.get("user", {}) or {}
             if not token:
                 raise BackendError("Server did not return a session token.")
@@ -379,7 +415,32 @@ class LoginWorker(QThread):
                     f"Could not load your company config ({resp.status_code}).")
             config = resp.json()
             etag = resp.headers.get("ETag", "")
-            self.succeeded.emit(token, user, config, etag)
+            self.succeeded.emit(token, refresh_token, expires_in, user, config, etag)
+        except BackendError as e:
+            self.failed.emit(str(e))
+        except Exception as e:
+            self.failed.emit(f"Unexpected error: {e}")
+
+
+class RefreshWorker(QThread):
+    """Silently renews the id token from the refresh token, off the UI thread, so
+    an idle widget never gets logged out mid-shift."""
+    refreshed = pyqtSignal(str, str, int)   # token, refresh_token, expires_in
+    failed = pyqtSignal(str)
+
+    def __init__(self, base_url, refresh_token, parent=None):
+        super().__init__(parent)
+        self.base_url = base_url
+        self.refresh_token = refresh_token
+
+    def run(self):
+        try:
+            data = api_refresh(self.base_url, self.refresh_token)
+            token = data.get("token", "") or ""
+            if not token:
+                raise BackendError("Server did not return a refreshed token.")
+            refresh_token = data.get("refresh_token", "") or self.refresh_token
+            self.refreshed.emit(token, refresh_token, _as_expires_in(data.get("expires_in")))
         except BackendError as e:
             self.failed.emit(str(e))
         except Exception as e:
@@ -1329,6 +1390,12 @@ class MainWindow(QMainWindow):
 
         # Auth / config state
         self._token: str = self._settings.value("auth/token", "") or ""
+        # Long-lived refresh token + when the id token expires, for silent renewal
+        # so an idle widget never gets logged out mid-shift.
+        self._refresh_token: str = self._settings.value("auth/refresh_token", "") or ""
+        self._token_expiry: float = 0.0        # epoch secs; 0 = unknown -> refresh soon
+        self._refresh_inflight: bool = False
+        self._refresh_worker: "RefreshWorker | None" = None
         self._user: dict = {}
         self._config: dict = {}
         # Active department key for this widget (from the loaded config; the
@@ -1387,6 +1454,15 @@ class MainWindow(QMainWindow):
         self._rescan_timer = QTimer(self)
         self._rescan_timer.setInterval(2000)
         self._rescan_timer.timeout.connect(self._rescan_devices)
+
+        # Silently renew the auth token before it expires so an idle widget never
+        # gets logged out mid-shift. Checks every few minutes and refreshes when the
+        # token is within ~10 min of its ~1-hour expiry. Harmless before login
+        # (no-op until there's a token + refresh token).
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(240000)   # 4 minutes
+        self._refresh_timer.timeout.connect(self._maybe_refresh_token)
+        self._refresh_timer.start()
 
         self._build_ui()
         self._build_tray()
@@ -1910,18 +1986,56 @@ class MainWindow(QMainWindow):
         self._login_worker.failed.connect(self._on_login_failed)
         self._login_worker.start()
 
-    def _on_login_succeeded(self, token: str, user: dict, config: dict, etag: str):
-        self._token = token
+    def _on_login_succeeded(self, token: str, refresh_token: str, expires_in: int,
+                            user: dict, config: dict, etag: str):
+        self._set_auth_tokens(token, refresh_token, expires_in)
         self._user = user or {}
         self._apply_config(config, etag)
-        if self._remember:
-            self._settings.setValue("auth/token", token)
-        else:
+        if not self._remember:
             self._settings.remove("auth/token")
+            self._settings.remove("auth/refresh_token")
         self._settings.setValue("api/base_url", self._api_base)
         self._set_login_busy(False)
         self._pw_edit.clear()
         self._enter_main()
+
+    def _set_auth_tokens(self, token: str, refresh_token: str, expires_in) -> None:
+        """Store the id token, refresh token, and id-token expiry. Persisted (when
+        'remember' is on) so the background refresh keeps the session alive past the
+        ~1-hour id-token lifetime without the agent logging in again."""
+        self._token = token or ""
+        if refresh_token:
+            self._refresh_token = refresh_token
+        self._token_expiry = time.time() + _as_expires_in(expires_in)
+        if self._remember and self._token:
+            self._settings.setValue("auth/token", self._token)
+            if self._refresh_token:
+                self._settings.setValue("auth/refresh_token", self._refresh_token)
+
+    def _token_needs_refresh(self) -> bool:
+        return _needs_token_refresh(self._token, self._refresh_token,
+                                    self._refresh_inflight, self._token_expiry)
+
+    def _maybe_refresh_token(self) -> None:
+        """Timer hook: renew the token in the background if it's near expiry."""
+        if not self._token_needs_refresh():
+            return
+        self._refresh_inflight = True
+        self._refresh_worker = RefreshWorker(self._api_base, self._refresh_token)
+        self._refresh_worker.refreshed.connect(self._on_token_refreshed)
+        self._refresh_worker.failed.connect(self._on_token_refresh_failed)
+        self._refresh_worker.start()
+
+    def _on_token_refreshed(self, token: str, refresh_token: str, expires_in: int):
+        self._refresh_inflight = False
+        self._set_auth_tokens(token, refresh_token, expires_in)
+        print("[widget] session token refreshed")
+
+    def _on_token_refresh_failed(self, message: str):
+        # Transient (network/backend) — keep the current token and retry next tick.
+        # We don't force a logout: the refresh token is long-lived.
+        self._refresh_inflight = False
+        print(f"[widget] token refresh failed (will retry): {message}")
 
     def _on_login_failed(self, message: str):
         self._set_login_busy(False)
@@ -1952,10 +2066,15 @@ class MainWindow(QMainWindow):
         if config:   # 200 with fresh config; {} means 304 -> keep cache
             self._apply_config(config, etag)
         self._enter_main()
+        # Remembered session: the stored id token may be old, so renew it now (if we
+        # have a refresh token) rather than waiting for it to expire mid-shift.
+        self._maybe_refresh_token()
 
     def _on_validate_bad(self):
         self._settings.remove("auth/token")
+        self._settings.remove("auth/refresh_token")
         self._token = ""
+        self._refresh_token = ""
         self._stack.setCurrentWidget(self._page_login)
 
     def _apply_config(self, config: dict, etag: str, persist: bool = True):
