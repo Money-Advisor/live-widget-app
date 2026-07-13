@@ -2076,6 +2076,11 @@ class MainWindow(QMainWindow):
         self._token = ""
         self._refresh_token = ""
         self._stack.setCurrentWidget(self._page_login)
+        # If we auto-started minimized but the remembered session turned out invalid,
+        # reveal the window so the agent can log in (otherwise it'd hide the login).
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
 
     def _apply_config(self, config: dict, etag: str, persist: bool = True):
         self._config = config or {}
@@ -2964,7 +2969,14 @@ def main():
     app.setFont(_app_font)
 
     win = MainWindow()
-    win.show()
+    # Auto-start on login: the installer adds a "--minimized" Run entry so the widget
+    # comes up quietly in the system tray instead of popping a window. The control
+    # connection still opens via the remembered session, so the dialer can reach it.
+    # With no remembered session we show the window so the agent can log in.
+    if "--minimized" in sys.argv and win._token:
+        pass
+    else:
+        win.show()
     sys.exit(app.exec())
 
 

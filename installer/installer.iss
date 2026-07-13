@@ -38,6 +38,13 @@ ArchitecturesInstallIn64BitMode=x64compatible
 [Tasks]
 ; "Create a desktop icon" — checked by default (no Unchecked flag).
 Name: "desktopicon"; Description: "Create a &desktop icon"; GroupDescription: "Additional shortcuts:"
+; Auto-start on Windows sign-in — checked by default (recommended for agents).
+Name: "startupicon"; Description: "Start Spark Flow automatically when I sign in to Windows (recommended)"; GroupDescription: "Startup:"
+
+[Registry]
+; Per-user auto-start on login (no admin). "--minimized" -> starts quietly in the
+; system tray. Removed on uninstall. Only added if the Startup task is ticked.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "SparkFlow"; ValueData: """{app}\{#AppExe}"" --minimized"; Flags: uninsdeletevalue; Tasks: startupicon
 
 [Files]
 Source: "..\dist\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
