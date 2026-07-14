@@ -1770,17 +1770,17 @@ class MainWindow(QMainWindow):
         sec_lbl.setStyleSheet(SECTION_STYLE)
         front_lay.addWidget(sec_lbl)
 
-        cust_lbl = QLabel("Customer Name")
-        cust_lbl.setStyleSheet(LABEL_STYLE)
-        front_lay.addWidget(cust_lbl)
+        self._cust_lbl = QLabel("Customer Name")
+        self._cust_lbl.setStyleSheet(LABEL_STYLE)
+        front_lay.addWidget(self._cust_lbl)
         self._customer_name_edit = QLineEdit()
         self._customer_name_edit.setPlaceholderText("e.g. John Smith")
         self._customer_name_edit.setStyleSheet(INPUT_STYLE)
         front_lay.addWidget(self._customer_name_edit)
 
-        ref_lbl = QLabel("Reference ID")
-        ref_lbl.setStyleSheet(LABEL_STYLE)
-        front_lay.addWidget(ref_lbl)
+        self._ref_lbl = QLabel("Reference ID")
+        self._ref_lbl.setStyleSheet(LABEL_STYLE)
+        front_lay.addWidget(self._ref_lbl)
         self._reference_edit = QLineEdit()
         self._reference_edit.setPlaceholderText("e.g. REF-12345")
         self._reference_edit.setStyleSheet(INPUT_STYLE)
@@ -2107,6 +2107,21 @@ class MainWindow(QMainWindow):
             if etag:
                 self._settings.setValue("config/etag", etag)
         self._refresh_identity_labels()
+        self._apply_customer_field_visibility()
+
+    def _apply_customer_field_visibility(self):
+        """Show/hide the Customer Name + Reference ID fields per the backend's
+        superadmin toggle (config['hide_customer_fields']). Cosmetic only — the
+        values are still captured from the dialer and sent with the recording."""
+        hide = bool(self._config.get("hide_customer_fields", False))
+        for w in (
+            getattr(self, "_cust_lbl", None),
+            getattr(self, "_customer_name_edit", None),
+            getattr(self, "_ref_lbl", None),
+            getattr(self, "_reference_edit", None),
+        ):
+            if w is not None:
+                w.setVisible(not hide)
 
     def _refresh_identity_labels(self):
         company = self._company_name or "Spark Flow"
