@@ -292,3 +292,31 @@ def test_installer_filename_is_sanitised(version, expected):
     name = main.safe_installer_filename(version)
     assert name == expected
     assert "/" not in name and "\\" not in name
+
+
+# ── relaunch robustness (from a real-machine test on 2.9.1) ─────────────────
+def test_updater_waits_after_install_before_relaunching():
+    """On a real machine the relaunch was swallowed: the script started the exe the
+    instant the installer returned, while antivirus was still scanning the new file."""
+    s = main.build_updater_script(r"C:\tmp\Setup.exe", r"C:\app\SparkFlow.exe", False)
+    install_at = s.index("Setup.exe")
+    start_at = s.index('start ""')
+    between = s[install_at:start_at]
+    assert "ping 127.0.0.1" in between, "must settle after installing, before starting"
+
+
+def test_updater_retries_the_relaunch_if_it_did_not_come_up():
+    s = main.build_updater_script(r"C:\tmp\Setup.exe", r"C:\app\SparkFlow.exe", False)
+    assert "tasklist" in s and "SparkFlow.exe" in s
+    assert "if errorlevel 1 start" in s, "one retry when the first launch is blocked"
+    assert s.count('start ""') == 2, "initial launch + one retry"
+
+
+def test_updater_retry_preserves_minimized():
+    s = main.build_updater_script("S.exe", r"C:\app\SparkFlow.exe", True)
+    assert s.count('--minimized') == 2, "both the launch and the retry stay minimised"
+
+
+def test_updater_deletes_itself_last():
+    s = main.build_updater_script(r"C:\tmp\Setup.exe", r"C:\app\SparkFlow.exe", False)
+    assert s.index('start ""') < s.index('del "%~f0"'), "clean up only after relaunching"

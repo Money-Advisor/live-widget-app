@@ -166,7 +166,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.1"
+APP_VERSION = "2.9.2"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -1006,12 +1006,20 @@ def build_updater_script(installer: str, exe: str, minimized: bool) -> str:
     The install is per-user (Inno PrivilegesRequired=lowest), so there's no UAC
     prompt. Finally it deletes the installer and itself.
     """
-    relaunch = f'start "" "{exe}" --minimized' if minimized else f'start "" "{exe}"'
+    args = " --minimized" if minimized else ""
+    exe_name = os.path.basename(exe) or "SparkFlow.exe"
     return (
         "@echo off\r\n"
         "ping 127.0.0.1 -n 4 >nul\r\n"                     # ~3s: let the widget exit
         f'"{installer}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS\r\n'
-        f"{relaunch}\r\n"
+        # Let the installer settle and antivirus finish scanning the new exe before
+        # launching it — starting too eagerly is how the relaunch gets swallowed.
+        "ping 127.0.0.1 -n 4 >nul\r\n"
+        f'start "" "{exe}"{args}\r\n'
+        # Verify it actually came up; AV can silently block the first attempt.
+        "ping 127.0.0.1 -n 8 >nul\r\n"
+        f'tasklist /FI "IMAGENAME eq {exe_name}" 2>nul | find /I "{exe_name}" >nul\r\n'
+        f'if errorlevel 1 start "" "{exe}"{args}\r\n'
         f'del "{installer}" >nul 2>&1\r\n'
         'del "%~f0" >nul 2>&1\r\n'
     )
@@ -2850,9 +2858,12 @@ class MainWindow(QMainWindow):
             script = Path(tempfile.gettempdir()) / "sparkflow_update.cmd"
             script.write_text(build_updater_script(installer, exe, minimized),
                               encoding="utf-8")
+            # DETACHED_PROCESS alone still flashes a console window at the agent for a
+            # few seconds, which looks like something has gone wrong (and on a locked-
+            # down desktop, alarming). CREATE_NO_WINDOW keeps the helper invisible.
             flags = 0
-            if hasattr(subprocess, "DETACHED_PROCESS"):
-                flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            for name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_NO_WINDOW"):
+                flags |= getattr(subprocess, name, 0)
             subprocess.Popen(["cmd", "/c", str(script)], creationflags=flags,
                              close_fds=True)
             print(f"[update] installing {version} — restarting")
