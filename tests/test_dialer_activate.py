@@ -10,6 +10,9 @@ def _win(app, mic_done=True):
     w = main.MainWindow()
     # Pretend the agent is logged in + idle (the manual "ready" state).
     w._token = "tok"
+    # Explicitly no backend config: these tests are about the manual/dialer paths, and
+    # must not change behaviour just because something left hide_customer_fields around.
+    w._config = {}
     w._user = {"id": "u1", "email": "agent@x.test"}
     w._recording = False
     # By default represent a fully set-up agent (mic chosen) so the first-run

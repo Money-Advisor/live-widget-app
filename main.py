@@ -166,7 +166,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.3"
+APP_VERSION = "2.9.4"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2858,12 +2858,12 @@ class MainWindow(QMainWindow):
             script = Path(tempfile.gettempdir()) / "sparkflow_update.cmd"
             script.write_text(build_updater_script(installer, exe, minimized),
                               encoding="utf-8")
-            # DETACHED_PROCESS alone still flashes a console window at the agent for a
-            # few seconds, which looks like something has gone wrong (and on a locked-
-            # down desktop, alarming). CREATE_NO_WINDOW keeps the helper invisible.
-            flags = 0
-            for name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_NO_WINDOW"):
-                flags |= getattr(subprocess, name, 0)
+            # CREATE_NO_WINDOW ONLY. Windows explicitly IGNORES CREATE_NO_WINDOW when
+            # it is combined with DETACHED_PROCESS — which is why the helper's console
+            # kept flashing up at the agent despite "hiding" it. CREATE_NO_WINDOW on its
+            # own gives the console app no window and still outlives us.
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            flags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             subprocess.Popen(["cmd", "/c", str(script)], creationflags=flags,
                              close_fds=True)
             print(f"[update] installing {version} — restarting")
@@ -3856,12 +3856,41 @@ class MainWindow(QMainWindow):
 # ──────────────────────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────────────────────
+_INSTANCE_LOCK = None
+
+
+def acquire_single_instance(key: str = "SparkFlowWidget-singleton") -> bool:
+    """True if we are the only running copy; False means one is already up.
+
+    Two copies must never run. Beyond the obvious duplication, this build is a
+    PyInstaller ONE-FILE exe: every instance unpacks ~44MB (including python312.dll)
+    into its own %TEMP%\\_MEIxxxxxx and deletes it on exit. Two of them starting at once
+    — which is exactly what the updater's relaunch-and-retry could cause — race over
+    that temp state while antivirus scans it, and the loser dies with
+    "Failed to load Python DLL ... python312.dll".
+
+    The lock is a named shared-memory segment; Windows frees it automatically when the
+    last process detaches, so a crash can't leave it stuck.
+    """
+    global _INSTANCE_LOCK
+    try:
+        from PyQt6.QtCore import QSharedMemory
+        _INSTANCE_LOCK = QSharedMemory(key)
+        return bool(_INSTANCE_LOCK.create(1))
+    except Exception as exc:  # noqa: BLE001 — never block startup on the guard itself
+        print(f"[startup] single-instance check unavailable: {exc}")
+        return True
+
+
 def main():
     print(">>> Spark Flow widget BUILD phase4-r2 (token + hold-socket) <<<")
     # Crisp text on fractional-DPI displays (must be set before QApplication).
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
+    if not acquire_single_instance():
+        print("[startup] Spark Flow is already running — exiting this copy")
+        return 0
     app.setApplicationName("Spark Flow")
     app.setOrganizationName(ORG)
     app.setQuitOnLastWindowClosed(False)

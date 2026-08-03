@@ -320,3 +320,41 @@ def test_updater_retry_preserves_minimized():
 def test_updater_deletes_itself_last():
     s = main.build_updater_script(r"C:\tmp\Setup.exe", r"C:\app\SparkFlow.exe", False)
     assert s.index('start ""') < s.index('del "%~f0"'), "clean up only after relaunching"
+
+
+# ── single instance (from the "Failed to load Python DLL" crash on a real machine) ──
+def test_single_instance_guard_blocks_a_second_copy():
+    """Two one-file copies unpack python312.dll into their own %TEMP%\_MEI folders and
+    race each other (with AV scanning both) — the loser dies with 'Failed to load
+    Python DLL'. The updater's relaunch retry could start a second copy, so the guard
+    is what makes that retry safe."""
+    key = "SparkFlowWidget-test-" + os.urandom(4).hex()
+    first = main.acquire_single_instance(key)
+    assert first is True, "the first copy must be allowed to run"
+    # A genuinely separate holder of the same key -> the next attempt must be refused.
+    from PyQt6.QtCore import QSharedMemory
+    held = QSharedMemory(key + "-b")
+    assert held.create(1)
+    assert main.acquire_single_instance(key + "-b") is False, \
+        "a second copy must bow out instead of racing the first"
+    held.detach()
+
+
+def test_single_instance_guard_never_blocks_startup_on_error(monkeypatch):
+    """If the guard itself fails we must still start — never leave an agent with no
+    widget because a lock could not be taken."""
+    import PyQt6.QtCore as qtcore
+    class Boom:
+        def __init__(self, *a): raise RuntimeError("no shared memory here")
+    monkeypatch.setattr(qtcore, "QSharedMemory", Boom)
+    assert main.acquire_single_instance("whatever") is True
+
+
+def test_updater_helper_is_launched_with_no_console_window():
+    """CREATE_NO_WINDOW is IGNORED by Windows if DETACHED_PROCESS is also set — that
+    combination is why the black console kept appearing for agents."""
+    import subprocess as sp
+    src = __import__("inspect").getsource(main.MainWindow._apply_pending_update)
+    assert "CREATE_NO_WINDOW" in src
+    assert "DETACHED_PROCESS" not in src.split("flags =")[1].split("Popen")[0], \
+        "DETACHED_PROCESS must not be combined with CREATE_NO_WINDOW"
