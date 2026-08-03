@@ -26,6 +26,7 @@ import tempfile
 import uuid
 import webbrowser
 from pathlib import Path
+from urllib.parse import urlparse
 
 try:
     import pyaudiowpatch as pyaudio
@@ -459,7 +460,8 @@ class RefreshWorker(QThread):
     """Silently renews the id token from the refresh token, off the UI thread, so
     an idle widget never gets logged out mid-shift."""
     refreshed = pyqtSignal(str, str, int)   # token, refresh_token, expires_in
-    failed = pyqtSignal(str)
+    failed = pyqtSignal(str)                # transient — keep the session, retry
+    rejected = pyqtSignal()                 # credentials revoked — sign out
 
     def __init__(self, base_url, refresh_token, parent=None):
         super().__init__(parent)
@@ -474,6 +476,11 @@ class RefreshWorker(QThread):
                 raise BackendError("Server did not return a refreshed token.")
             refresh_token = data.get("refresh_token", "") or self.refresh_token
             self.refreshed.emit(token, refresh_token, _as_expires_in(data.get("expires_in")))
+        except AuthError:
+            # The refresh token itself was rejected (revoked, password changed, account
+            # deleted). Must be caught BEFORE BackendError — AuthError subclasses it —
+            # or a revoked agent would keep working for as long as the widget stays open.
+            self.rejected.emit()
         except BackendError as e:
             self.failed.emit(str(e))
         except Exception as e:
@@ -862,14 +869,47 @@ def is_newer_version(latest: str, current: str) -> bool:
     return a + (0,) * (width - len(a)) > b + (0,) * (width - len(b))
 
 
-def is_safe_installer_url(url: str) -> bool:
-    """Only fetch an installer from a plain http(s) URL ending in .exe. Blocks
-    file://, UNC paths and anything that isn't the installer we expect."""
-    u = (url or "").strip()
-    if not (u.startswith("https://") or u.startswith("http://")):
+def _url_origin(url: str):
+    """(scheme, host, port) for a URL, or None if it isn't plain http(s)."""
+    try:
+        p = urlparse((url or "").strip())
+    except Exception:
+        return None
+    if p.scheme not in ("http", "https") or not p.hostname:
+        return None
+    return (p.scheme, p.hostname.lower(), p.port or (443 if p.scheme == "https" else 80))
+
+
+def is_safe_installer_url(url: str, api_base: str = "") -> bool:
+    """Gate on what we're about to DOWNLOAD AND EXECUTE.
+
+    Must be http(s), must end in .exe, and — critically — must come from the SAME host
+    as the configured backend. Without the origin check, anyone able to answer
+    /api/version (it is plaintext http on the LAN today) could point us at any .exe and
+    we would run it silently. Tying it to the backend means an attacker must already
+    own the backend, at which point they own everything anyway.
+    """
+    origin = _url_origin(url)
+    if origin is None:
         return False
-    path = u.split("?", 1)[0].split("#", 1)[0]
-    return path.lower().endswith(".exe")
+    path = (url or "").split("?", 1)[0].split("#", 1)[0]
+    if not path.lower().endswith(".exe"):
+        return False
+    if api_base:
+        base = _url_origin(api_base)
+        # Host only. The port and scheme may legitimately differ (API on :8080 behind
+        # nginx, the installer served over :443) — what matters is that the binary
+        # comes from the same machine we already trust for config and auth.
+        if base is None or origin[1] != base[1]:
+            return False
+    return True
+
+
+def safe_installer_filename(version: str) -> str:
+    """Build the temp filename from a SANITISED version. The version string comes from
+    the network, and interpolating it raw would let '../..' escape the temp directory."""
+    clean = "".join(ch for ch in str(version or "") if ch.isalnum() or ch in "._-")[:32]
+    return f"SparkFlowSetup-{clean or 'update'}.exe"
 
 
 def api_get_version(base_url: str) -> dict:
@@ -905,13 +945,15 @@ class UpdateCheckWorker(QThread):
             if not is_newer_version(latest, self.current_version):
                 self.no_update.emit()
                 return
-            if not is_safe_installer_url(url):
-                print(f"[update] {latest} available but the download URL is unusable: {url!r}")
+            if not is_safe_installer_url(url, self.base_url):
+                print(f"[update] {latest} available but the download URL is not trusted: {url!r}")
                 self.no_update.emit()
                 return
             print(f"[update] {self.current_version} -> {latest}; downloading installer")
-            dest = Path(tempfile.gettempdir()) / f"SparkFlowSetup-{latest}.exe"
-            with requests.get(url, stream=True, timeout=60) as r:
+            dest = Path(tempfile.gettempdir()) / safe_installer_filename(latest)
+            # allow_redirects=False: a redirect could bounce us off the backend to any
+            # host, defeating the same-origin check above on something we then EXECUTE.
+            with requests.get(url, stream=True, timeout=60, allow_redirects=False) as r:
                 if r.status_code != 200:
                     raise BackendError(f"download failed ({r.status_code})")
                 written = 0
@@ -1065,6 +1107,9 @@ class AudioStreamer:
         # properly (stop per stream, then session_end) if the call already ended.
         self._started_streams: list = []
         self._final_stop = threading.Event()  # user ended the call while degraded
+        # Set once we stop trying to resume. Audio after this point can never reach
+        # the server, so it is dropped rather than spooled forever.
+        self._gave_up = threading.Event()
         # Only set once the server has accepted session_start. Until then there is
         # no session to resume, so a failure must surface to connect() as an error
         # rather than kicking off a pointless reconnect loop.
@@ -1208,6 +1253,11 @@ class AudioStreamer:
         # written. Both mic and speaker flow through here, so both pause together.
         if self._pause_event.is_set():
             return
+        # Resume already timed out: the server finalized this call, so nothing more can
+        # be delivered. Drop rather than spool — otherwise the file grows for the rest
+        # of the call for audio that can never be sent.
+        if self._gave_up.is_set():
+            return
         type_bytes = stream_type.encode("utf-8")
         packet = struct.pack("I", len(type_bytes)) + type_bytes + audio_data
 
@@ -1281,7 +1331,7 @@ class AudioStreamer:
 
     def _enter_degraded(self, reason: str) -> None:
         """Switch to local buffering and start trying to resume the session."""
-        if self._degraded.is_set() or self._closing.is_set():
+        if self._degraded.is_set() or self._closing.is_set() or self._gave_up.is_set():
             return
         self._degraded.set()
         print(f"[buffer] connection lost ({reason}) — buffering locally and reconnecting")
@@ -1307,8 +1357,20 @@ class AudioStreamer:
         attempt = 0
         while self._degraded.is_set() and not self._closing.is_set():
             if time.time() > deadline:
+                # Stop spooling. The server has finalized this session by now, so
+                # nothing more can ever be delivered — continuing would just grow the
+                # file on the agent's disk at ~10 MB/min for the rest of the call.
+                self._gave_up.set()
+                self._degraded.clear()
+                with self._spool_lock:
+                    try:
+                        if self._spool_w is not None:
+                            self._spool_w.close()
+                    except Exception:
+                        pass
+                    self._spool_w = None
                 print(f"[buffer] gave up resuming after {self._RESUME_DEADLINE_SECS}s; "
-                      f"buffered audio kept at {self._spool_path}")
+                      f"audio captured up to that point kept at {self._spool_path}")
                 self._notify({"type": "connection_status", "state": "failed"})
                 return
             delay = self._RECONNECT_BACKOFF[min(attempt, len(self._RECONNECT_BACKOFF) - 1)]
@@ -2582,7 +2644,19 @@ class MainWindow(QMainWindow):
         self._refresh_worker = RefreshWorker(self._api_base, self._refresh_token)
         self._refresh_worker.refreshed.connect(self._on_token_refreshed)
         self._refresh_worker.failed.connect(self._on_token_refresh_failed)
+        self._refresh_worker.rejected.connect(self._on_token_rejected)
         self._refresh_worker.start()
+
+    def _on_token_rejected(self):
+        """The backend revoked this session (password changed, account removed). Unlike
+        a transient refresh failure, this must sign the agent out — otherwise a revoked
+        account keeps working for as long as the widget stays open. Never mid-call."""
+        self._refresh_inflight = False
+        if self._recording:
+            print("[widget] session revoked — signing out after this call")
+            return
+        print("[widget] session revoked by the server — signing out")
+        self._on_validate_bad()
 
     def _on_token_refreshed(self, token: str, refresh_token: str, expires_in: int):
         self._refresh_inflight = False

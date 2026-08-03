@@ -379,3 +379,30 @@ def test_unknown_status_state_is_ignored():
     before = w._status_chip.text()
     w._handle_server_message({"type": "connection_status", "state": "who-knows"})
     assert w._status_chip.text() == before
+
+
+# ── giving up ───────────────────────────────────────────────────────────────
+def test_spool_stops_growing_once_we_give_up(streamer, tmp_path):
+    """After the resume deadline the server has finalized the call, so nothing more can
+    ever be delivered. Continuing to spool would grow the file ~10MB/min on the agent's
+    disk for audio that is already unsendable."""
+    streamer._enter_degraded("test")
+    streamer.send_audio("mic", b"before-giving-up")
+    size_before = streamer._spool_path.stat().st_size
+
+    streamer._gave_up.set()
+    streamer._degraded.clear()
+    for _ in range(50):
+        streamer.send_audio("mic", b"x" * 4096)
+
+    assert streamer._spool_path.stat().st_size == size_before, \
+        "no further audio may be written once we've stopped trying"
+
+
+def test_giving_up_does_not_re_enter_buffering(streamer):
+    """A send failure after giving up must not restart the whole reconnect cycle."""
+    streamer._gave_up.set()
+    streamer._degraded.clear()
+    streamer._ws = FakeWS(fail=True)
+    streamer.send_audio("mic", b"x")
+    assert not streamer._degraded.is_set()

@@ -235,3 +235,28 @@ def test_user_setting_roundtrip(tmp_path):
     assert main._load_json_setting(s, "auth/user") == {}
     s.setValue("auth/user", main.json.dumps(["a", "list"]))
     assert main._load_json_setting(s, "auth/user") == {}, "non-dict must not leak through"
+
+
+# ── revocation during a running session ─────────────────────────────────────
+def test_refresh_worker_reports_revocation_separately(monkeypatch):
+    """AuthError subclasses BackendError. If the worker catches the parent first, a
+    revoked account keeps working for as long as the widget stays open."""
+    monkeypatch.setattr(main, "api_refresh",
+                        lambda *a: (_ for _ in ()).throw(main.AuthError("revoked")))
+    w = main.RefreshWorker("http://x", "rt")
+    seen = {"failed": 0, "rejected": 0}
+    w.failed.connect(lambda m: seen.__setitem__("failed", seen["failed"] + 1))
+    w.rejected.connect(lambda: seen.__setitem__("rejected", seen["rejected"] + 1))
+    w.run()
+    assert seen["rejected"] == 1 and seen["failed"] == 0
+
+
+def test_refresh_worker_treats_outages_as_transient(monkeypatch):
+    monkeypatch.setattr(main, "api_refresh",
+                        lambda *a: (_ for _ in ()).throw(main.BackendError("offline")))
+    w = main.RefreshWorker("http://x", "rt")
+    seen = {"failed": 0, "rejected": 0}
+    w.failed.connect(lambda m: seen.__setitem__("failed", seen["failed"] + 1))
+    w.rejected.connect(lambda: seen.__setitem__("rejected", seen["rejected"] + 1))
+    w.run()
+    assert seen["failed"] == 1 and seen["rejected"] == 0, "an outage must not sign out"

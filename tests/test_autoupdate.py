@@ -197,3 +197,72 @@ def test_oversized_download_is_aborted(monkeypatch, tmp_path):
     w.no_update.connect(lambda: seen.__setitem__("none", seen["none"] + 1))
     w.run()
     assert seen["none"] == 1 and not seen["ready"]
+
+
+# ── download origin (the reviewer's critical finding) ───────────────────────
+def test_installer_must_come_from_the_backend_host():
+    """/api/version is plaintext http on the LAN today, so anyone who can answer it
+    could otherwise point us at any .exe — which we then EXECUTE."""
+    api = "http://192.168.80.52:8080"
+    assert main.is_safe_installer_url("http://192.168.80.52:8080/dl/S.exe", api) is True
+    assert main.is_safe_installer_url("https://192.168.80.52:8080/dl/S.exe", api) is True
+    assert main.is_safe_installer_url("http://evil.example.com/S.exe", api) is False
+    assert main.is_safe_installer_url("http://192.168.80.53:8080/S.exe", api) is False
+    # A different PORT on the same machine is fine (nginx may serve downloads
+    # separately); a different HOST is the boundary that matters.
+    assert main.is_safe_installer_url("http://192.168.80.52:9999/S.exe", api) is True
+
+
+def test_untrusted_host_is_not_downloaded(monkeypatch, tmp_path):
+    monkeypatch.setattr(main, "api_get_version", lambda base: {
+        "version": "9.9.9", "windows_url": "http://evil.example.com/S.exe"})
+    fetched = []
+    monkeypatch.setattr(main.requests, "get",
+                        lambda *a, **k: fetched.append(a) or None)
+    w = main.UpdateCheckWorker("http://192.168.80.52:8080", "2.4.1")
+    seen = {"none": 0}
+    w.no_update.connect(lambda: seen.__setitem__("none", seen["none"] + 1))
+    w.run()
+    assert seen["none"] == 1
+    assert not fetched, "must not even fetch from an untrusted host"
+
+
+def test_download_does_not_follow_redirects(monkeypatch, tmp_path):
+    """A redirect would bounce us off the backend to any host, defeating the origin
+    check on a binary we are about to run."""
+    monkeypatch.setattr(main, "api_get_version", lambda base: {
+        "version": "9.9.9", "windows_url": "http://api.host/S.exe"})
+    monkeypatch.setattr(main.tempfile, "gettempdir", lambda: str(tmp_path))
+    captured = {}
+
+    class Stream:
+        status_code = 200
+        def iter_content(self, chunk_size=0): yield b"MZ" + b"\x00" * 10
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_get(url, **kw):
+        captured.update(kw)
+        return Stream()
+
+    monkeypatch.setattr(main.requests, "get", fake_get)
+    w = main.UpdateCheckWorker("http://api.host", "2.4.1")
+    w.update_ready.connect(lambda p, v: None)
+    w.no_update.connect(lambda: None)
+    w.run()
+    assert captured.get("allow_redirects") is False
+
+
+@pytest.mark.parametrize("version,expected", [
+    ("2.4.2", "SparkFlowSetup-2.4.2.exe"),
+    ("../../../evil", "SparkFlowSetup-......evil.exe"),
+    ("a/b\\c", "SparkFlowSetup-abc.exe"),
+    ("", "SparkFlowSetup-update.exe"),
+    ("x" * 100, "SparkFlowSetup-" + "x" * 32 + ".exe"),
+])
+def test_installer_filename_is_sanitised(version, expected):
+    """The version string is network-controlled; interpolating it raw into a path
+    would allow writing outside the temp directory."""
+    name = main.safe_installer_filename(version)
+    assert name == expected
+    assert "/" not in name and "\\" not in name
