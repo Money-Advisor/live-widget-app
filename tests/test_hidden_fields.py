@@ -86,15 +86,42 @@ def test_manual_start_still_blocked_when_fields_are_shown_and_empty(monkeypatch)
     assert started["n"] == 0
 
 
-def test_manual_start_works_when_the_fields_are_hidden(monkeypatch):
-    """THE fix: with the fields hidden there is nothing to type, so Start must not
-    demand them — otherwise the toggle silently disables manual recording."""
+def test_hidden_fields_with_no_reference_points_at_the_dialer(monkeypatch):
+    """With the fields hidden the agent has nothing to type, but the server still
+    requires a reference — so starting anyway would just be rejected. Say where the
+    call should come from instead of failing obscurely."""
     _app()
     w = _win(True)
     warned = {"n": 0}
+    informed = {"n": 0}
     monkeypatch.setattr(main.QMessageBox, "warning",
                         lambda *a, **k: warned.__setitem__("n", warned["n"] + 1))
-    # Stop before any real audio/network work; we only care that we got past validation.
+    monkeypatch.setattr(main.QMessageBox, "information",
+                        lambda *a, **k: informed.__setitem__("n", informed["n"] + 1))
+    started = {"n": 0}
+    monkeypatch.setattr(main, "StartCallWorker",
+                        lambda *a, **k: started.__setitem__("n", started["n"] + 1))
+
+    w._customer_name_edit.setText("")
+    w._reference_edit.setText("")
+    w._start_recording(require_name=True)
+
+    assert warned["n"] == 0, "must not nag for fields the agent cannot see"
+    assert informed["n"] == 1, "should explain that the dialer starts these calls"
+    assert started["n"] == 0, "must not start a call the server would reject"
+
+
+def test_hidden_fields_start_works_once_the_dialer_supplies_a_reference(monkeypatch):
+    """THE fix: the dialer fills the (hidden) reference, and Start must then work
+    WITHOUT demanding a customer name the agent cannot see or type."""
+    _app()
+    w = _win(True)
+    warned = {"n": 0}
+    informed = {"n": 0}
+    monkeypatch.setattr(main.QMessageBox, "warning",
+                        lambda *a, **k: warned.__setitem__("n", warned["n"] + 1))
+    monkeypatch.setattr(main.QMessageBox, "information",
+                        lambda *a, **k: informed.__setitem__("n", informed["n"] + 1))
     reached = {"n": 0}
 
     def fake_worker(*a, **k):
@@ -103,12 +130,12 @@ def test_manual_start_works_when_the_fields_are_hidden(monkeypatch):
 
     monkeypatch.setattr(main, "StartCallWorker", fake_worker)
 
-    w._customer_name_edit.setText("")
-    w._reference_edit.setText("")
+    w._customer_name_edit.setText("")      # hidden -> stays blank
+    w._reference_edit.setText("REF-123")   # set programmatically by the dialer
     try:
         w._start_recording(require_name=True)
     except RuntimeError:
         pass
 
-    assert warned["n"] == 0, "must not nag for fields the agent cannot see"
-    assert reached["n"] == 1, "start should proceed past validation"
+    assert warned["n"] == 0 and informed["n"] == 0
+    assert reached["n"] == 1, "start should proceed with only a reference"

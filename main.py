@@ -1059,6 +1059,7 @@ class AudioStreamer:
         department: str = "",
         dialer_metadata: dict | None = None,
         register_for_dialer: bool = True,
+        token_provider=None,
     ):
         # When False, the identify message omits agent_email/agent_id so this
         # connection does NOT register in the server's dialer index. The per-call
@@ -1078,6 +1079,10 @@ class AudioStreamer:
         self.customer_id = customer_id
         self.reference_id = reference_id
         self.token = token  # Phase 4: server validates this at session_start
+        # Optional callable returning the CURRENT id token. The one above is a snapshot
+        # from call start; on a long call it will have expired (~1h) by the time a
+        # resume needs it, and the server would refuse. Set by MainWindow.
+        self.token_provider = token_provider
         self._ws = None
         # Whether the server runs the live transcription/compliance pipeline for
         # this session (from the session_started ack). Default True = behave as
@@ -1106,6 +1111,9 @@ class AudioStreamer:
         # Streams we've started, so a resumed connection can be closed down
         # properly (stop per stream, then session_end) if the call already ended.
         self._started_streams: list = []
+        # 'start' frames that never reached the server because the socket was already
+        # down; replayed immediately after a resume so the streams exist again.
+        self._deferred_starts: list = []
         self._final_stop = threading.Event()  # user ended the call while degraded
         # Set once we stop trying to resume. Audio after this point can never reach
         # the server, so it is dropped rather than spooled forever.
@@ -1261,10 +1269,14 @@ class AudioStreamer:
         type_bytes = stream_type.encode("utf-8")
         packet = struct.pack("I", len(type_bytes)) + type_bytes + audio_data
 
-        # Already buffering -> straight to disk, preserving order.
-        if self._degraded.is_set():
-            self._spool_write(packet)
-            return
+        # Already buffering -> straight to disk, preserving order. The check and the
+        # write happen under the SAME lock the drain uses to flip back to live, so a
+        # chunk can't slip through the check and then recreate a spool file the drain
+        # has just deleted (which would strand it, out of order, forever).
+        with self._spool_lock:
+            if self._degraded.is_set():
+                self._spool_write_locked(packet)
+                return
         try:
             with self._lock:
                 self._ws.send_binary(packet)
@@ -1276,38 +1288,46 @@ class AudioStreamer:
     # ── interrupted-call buffering ─────────────────────────────────────────
     def _spool_write(self, packet: bytes) -> None:
         """Append one length-prefixed frame to the local spool file."""
+        with self._spool_lock:
+            self._spool_write_locked(packet)
+
+    def _spool_write_locked(self, packet: bytes) -> None:
+        """_spool_write for callers that already hold _spool_lock."""
         try:
-            with self._spool_lock:
-                if self._spool_w is None:
-                    if self._spool_path is None:
-                        self._spool_path = _spool_dir() / f"{self.session_id}.spool"
-                    self._spool_w = open(self._spool_path, "ab")
-                self._spool_w.write(struct.pack("<I", len(packet)) + packet)
-                self._spool_w.flush()
+            if self._spool_w is None:
+                if self._spool_path is None:
+                    self._spool_path = _spool_dir() / f"{self.session_id}.spool"
+                self._spool_w = open(self._spool_path, "ab")
+            self._spool_w.write(struct.pack("<I", len(packet)) + packet)
+            self._spool_w.flush()
         except Exception as exc:
             print(f"[buffer] spool write failed: {exc}")
 
     def _spool_next(self):
         """Read the next spooled frame, or None at end-of-spool."""
+        with self._spool_lock:
+            return self._spool_next_locked()
+
+    def _spool_next_locked(self):
+        """_spool_next for callers that already hold _spool_lock."""
         try:
-            with self._spool_lock:
-                if self._spool_r is None:
-                    if self._spool_path is None or not self._spool_path.exists():
-                        return None
-                    self._spool_r = open(self._spool_path, "rb")
-                header = self._spool_r.read(4)
-                if len(header) < 4:
-                    # Partial header (writer mid-flush). Rewind so the next read starts
-                    # on the frame boundary — otherwise the whole spool desyncs.
-                    if header:
-                        self._spool_r.seek(-len(header), os.SEEK_CUR)
+            if self._spool_r is None:
+                if self._spool_path is None or not self._spool_path.exists():
                     return None
-                (n,) = struct.unpack("<I", header)
-                payload = self._spool_r.read(n)
-                if len(payload) < n:          # torn tail (writer mid-flush) — retry later
-                    self._spool_r.seek(-len(header) - len(payload), os.SEEK_CUR)
-                    return None
-                return payload
+                self._spool_r = open(self._spool_path, "rb")
+            header = self._spool_r.read(4)
+            if len(header) < 4:
+                # Partial header (writer mid-flush). Rewind so the next read starts
+                # on the frame boundary — otherwise the whole spool desyncs.
+                if header:
+                    self._spool_r.seek(-len(header), os.SEEK_CUR)
+                return None
+            (n,) = struct.unpack("<I", header)
+            payload = self._spool_r.read(n)
+            if len(payload) < n:              # torn tail (writer mid-flush) — retry later
+                self._spool_r.seek(-len(header) - len(payload), os.SEEK_CUR)
+                return None
+            return payload
         except Exception as exc:
             print(f"[buffer] spool read failed: {exc}")
             return None
@@ -1315,19 +1335,23 @@ class AudioStreamer:
     def _spool_discard(self) -> None:
         """Delete the local copy — called once everything has reached the server."""
         with self._spool_lock:
-            for h in ("_spool_r", "_spool_w"):
-                try:
-                    handle = getattr(self, h)
-                    if handle is not None:
-                        handle.close()
-                except Exception:
-                    pass
-                setattr(self, h, None)
+            self._spool_discard_locked()
+
+    def _spool_discard_locked(self) -> None:
+        """_spool_discard for callers that already hold _spool_lock."""
+        for h in ("_spool_r", "_spool_w"):
             try:
-                if self._spool_path is not None and self._spool_path.exists():
-                    self._spool_path.unlink()
-            except OSError as exc:
-                print(f"[buffer] could not delete spool: {exc}")
+                handle = getattr(self, h)
+                if handle is not None:
+                    handle.close()
+            except Exception:
+                pass
+            setattr(self, h, None)
+        try:
+            if self._spool_path is not None and self._spool_path.exists():
+                self._spool_path.unlink()
+        except OSError as exc:
+            print(f"[buffer] could not delete spool: {exc}")
 
     def _enter_degraded(self, reason: str) -> None:
         """Switch to local buffering and start trying to resume the session."""
@@ -1401,11 +1425,19 @@ class AudioStreamer:
             if json.loads(ws.recv()).get("status") != "identified":
                 ws.close()
                 return False
+            # Use the freshest token we can get: on a long call the one captured at
+            # session_start has already expired.
+            token = self.token
+            if self.token_provider is not None:
+                try:
+                    token = self.token_provider() or token
+                except Exception:
+                    pass
             ws.send(json.dumps({
                 "command": "session_resume",
                 "client_id": self.client_id,
                 "session_id": self.session_id,
-                "token": self.token,
+                "token": token,
             }))
             resp = json.loads(ws.recv())
             if resp.get("status") != "session_resumed":
@@ -1432,6 +1464,20 @@ class AudioStreamer:
             target=self._receiver_loop, args=(ws,), daemon=True, name="ws-receiver")
         self._receiver_thread.start()
 
+        # Re-open any stream whose 'start' was lost to the outage, BEFORE replaying —
+        # otherwise the server has nowhere to write the frames we're about to send.
+        if self._deferred_starts:
+            pending, self._deferred_starts = self._deferred_starts, []
+            for frame_ in pending:
+                try:
+                    with self._lock:
+                        self._ws.send(json.dumps(frame_))
+                    print(f"[buffer] re-opened '{frame_.get('stream_type')}' after resume")
+                except Exception as exc:
+                    self._deferred_starts = pending      # try again next attempt
+                    print(f"[buffer] could not re-open streams: {exc}")
+                    return False
+
         return self._drain_spool()
 
     def _drain_spool(self) -> bool:
@@ -1444,14 +1490,18 @@ class AudioStreamer:
         while not self._closing.is_set():
             packet = self._spool_next()
             if packet is None:
-                # Looks empty. Re-check while holding the send lock so a chunk can't
-                # be spooled between the check and the flip back to live.
+                # Looks empty. Re-check holding BOTH locks: _spool_lock is the one
+                # send_audio uses to decide "buffer or send", so taking it here makes
+                # the emptiness check and the flip back to live atomic against a
+                # capture thread — otherwise a chunk could pass that check and then
+                # recreate the spool file we are about to delete.
                 with self._lock:
-                    packet = self._spool_next()
-                    if packet is None:
-                        self._degraded.clear()
-                        self._spool_discard()
-                        return True
+                    with self._spool_lock:
+                        packet = self._spool_next_locked()
+                        if packet is None:
+                            self._degraded.clear()
+                            self._spool_discard_locked()
+                            return True
                     # A chunk landed in that window. We've already consumed it from
                     # the spool, so it MUST be sent here — dropping it would lose
                     # ~93ms of the call.
@@ -1506,7 +1556,14 @@ class AudioStreamer:
         """Send session_end but KEEP the socket open — the Phase 4 server
         sends session_summary / upload_complete after this. Call close()
         once those arrive (or on timeout)."""
-        print("[widget] session_end sent — holding socket for server summary")
+        if self._degraded.is_set():
+            # The call is over but we're still offline. Record that NOW: the resume
+            # thread may reconnect before close()'s 15s timer runs, and without this
+            # it would deliver the audio and then just stop — never telling the server
+            # the call ended, so a complete recording would time out as "dropped".
+            self._final_stop.set()
+            print("[buffer] call ended while offline — session_end deferred to the resume")
+            return
         self._send_json({
             "command":    "session_end",
             "client_id":  self.client_id,
@@ -1541,6 +1598,11 @@ class AudioStreamer:
         purpose: replaying stale control frames after a resume would confuse the
         server, and _finish_after_resume re-sends the ones that still matter."""
         if self._degraded.is_set():
+            if data.get("command") == "start":
+                # A 'start' that never reached the server means that stream does not
+                # exist there — the replayed audio would be written nowhere. Queue it
+                # and open the stream first thing after the resume.
+                self._deferred_starts.append(data)
             print(f"[buffer] control frame '{data.get('command')}' deferred (offline)")
             return
         try:
@@ -2005,6 +2067,7 @@ class MainWindow(QMainWindow):
         self._update_checked: bool = False
         self._update_worker = None
         self._pending_update: tuple | None = None
+        self._update_attempts: dict = {}
         self._config: dict = {}
         # Active department key for this widget (from the loaded config; the
         # dialer can switch it per call leg, e.g. on a transfer).
@@ -2718,6 +2781,10 @@ class MainWindow(QMainWindow):
             print("[update] dev run — skipping update check")
             return
         self._update_checked = True
+        # Loop guard: if the registry ever advertises a version the installer doesn't
+        # actually produce (a mis-tagged release), we would reinstall and relaunch on
+        # every start — across the whole fleet. Try a given version twice, then stop.
+        self._update_attempts = _load_json_setting(self._settings, "update/attempts")
         self._update_worker = UpdateCheckWorker(self._api_base, APP_VERSION)
         self._update_worker.update_ready.connect(self._on_update_ready)
         self._update_worker.no_update.connect(
@@ -2726,6 +2793,20 @@ class MainWindow(QMainWindow):
 
     def _on_update_ready(self, installer_path: str, version: str):
         """Installer downloaded. Install it once the agent isn't on a call."""
+        tried = int((self._update_attempts or {}).get(version, 0))
+        if tried >= 2:
+            print(f"[update] {version} already attempted {tried}x and we're still on "
+                  f"{APP_VERSION} — not retrying (check the release registry)")
+            return
+        attempts = dict(self._update_attempts or {})
+        attempts[version] = tried + 1
+        # Keep only this version's counter; older ones are irrelevant once we move on.
+        self._update_attempts = {version: attempts[version]}
+        try:
+            self._settings.setValue("update/attempts", json.dumps(self._update_attempts))
+            self._settings.sync()      # must survive the imminent restart
+        except Exception:
+            pass
         self._pending_update = (installer_path, version)
         self._apply_pending_update()
 
@@ -2764,7 +2845,11 @@ class MainWindow(QMainWindow):
         the cached config + identity, and retry with backoff. This is the common case at
         Windows login, when the widget auto-starts before the network is ready."""
         print(f"[widget] session check deferred ({reason}) — keeping the stored session")
-        self._enter_main()
+        # Only enter the main page on the FIRST deferral. _enter_main calls _show_front,
+        # which would otherwise yank the agent off the settings panel or the post-call
+        # summary every time a retry fires in the background.
+        if not self._validate_retry_secs:
+            self._enter_main()
         # 30s, 60s, 2m, 4m … capped at 5m.
         self._validate_retry_secs = min(300, (self._validate_retry_secs or 15) * 2)
         QTimer.singleShot(self._validate_retry_secs * 1000, self._retry_validate)
@@ -2860,8 +2945,17 @@ class MainWindow(QMainWindow):
         self._maybe_check_for_update()
 
     def _start_control_connection(self):
-        """Open the persistent dialer-reachable control connection (idempotent)."""
+        """Open the persistent dialer-reachable control connection (idempotent).
+
+        Requires a known agent id: the dialer finds an idle widget by that id, so
+        registering with an empty one makes the agent silently unreachable. On an
+        offline start (upgrading agents have a stored token but no cached profile yet)
+        we skip and let the next successful validation open it.
+        """
         if self._control is not None or not self._token:
+            return
+        if not (self._user.get("id") or self._user.get("email")):
+            print("[widget] agent identity not known yet — deferring the dialer connection")
             return
         self._control = ControlConnection(
             self._ws_url, self._control_client_id,
@@ -3244,15 +3338,28 @@ class MainWindow(QMainWindow):
         customer_name = self._customer_name_edit.text().strip()
         reference_id = self._reference_edit.text().strip()
 
-        # When the superadmin has hidden the customer fields there is nothing for the
-        # agent to fill in, so demanding them would make manual Start impossible.
-        # The dialer/CRM supplies the reference in that setup.
+        # When the superadmin hides the customer fields, the agent has nothing to type,
+        # so demanding a Customer Name would make manual Start impossible. A reference
+        # is still required though — the server rejects session_start without one — and
+        # in that setup it arrives from the dialer, so say so plainly rather than
+        # starting a call the server will refuse.
         fields_hidden = bool(self._config.get("hide_customer_fields", False))
+        if fields_hidden:
+            if not reference_id:
+                QMessageBox.information(
+                    self, "Start from the dialer",
+                    "Customer details are managed by the dialer for your team.\n"
+                    "Start the call in the dialer and this widget will record it "
+                    "automatically.",
+                )
+                return
+            require_name = False          # name is resolved from the CRM
+
         missing = (not all([customer_name, reference_id]) if require_name
                    else not reference_id)
         # Reference ID is always required. Customer Name is required for the
         # manual flow, but optional for dialer auto-start (resolved via CRM).
-        if missing and not fields_hidden:
+        if missing:
             QMessageBox.warning(
                 self, "Missing Info",
                 "Please fill in Customer Name and Reference ID before starting a recording."
@@ -3285,6 +3392,9 @@ class MainWindow(QMainWindow):
             # The persistent ControlConnection holds the dialer registration; this
             # per-call connection must not register (it would clobber it on close).
             register_for_dialer=False,
+            # Lets a mid-call resume authenticate with the CURRENT token rather than
+            # the one captured here, which expires ~1h into a long call.
+            token_provider=lambda: self._token,
         )
         # One-shot: a later manual call must not inherit this dialer metadata.
         self._pending_dialer_meta = None

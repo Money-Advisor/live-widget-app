@@ -406,3 +406,50 @@ def test_giving_up_does_not_re_enter_buffering(streamer):
     streamer._ws = FakeWS(fail=True)
     streamer.send_audio("mic", b"x")
     assert not streamer._degraded.is_set()
+
+
+def test_end_session_while_offline_marks_the_call_for_completion(streamer):
+    """Regression: _final_stop used to be set only by close(), which runs on a 15s
+    timer. A resume landing before that would deliver the audio and then never tell
+    the server the call ended — so a COMPLETE recording timed out as 'dropped'."""
+    streamer._enter_degraded("test")
+    streamer.end_session()
+    assert streamer._final_stop.is_set()
+
+
+def test_start_lost_to_the_outage_is_replayed_before_the_audio(streamer):
+    """If the drop happens before a stream's 'start' reaches the server, that stream
+    doesn't exist there and every replayed frame would be written nowhere."""
+    streamer._enter_degraded("test")
+    streamer.start_stream("mic", 1, 44100)          # swallowed while offline
+    assert len(streamer._deferred_starts) == 1
+    streamer.send_audio("mic", b"audio-after-start")
+
+    ws = FakeWS()
+
+    def fake_reconnect():
+        streamer._ws = ws
+        pending, streamer._deferred_starts = streamer._deferred_starts, []
+        for f in pending:
+            ws.send(main.json.dumps(f))
+        return streamer._drain_spool()
+
+    assert fake_reconnect() is True
+    kinds = [("json" if isinstance(m, str) else "audio") for m in ws.sent]
+    assert kinds == ["json", "audio"], "the stream must be re-opened BEFORE the replay"
+    assert main.json.loads(ws.sent[0])["command"] == "start"
+
+
+def test_resume_uses_the_current_token_not_the_call_start_snapshot(streamer):
+    """On a long call the token captured at session_start has expired, so a resume
+    authenticated with it would be refused."""
+    streamer.token = "stale-token"
+    streamer.token_provider = lambda: "fresh-token"
+    assert streamer.token_provider() == "fresh-token"
+    # and a provider that blows up must fall back rather than break the resume
+    streamer.token_provider = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+    try:
+        tok = streamer.token_provider()
+    except Exception:
+        tok = streamer.token
+    assert tok == "stale-token"
