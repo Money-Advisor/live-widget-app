@@ -260,3 +260,26 @@ def test_refresh_worker_treats_outages_as_transient(monkeypatch):
     w.rejected.connect(lambda: seen.__setitem__("rejected", seen["rejected"] + 1))
     w.run()
     assert seen["failed"] == 1 and seen["rejected"] == 0, "an outage must not sign out"
+
+
+# ── diagnosability (three field failures had no evidence to work from) ──────
+def test_logging_writes_a_file_and_survives_failure(tmp_path, monkeypatch):
+    """--windowed builds have no console, so print() is lost. Every sign-out and update
+    decision must land in a file an agent can send us."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    real_out, real_err = main.sys.stdout, main.sys.stderr
+    try:
+        path = main.setup_logging()
+        assert path is not None and path.exists()
+        print("hello from the widget")
+        main.sys.stdout.flush()
+        assert "hello from the widget" in path.read_text(encoding="utf-8")
+        assert main.APP_VERSION in path.read_text(encoding="utf-8")
+    finally:
+        main.sys.stdout, main.sys.stderr = real_out, real_err
+
+
+def test_logging_never_blocks_startup(monkeypatch):
+    monkeypatch.setattr(main, "log_path",
+                        lambda: (_ for _ in ()).throw(OSError("no disk")))
+    assert main.setup_logging() is None, "a logging failure must be survivable"

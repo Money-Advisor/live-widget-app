@@ -166,7 +166,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.5"
+APP_VERSION = "2.9.6"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -530,8 +530,11 @@ class ValidateWorker(QThread):
                 refresh_token = data.get("refresh_token") or refresh_token
                 expires_in = _as_expires_in(data.get("expires_in"))
                 refreshed = True
-            except AuthError:
-                self.invalid.emit()      # refresh token rejected -> genuinely signed out
+            except AuthError as exc:
+                # The one path that legitimately signs an agent out. Log it: an
+                # unexplained sign-out is impossible to support otherwise.
+                print(f"[auth] SIGN-OUT: the server rejected our refresh token ({exc})")
+                self.invalid.emit()
                 return
             except BackendError as exc:
                 # Transient: fall through and try the stored id token as-is; it may
@@ -539,6 +542,7 @@ class ValidateWorker(QThread):
                 print(f"[widget] startup refresh deferred: {exc}")
 
         if not token:
+            print("[auth] SIGN-OUT: no token available to validate")
             self.invalid.emit()
             return
 
@@ -554,6 +558,8 @@ class ValidateWorker(QThread):
             # no refresh token to try). If the refresh failed transiently, this 401 is
             # just the stale token — keep the session and retry.
             if refreshed or not self.refresh_token:
+                print(f"[auth] SIGN-OUT: config returned {resp.status_code} on a "
+                      f"{'freshly renewed' if refreshed else 'stored'} token")
                 self.invalid.emit()
             else:
                 self.unreachable.emit("could not renew the session yet")
@@ -2895,6 +2901,7 @@ class MainWindow(QMainWindow):
         self._validate_stored_token()
 
     def _on_validate_bad(self):
+        print("[auth] clearing the stored session; the agent must sign in again")
         self._settings.remove("auth/token")
         self._settings.remove("auth/refresh_token")
         self._settings.remove("auth/user")
@@ -3856,6 +3863,59 @@ class MainWindow(QMainWindow):
 # ──────────────────────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────────────────────
+class _Tee:
+    """Write to the console (when there is one) AND the log file."""
+
+    def __init__(self, stream, fh):
+        self._stream = stream
+        self._fh = fh
+
+    def write(self, text):
+        for target in (self._stream, self._fh):
+            try:
+                if target is not None:
+                    target.write(text)
+            except Exception:
+                pass
+
+    def flush(self):
+        for target in (self._stream, self._fh):
+            try:
+                if target is not None:
+                    target.flush()
+            except Exception:
+                pass
+
+
+def log_path() -> Path:
+    base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
+    return Path(base) / "Spark Flow" / "logs" / "widget.log"
+
+
+def setup_logging() -> Path | None:
+    """Mirror everything the widget prints into a log file.
+
+    This is a --windowed build: there is no console, so print() output is simply lost.
+    That is why field failures (a stalled update, an unexplained sign-out) have had to be
+    diagnosed by guesswork — an agent had nothing to send us. Keep a bounded log under
+    %LOCALAPPDATA%\\Spark Flow\\logs so support can just ask for the file.
+    """
+    try:
+        path = log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Roll at ~2MB so it can never grow without bound on an agent's machine.
+        if path.exists() and path.stat().st_size > 2 * 1024 * 1024:
+            path.replace(path.with_name("widget.prev.log"))
+        fh = open(path, "a", encoding="utf-8", buffering=1, errors="replace")
+        sys.stdout = _Tee(sys.__stdout__, fh)
+        sys.stderr = _Tee(sys.__stderr__, fh)
+        print(f"\n===== Spark Flow {APP_VERSION} starting "
+              f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S} =====")
+        return path
+    except Exception:
+        return None      # logging must never stop the widget starting
+
+
 _INSTANCE_LOCK = None
 
 
@@ -3883,7 +3943,10 @@ def acquire_single_instance(key: str = "SparkFlowWidget-singleton") -> bool:
 
 
 def main():
-    print(">>> Spark Flow widget BUILD phase4-r2 (token + hold-socket) <<<")
+    lp = setup_logging()
+    print(f">>> Spark Flow widget {APP_VERSION} <<<")
+    if lp:
+        print(f"[startup] logging to {lp}")
     # Crisp text on fractional-DPI displays (must be set before QApplication).
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)

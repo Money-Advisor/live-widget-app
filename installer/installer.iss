@@ -10,7 +10,7 @@
 ; (run from the repo root, AFTER `python build_all.py` has produced dist\SparkFlow.exe)
 
 #define AppName "Spark Flow"
-#define AppVersion "2.9.5"
+#define AppVersion "2.9.6"
 #define AppPublisher "Spark Flow"
 #define AppExe "SparkFlow.exe"
 
@@ -47,7 +47,10 @@ Name: "startupicon"; Description: "Start Spark Flow automatically when I sign in
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "SparkFlow"; ValueData: """{app}\{#AppExe}"" --minimized"; Flags: uninsdeletevalue; Tasks: startupicon
 
 [Files]
-Source: "..\dist\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
+; Folder (onedir) build: ship the exe AND its runtime next to it. A one-file
+; build unpacked python312.dll into %TEMP% on every launch, which antivirus
+; could break ("Failed to load Python DLL") leaving the agent with no widget.
+Source: "..\dist\SparkFlow\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"

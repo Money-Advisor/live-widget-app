@@ -9,7 +9,7 @@ host OS. The login web page (assets/login.html) is bundled alongside the binary.
 Usage:
     python build_all.py
 
-Output (Windows):  dist/SparkFlow.exe
+Output (Windows):  dist/SparkFlow/SparkFlow.exe  (folder build)
 Output (macOS):    dist/SparkFlow.app  +  dist/SparkFlow.dmg
 """
 
@@ -57,7 +57,15 @@ def run_build() -> bool:
 
     cmd = [
         PYTHON, "-m", "PyInstaller",
-        "--onefile",
+        # ONEDIR, not onefile. A one-file build unpacks ~44MB (including python312.dll)
+        # into a fresh %TEMP%\_MEIxxxxxx on EVERY launch and deletes it on exit. With
+        # antivirus scanning that unpack, agents hit
+        #   "Failed to load Python DLL ...\_MEIxxxxxx\python312.dll"
+        # and end up with no widget at all — which for a call recorder means no
+        # recording. The failure happens in the PyInstaller bootloader, before any of
+        # our Python runs, so it cannot be handled in-app. A folder build ships the DLLs
+        # next to the exe, unpacks nothing, and also starts noticeably faster.
+        "--onedir",
         "--windowed",                       # no console window (GUI app)
         "--name", APP_NAME,
         "--distpath", os.path.join(HERE, "dist"),
@@ -128,7 +136,7 @@ def main():
         if not make_dmg():
             sys.exit(1)
     else:
-        print(f"\nOK  Done: dist/{APP_NAME}.exe")
+        print(f"\nOK  Done: dist/{APP_NAME}/{APP_NAME}.exe  (folder build)")
 
     print(f"\nArtifacts are in:  {dist_dir}")
 
