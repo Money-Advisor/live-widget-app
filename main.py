@@ -880,28 +880,45 @@ def _url_origin(url: str):
     return (p.scheme, p.hostname.lower(), p.port or (443 if p.scheme == "https" else 80))
 
 
+# Hosts we accept a release from over HTTPS, in addition to the backend's own host.
+# Releases are published to GitHub, and GitHub redirects asset downloads to its CDN.
+# HTTPS is what makes these safe: the host is authenticated and the bytes can't be
+# tampered with in flight, so a spoofed /api/version can't redirect us to an attacker.
+TRUSTED_UPDATE_HOSTS = ("github.com", "githubusercontent.com")
+
+
+def _host_is_trusted(host: str, api_base: str = "") -> bool:
+    host = (host or "").lower()
+    if api_base:
+        base = _url_origin(api_base)
+        if base is not None and host == base[1]:
+            return True          # our own backend, http or https
+    return any(host == h or host.endswith("." + h) for h in TRUSTED_UPDATE_HOSTS)
+
+
 def is_safe_installer_url(url: str, api_base: str = "") -> bool:
     """Gate on what we're about to DOWNLOAD AND EXECUTE.
 
-    Must be http(s), must end in .exe, and — critically — must come from the SAME host
-    as the configured backend. Without the origin check, anyone able to answer
-    /api/version (it is plaintext http on the LAN today) could point us at any .exe and
-    we would run it silently. Tying it to the backend means an attacker must already
-    own the backend, at which point they own everything anyway.
+    /api/version is plaintext today, so its JSON must not be able to point us at an
+    arbitrary binary. Accepted sources are only:
+      * the backend's own host (any scheme — the LAN deployment is http), or
+      * an HTTPS release host we trust (GitHub, where releases are published).
+    Plain http anywhere else is refused: without TLS we cannot tell the real host from
+    someone impersonating it.
     """
     origin = _url_origin(url)
     if origin is None:
         return False
+    scheme, host, _port = origin
     path = (url or "").split("?", 1)[0].split("#", 1)[0]
     if not path.lower().endswith(".exe"):
         return False
-    if api_base:
-        base = _url_origin(api_base)
-        # Host only. The port and scheme may legitimately differ (API on :8080 behind
-        # nginx, the installer served over :443) — what matters is that the binary
-        # comes from the same machine we already trust for config and auth.
-        if base is None or origin[1] != base[1]:
-            return False
+    if not _host_is_trusted(host, api_base):
+        return False
+    # Off-backend downloads must be TLS; only our own host may be reached over http.
+    base = _url_origin(api_base) if api_base else None
+    if scheme != "https" and not (base is not None and host == base[1]):
+        return False
     return True
 
 
@@ -951,11 +968,15 @@ class UpdateCheckWorker(QThread):
                 return
             print(f"[update] {self.current_version} -> {latest}; downloading installer")
             dest = Path(tempfile.gettempdir()) / safe_installer_filename(latest)
-            # allow_redirects=False: a redirect could bounce us off the backend to any
-            # host, defeating the same-origin check above on something we then EXECUTE.
-            with requests.get(url, stream=True, timeout=60, allow_redirects=False) as r:
+            # Redirects are followed (GitHub bounces release assets to its CDN) but the
+            # host we ACTUALLY downloaded from is re-checked below — a redirect must not
+            # be able to smuggle us off a trusted host onto an attacker's.
+            with requests.get(url, stream=True, timeout=60) as r:
                 if r.status_code != 200:
                     raise BackendError(f"download failed ({r.status_code})")
+                final = _url_origin(str(r.url))
+                if final is None or not _host_is_trusted(final[1], self.base_url):
+                    raise BackendError(f"download redirected to an untrusted host: {r.url}")
                 written = 0
                 with open(dest, "wb") as fh:
                     for chunk in r.iter_content(chunk_size=262144):

@@ -53,10 +53,11 @@ def test_app_version_matches_the_installer():
 
 # ── download URL safety ─────────────────────────────────────────────────────
 @pytest.mark.parametrize("url,ok", [
-    ("https://example.com/SparkFlowSetup.exe", True),
-    ("http://192.168.80.52:8080/dl/SparkFlowSetup.exe", True),
-    ("https://example.com/setup.exe?v=2", True),
-    ("https://example.com/notes.txt", False),
+    ("https://github.com/Money-Advisor/live-widget-app/releases/download/v2.9.0/S.exe", True),
+    ("https://objects.githubusercontent.com/x/S.exe", True),
+    ("https://example.com/SparkFlowSetup.exe", False),   # untrusted host
+    ("http://github.com/x/S.exe", False),                # trusted host but no TLS
+    ("https://github.com/x/notes.txt", False),
     ("file:///C:/evil.exe", False),          # local file
     ("\\\\attacker\\share\\evil.exe", False),  # UNC path
     ("ftp://example.com/x.exe", False),
@@ -111,12 +112,12 @@ def _run(monkeypatch, payload, current="2.4.1"):
 
 
 def test_no_update_when_already_current(monkeypatch):
-    seen = _run(monkeypatch, {"version": "2.4.1", "windows_url": "https://x/S.exe"})
+    seen = _run(monkeypatch, {"version": "2.4.1", "windows_url": "https://github.com/o/r/S.exe"})
     assert seen["none"] == 1 and not seen["ready"]
 
 
 def test_no_update_when_registry_url_is_unusable(monkeypatch):
-    seen = _run(monkeypatch, {"version": "9.9.9", "windows_url": "https://x/readme.txt"})
+    seen = _run(monkeypatch, {"version": "9.9.9", "windows_url": "https://github.com/o/r/readme.txt"})
     assert seen["none"] == 1 and not seen["ready"]
 
 
@@ -134,11 +135,12 @@ def test_version_endpoint_failure_is_silent(monkeypatch):
 def test_rejects_a_download_that_is_not_an_executable(monkeypatch, tmp_path):
     """An HTML error page saved as .exe would brick the update — refuse it."""
     monkeypatch.setattr(main, "api_get_version",
-                        lambda base: {"version": "9.9.9", "windows_url": "https://x/S.exe"})
+                        lambda base: {"version": "9.9.9", "windows_url": "https://github.com/o/r/S.exe"})
     monkeypatch.setattr(main.tempfile, "gettempdir", lambda: str(tmp_path))
 
     class Stream:
         status_code = 200
+        url = "https://github.com/o/r/S.exe"
         def iter_content(self, chunk_size=0):
             yield b"<html>404 not found</html>"
         def __enter__(self): return self
@@ -155,11 +157,12 @@ def test_rejects_a_download_that_is_not_an_executable(monkeypatch, tmp_path):
 
 def test_accepts_a_real_windows_installer(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "api_get_version",
-                        lambda base: {"version": "9.9.9", "windows_url": "https://x/S.exe"})
+                        lambda base: {"version": "9.9.9", "windows_url": "https://github.com/o/r/S.exe"})
     monkeypatch.setattr(main.tempfile, "gettempdir", lambda: str(tmp_path))
 
     class Stream:
         status_code = 200
+        url = "https://github.com/o/r/S.exe"
         def iter_content(self, chunk_size=0):
             yield b"MZ" + b"\x00" * 100
         def __enter__(self): return self
@@ -178,11 +181,12 @@ def test_accepts_a_real_windows_installer(monkeypatch, tmp_path):
 
 def test_oversized_download_is_aborted(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "api_get_version",
-                        lambda base: {"version": "9.9.9", "windows_url": "https://x/S.exe"})
+                        lambda base: {"version": "9.9.9", "windows_url": "https://github.com/o/r/S.exe"})
     monkeypatch.setattr(main.tempfile, "gettempdir", lambda: str(tmp_path))
 
     class Stream:
         status_code = 200
+        url = "https://github.com/o/r/S.exe"
         def iter_content(self, chunk_size=0):
             for _ in range(5):
                 yield b"M" * (1024 * 1024)
@@ -208,6 +212,10 @@ def test_installer_must_come_from_the_backend_host():
     assert main.is_safe_installer_url("https://192.168.80.52:8080/dl/S.exe", api) is True
     assert main.is_safe_installer_url("http://evil.example.com/S.exe", api) is False
     assert main.is_safe_installer_url("http://192.168.80.53:8080/S.exe", api) is False
+    # Releases live on GitHub, so that host is trusted too — but only over HTTPS.
+    assert main.is_safe_installer_url("https://github.com/o/r/releases/download/v1/S.exe", api) is True
+    assert main.is_safe_installer_url("http://github.com/o/r/S.exe", api) is False
+    assert main.is_safe_installer_url("https://github.com.evil.net/S.exe", api) is False
     # A different PORT on the same machine is fine (nginx may serve downloads
     # separately); a different HOST is the boundary that matters.
     assert main.is_safe_installer_url("http://192.168.80.52:9999/S.exe", api) is True
@@ -227,30 +235,48 @@ def test_untrusted_host_is_not_downloaded(monkeypatch, tmp_path):
     assert not fetched, "must not even fetch from an untrusted host"
 
 
-def test_download_does_not_follow_redirects(monkeypatch, tmp_path):
-    """A redirect would bounce us off the backend to any host, defeating the origin
-    check on a binary we are about to run."""
+def test_redirect_to_an_untrusted_host_is_refused(monkeypatch, tmp_path):
+    """Redirects ARE followed (GitHub bounces release assets to its CDN), so the host we
+    actually landed on must be re-checked — otherwise a redirect smuggles us anywhere."""
     monkeypatch.setattr(main, "api_get_version", lambda base: {
-        "version": "9.9.9", "windows_url": "http://api.host/S.exe"})
+        "version": "9.9.9", "windows_url": "https://github.com/o/r/S.exe"})
     monkeypatch.setattr(main.tempfile, "gettempdir", lambda: str(tmp_path))
-    captured = {}
 
-    class Stream:
+    class Redirected:
         status_code = 200
-        def iter_content(self, chunk_size=0): yield b"MZ" + b"\x00" * 10
+        url = "https://evil.example.com/payload.exe"      # ended up somewhere else
+        def iter_content(self, chunk_size=0): yield b"MZ" + bytes(10)
         def __enter__(self): return self
         def __exit__(self, *a): return False
 
-    def fake_get(url, **kw):
-        captured.update(kw)
-        return Stream()
-
-    monkeypatch.setattr(main.requests, "get", fake_get)
+    monkeypatch.setattr(main.requests, "get", lambda *a, **k: Redirected())
     w = main.UpdateCheckWorker("http://api.host", "2.4.1")
-    w.update_ready.connect(lambda p, v: None)
-    w.no_update.connect(lambda: None)
+    seen = {"ready": [], "none": 0}
+    w.update_ready.connect(lambda p, v: seen["ready"].append((p, v)))
+    w.no_update.connect(lambda: seen.__setitem__("none", seen["none"] + 1))
     w.run()
-    assert captured.get("allow_redirects") is False
+    assert seen["none"] == 1 and not seen["ready"], "must refuse an untrusted redirect"
+
+
+def test_redirect_within_github_is_accepted(monkeypatch, tmp_path):
+    monkeypatch.setattr(main, "api_get_version", lambda base: {
+        "version": "9.9.9", "windows_url": "https://github.com/o/r/S.exe"})
+    monkeypatch.setattr(main.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    class Cdn:
+        status_code = 200
+        url = "https://objects.githubusercontent.com/abc/S.exe"   # GitHub's CDN
+        def iter_content(self, chunk_size=0): yield b"MZ" + bytes(10)
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(main.requests, "get", lambda *a, **k: Cdn())
+    w = main.UpdateCheckWorker("http://api.host", "2.4.1")
+    seen = {"ready": [], "none": 0}
+    w.update_ready.connect(lambda p, v: seen["ready"].append((p, v)))
+    w.no_update.connect(lambda: seen.__setitem__("none", seen["none"] + 1))
+    w.run()
+    assert len(seen["ready"]) == 1, "GitHub's own CDN must still work"
 
 
 @pytest.mark.parametrize("version,expected", [
