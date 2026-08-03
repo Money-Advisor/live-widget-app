@@ -232,6 +232,36 @@ def test_partial_header_does_not_desync_the_spool(streamer, tmp_path):
     assert streamer._spool_next() == nxt
 
 
+def test_stale_receiver_does_not_break_the_resumed_connection(streamer):
+    """After a resume there is briefly an old receiver thread unwinding on the previous
+    socket. Its death must NOT be mistaken for the new connection dying — that would
+    kick a perfectly healthy call back into buffering."""
+    old_ws = streamer._ws
+    new_ws = FakeWS()
+    streamer._ws = new_ws                      # the resume already swapped it in
+    streamer._receiver_stop.clear()
+
+    class Dead:
+        def settimeout(self, _t): pass
+        def recv(self): raise OSError("old socket closed")
+
+    # The stale thread was bound to the OLD socket, so it must stay quiet.
+    streamer._receiver_loop(Dead())
+    assert not streamer._degraded.is_set(), \
+        "a stale receiver must not degrade the new, working connection"
+
+    # ...but a failure on the CURRENT socket must still be reported.
+    class DeadCurrent:
+        def settimeout(self, _t): pass
+        def recv(self): raise OSError("current socket died")
+
+    streamer._ws = None
+    dc = DeadCurrent()
+    streamer._ws = dc
+    streamer._receiver_loop(dc)
+    assert streamer._degraded.is_set(), "a real drop on the live socket must be caught"
+
+
 # ── control frames ──────────────────────────────────────────────────────────
 def test_control_failure_before_a_session_raises(tmp_path, monkeypatch):
     """During connect() there is no session to resume — the caller must see the error."""

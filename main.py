@@ -1132,35 +1132,44 @@ class AudioStreamer:
 
         self._receiver_stop.clear()
         self._receiver_thread = threading.Thread(
-            target=self._receiver_loop, daemon=True, name="ws-receiver"
+            target=self._receiver_loop, args=(self._ws,),
+            daemon=True, name="ws-receiver"
         )
         self._receiver_thread.start()
 
-    def _receiver_loop(self):
+    def _receiver_loop(self, ws=None):
         """Drain inbound frames: keep pings answered AND dispatch JSON messages.
 
         websocket-client auto-sends a pong when recv() reads a ping frame.
         We use a 1 s timeout so _receiver_stop is checked promptly, parse JSON
         messages, and forward dict payloads to on_message (set by MainWindow).
         Non-JSON frames (pongs etc.) are ignored.
+
+        `ws` is bound for the life of this thread. After a resume there is briefly an
+        old thread still unwinding on the previous socket; binding it here lets that
+        thread recognise it is stale and stay quiet instead of reporting the NEW,
+        healthy connection as broken.
         """
+        ws = ws if ws is not None else self._ws
         try:
-            self._ws.settimeout(1.0)
+            ws.settimeout(1.0)
         except Exception:
             pass
         print("[recv] receiver loop started")
         while not self._receiver_stop.is_set():
             try:
-                raw = self._ws.recv()
+                raw = ws.recv()
             except _websocket.WebSocketTimeoutException:
                 continue                      # idle tick – re-check stop flag
             except Exception as exc:
                 print(f"[recv] loop EXIT on {type(exc).__name__}: {exc}")
                 # A dead socket usually shows up here first (the server closed it,
-                # or the link died). If the call is still running, start buffering
-                # immediately rather than waiting for the next chunk to fail.
+                # or the link died). If the call is still running ON THIS socket,
+                # start buffering rather than waiting for the next chunk to fail.
+                # `ws is self._ws` keeps a stale post-resume thread from wrongly
+                # declaring the new connection dead.
                 if (self._session_live.is_set() and not self._receiver_stop.is_set()
-                        and not self._closing.is_set()):
+                        and not self._closing.is_set() and ws is self._ws):
                     self._enter_degraded(f"receiver: {type(exc).__name__}")
                 break                         # socket closed / error – exit
             if not raw:
@@ -1358,7 +1367,7 @@ class AudioStreamer:
             pass
         self._receiver_stop.clear()
         self._receiver_thread = threading.Thread(
-            target=self._receiver_loop, daemon=True, name="ws-receiver")
+            target=self._receiver_loop, args=(ws,), daemon=True, name="ws-receiver")
         self._receiver_thread.start()
 
         return self._drain_spool()
