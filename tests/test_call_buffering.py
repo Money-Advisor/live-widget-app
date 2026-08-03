@@ -336,3 +336,46 @@ def test_resume_deadline_is_inside_the_server_grace_window():
     """The widget must give up BEFORE the server finalizes the session, or it would
     reconnect to a call that no longer exists."""
     assert main.AudioStreamer._RESUME_DEADLINE_SECS < 180
+
+
+# ── agent-facing status ─────────────────────────────────────────────────────
+def test_connection_status_is_shown_to_the_agent(monkeypatch):
+    """During an outage the agent must see that the call is still being recorded,
+    not be left guessing (or hang up thinking it broke)."""
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    assert app is not None
+    w = main.MainWindow()
+    w._recording = True
+
+    w._handle_server_message({"type": "connection_status", "state": "buffering"})
+    assert "Reconnecting" in w._status_chip.text()
+    assert "still recording" in w._status_chip.text()
+
+    w._handle_server_message({"type": "connection_status", "state": "resumed"})
+    assert "Recording Live" in w._status_chip.text()
+
+    w._handle_server_message({"type": "connection_status", "state": "failed"})
+    assert "Saved locally" in w._status_chip.text()
+
+
+def test_connection_status_ignored_when_not_recording():
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    assert app is not None
+    w = main.MainWindow()
+    w._recording = False
+    before = w._status_chip.text()
+    w._handle_server_message({"type": "connection_status", "state": "buffering"})
+    assert w._status_chip.text() == before
+
+
+def test_unknown_status_state_is_ignored():
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    assert app is not None
+    w = main.MainWindow()
+    w._recording = True
+    before = w._status_chip.text()
+    w._handle_server_message({"type": "connection_status", "state": "who-knows"})
+    assert w._status_chip.text() == before
