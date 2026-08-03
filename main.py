@@ -166,7 +166,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.9.0"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
