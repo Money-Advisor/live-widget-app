@@ -21,8 +21,11 @@ import datetime
 import threading
 import json
 import struct
+import subprocess
+import tempfile
 import uuid
 import webbrowser
+from pathlib import Path
 
 try:
     import pyaudiowpatch as pyaudio
@@ -160,6 +163,10 @@ DEFAULT_RECORDING_WS = "ws://192.168.80.52:8765"
 ORG = "Spark Flow"
 APP = "Widget"
 
+# This build's version. MUST be kept in step with installer/installer.iss AppVersion —
+# it's what the auto-updater compares against the release registry (GET /api/version).
+APP_VERSION = "2.4.1"
+
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
 
@@ -286,6 +293,14 @@ def _init_icons():
 # Backend API client (login + widget config)
 # ──────────────────────────────────────────────────────────────
 class BackendError(Exception):
+    """Something went wrong talking to the backend. Treated as TRANSIENT by the startup
+    path (no network yet, server restarting, 5xx) — the session is kept and retried."""
+    pass
+
+
+class AuthError(BackendError):
+    """The backend definitively rejected our credentials (401/403, or a refresh token
+    that is no longer valid). This — and only this — signs the agent out."""
     pass
 
 
@@ -319,6 +334,11 @@ def api_refresh(base_url: str, refresh_token: str) -> dict:
         raise BackendError("Could not reach the server. Check your connection.")
     if r.status_code == 200:
         return r.json()
+    # 400/401/403 = the refresh token itself is no longer valid (revoked, password
+    # changed, account removed) -> a real sign-out. Anything else (5xx, proxy error)
+    # is transient and must NOT cost the agent their session.
+    if r.status_code in (400, 401, 403):
+        raise AuthError("Your session is no longer valid. Please sign in again.")
     raise BackendError(f"Session refresh failed (server error {r.status_code}).")
 
 
@@ -373,6 +393,19 @@ def _user_from_me(me: dict) -> dict:
 # ──────────────────────────────────────────────────────────────
 # Login worker: authenticate then load config, off the UI thread
 # ──────────────────────────────────────────────────────────────
+def _load_json_setting(settings, key) -> dict:
+    """Read a JSON blob from QSettings, tolerating anything malformed/absent."""
+    try:
+        raw = settings.value(key, "") or ""
+        if raw:
+            val = json.loads(raw)
+            if isinstance(val, dict):
+                return val
+    except Exception:
+        pass
+    return {}
+
+
 def _as_expires_in(value) -> int:
     """Firebase returns expiresIn as a string of seconds; be tolerant."""
     try:
@@ -448,38 +481,92 @@ class RefreshWorker(QThread):
 
 
 class ValidateWorker(QThread):
-    """Validate a stored token at launch (supports If-None-Match -> 304) and
-    re-fetch the user profile so a remembered session restores the agent's
-    identity (name/id/email), not just the token."""
-    valid = pyqtSignal(dict, str, dict)   # config, etag, user  (config={} on 304)
-    invalid = pyqtSignal()
+    """Restore a stored session at launch, off the UI thread.
 
-    def __init__(self, base_url, token, etag, parent=None):
+    Two rules keep an agent signed in across restarts:
+
+    1. RENEW BEFORE VALIDATING. The stored id token lives ~1 hour, so after an
+       overnight restart it is almost always expired. Validating it first would come
+       back 401 and look exactly like a rejected login — which is what used to sign
+       agents out every morning. So if we hold a refresh token we mint a fresh id
+       token first, then validate that.
+    2. ONLY A DEFINITIVE REJECTION SIGNS OUT. "I couldn't reach the server" (no
+       network yet — the widget auto-starts the moment Windows logs in, before the
+       network is up), a 5xx, or a proxy error are OUR problem, not the agent's:
+       those emit `unreachable`, the session is kept and retried. Only a genuine
+       401/403 on a token we know is fresh — or a refresh token the backend rejects
+       outright — emits `invalid`.
+    """
+    # config, etag, user, token, refresh_token, expires_in  (config={} on 304)
+    valid = pyqtSignal(dict, str, dict, str, str, int)
+    invalid = pyqtSignal()          # credentials really are dead -> sign out
+    unreachable = pyqtSignal(str)   # transient -> keep the session, retry later
+
+    def __init__(self, base_url, token, etag, refresh_token="", parent=None):
         super().__init__(parent)
         self.base_url = base_url
         self.token = token
         self.etag = etag
+        self.refresh_token = refresh_token or ""
 
     def run(self):
-        try:
-            resp = api_get_config(self.base_url, self.token, self.etag or None)
-        except BackendError:
+        token = self.token
+        refresh_token = self.refresh_token
+        expires_in = 0
+        refreshed = False
+
+        # 1. Renew first (see rule 1 above).
+        if refresh_token:
+            try:
+                data = api_refresh(self.base_url, refresh_token)
+                token = data.get("token") or token
+                refresh_token = data.get("refresh_token") or refresh_token
+                expires_in = _as_expires_in(data.get("expires_in"))
+                refreshed = True
+            except AuthError:
+                self.invalid.emit()      # refresh token rejected -> genuinely signed out
+                return
+            except BackendError as exc:
+                # Transient: fall through and try the stored id token as-is; it may
+                # still be inside its hour.
+                print(f"[widget] startup refresh deferred: {exc}")
+
+        if not token:
             self.invalid.emit()
+            return
+
+        # 2. Validate (and pick up config changes).
+        try:
+            resp = api_get_config(self.base_url, token, self.etag or None)
+        except BackendError as exc:
+            self.unreachable.emit(str(exc))
+            return
+
+        if resp.status_code in (401, 403):
+            # Only definitive when the token we just used is known-fresh (or there was
+            # no refresh token to try). If the refresh failed transiently, this 401 is
+            # just the stale token — keep the session and retry.
+            if refreshed or not self.refresh_token:
+                self.invalid.emit()
+            else:
+                self.unreachable.emit("could not renew the session yet")
             return
         if resp.status_code not in (200, 304):
-            self.invalid.emit()
+            self.unreachable.emit(f"server error {resp.status_code}")
             return
-        # Token is valid -> restore the agent's profile. Best-effort: a /api/me
-        # hiccup must not fail the launch (the token is still good).
+
+        # Token is good -> restore the agent's profile. Best-effort: a /api/me hiccup
+        # must not fail the launch (the token is still valid).
         user = {}
         try:
-            user = _user_from_me(api_get_me(self.base_url, self.token))
+            user = _user_from_me(api_get_me(self.base_url, token))
         except Exception:
             pass
         if resp.status_code == 304:
-            self.valid.emit({}, self.etag, user)
+            self.valid.emit({}, self.etag, user, token, refresh_token, expires_in)
         else:
-            self.valid.emit(resp.json(), resp.headers.get("ETag", ""), user)
+            self.valid.emit(resp.json(), resp.headers.get("ETag", ""), user,
+                            token, refresh_token, expires_in)
 
 
 class StartCallWorker(QThread):
@@ -752,8 +839,169 @@ except ImportError:
     )
 
 
+# ──────────────────────────────────────────────────────────────
+# Auto-update
+# ──────────────────────────────────────────────────────────────
+def _version_tuple(v: str) -> tuple:
+    """'2.4.10' -> (2, 4, 10) for correct ordering (10 > 9, unlike string compare).
+    Unparseable pieces sort as 0 rather than blowing up."""
+    parts = []
+    for chunk in str(v or "").strip().lstrip("vV").split("."):
+        digits = "".join(ch for ch in chunk if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts) or (0,)
+
+
+def is_newer_version(latest: str, current: str) -> bool:
+    """True only when `latest` is strictly newer, comparing numerically and padding
+    so '2.5' > '2.4.9' and '2.4' == '2.4.0'."""
+    if not latest:
+        return False
+    a, b = _version_tuple(latest), _version_tuple(current)
+    width = max(len(a), len(b))
+    return a + (0,) * (width - len(a)) > b + (0,) * (width - len(b))
+
+
+def is_safe_installer_url(url: str) -> bool:
+    """Only fetch an installer from a plain http(s) URL ending in .exe. Blocks
+    file://, UNC paths and anything that isn't the installer we expect."""
+    u = (url or "").strip()
+    if not (u.startswith("https://") or u.startswith("http://")):
+        return False
+    path = u.split("?", 1)[0].split("#", 1)[0]
+    return path.lower().endswith(".exe")
+
+
+def api_get_version(base_url: str) -> dict:
+    """GET /api/version -> {version, windows_url, mac_url}. Public (no auth)."""
+    try:
+        r = requests.get(f"{base_url.rstrip('/')}/api/version", timeout=10)
+    except requests.RequestException as exc:
+        raise BackendError(f"version check unreachable: {exc}")
+    if r.status_code != 200:
+        raise BackendError(f"version check failed ({r.status_code})")
+    return r.json() or {}
+
+
+class UpdateCheckWorker(QThread):
+    """Ask the backend for the current release and, if it's newer than us, download
+    the installer to a temp file. Entirely best-effort: any failure just means no
+    update this time — it must never interrupt an agent."""
+    update_ready = pyqtSignal(str, str)   # installer_path, version
+    no_update = pyqtSignal()
+
+    MAX_BYTES = 300 * 1024 * 1024        # sanity cap on the download
+
+    def __init__(self, base_url: str, current_version: str, parent=None):
+        super().__init__(parent)
+        self.base_url = base_url
+        self.current_version = current_version
+
+    def run(self):
+        try:
+            info = api_get_version(self.base_url)
+            latest = str(info.get("version") or "")
+            url = str(info.get("windows_url") or "")
+            if not is_newer_version(latest, self.current_version):
+                self.no_update.emit()
+                return
+            if not is_safe_installer_url(url):
+                print(f"[update] {latest} available but the download URL is unusable: {url!r}")
+                self.no_update.emit()
+                return
+            print(f"[update] {self.current_version} -> {latest}; downloading installer")
+            dest = Path(tempfile.gettempdir()) / f"SparkFlowSetup-{latest}.exe"
+            with requests.get(url, stream=True, timeout=60) as r:
+                if r.status_code != 200:
+                    raise BackendError(f"download failed ({r.status_code})")
+                written = 0
+                with open(dest, "wb") as fh:
+                    for chunk in r.iter_content(chunk_size=262144):
+                        if not chunk:
+                            continue
+                        written += len(chunk)
+                        if written > self.MAX_BYTES:
+                            raise BackendError("installer larger than expected — aborting")
+                        fh.write(chunk)
+            # A truncated download or an HTML error page would brick the update, so
+            # only accept something that really is a Windows executable.
+            with open(dest, "rb") as fh:
+                if fh.read(2) != b"MZ":
+                    raise BackendError("downloaded file is not a Windows installer")
+            print(f"[update] installer ready at {dest} ({written} bytes)")
+            self.update_ready.emit(str(dest), latest)
+        except Exception as exc:  # noqa: BLE001 — never let an update check surface
+            print(f"[update] check skipped: {exc}")
+            self.no_update.emit()
+
+
+def build_updater_script(installer: str, exe: str, minimized: bool) -> str:
+    """The batch a detached cmd runs after we quit.
+
+    A running exe can't overwrite itself, so the sequence has to happen from
+    outside the process: wait for us to exit, run the installer silently, relaunch.
+    The install is per-user (Inno PrivilegesRequired=lowest), so there's no UAC
+    prompt. Finally it deletes the installer and itself.
+    """
+    relaunch = f'start "" "{exe}" --minimized' if minimized else f'start "" "{exe}"'
+    return (
+        "@echo off\r\n"
+        "ping 127.0.0.1 -n 4 >nul\r\n"                     # ~3s: let the widget exit
+        f'"{installer}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS\r\n'
+        f"{relaunch}\r\n"
+        f'del "{installer}" >nul 2>&1\r\n'
+        'del "%~f0" >nul 2>&1\r\n'
+    )
+
+
+def _spool_dir() -> Path:
+    """Where interrupted-call audio is buffered. Per-user app data (survives a reboot,
+    unlike %TEMP% cleaners); falls back to the temp dir if that isn't writable."""
+    base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
+    d = Path(base) / "Spark Flow" / "spool"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+    except Exception:
+        d = Path(tempfile.gettempdir()) / "SparkFlowSpool"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+
+def purge_old_spools(max_age_days: int = 7) -> int:
+    """Delete spool files we could never deliver, once they're older than
+    `max_age_days`. Undelivered call audio is kept for a while so it isn't silently
+    lost, but it is PII, so retention is bounded. Returns how many were removed."""
+    removed = 0
+    try:
+        cutoff = time.time() - max_age_days * 86400
+        for f in _spool_dir().glob("*.spool"):
+            try:
+                if f.stat().st_mtime < cutoff:
+                    f.unlink()
+                    removed += 1
+            except OSError:
+                pass
+    except Exception:
+        pass
+    return removed
+
+
 class AudioStreamer:
-    """Manages a single WebSocket connection to the recording server."""
+    """Manages a single WebSocket connection to the recording server.
+
+    Survives a mid-call disconnect. If the socket dies while recording, audio is
+    spooled to a local file instead of being thrown away, a background thread
+    reconnects and RESUMES the same server-side session, the spool is replayed in
+    order, and only then does live streaming continue. Net effect: the stored
+    recording has no gap, and the local copy is deleted as soon as it is delivered.
+    """
+
+    # Reconnect backoff (seconds) — quick at first, then easy on a struggling network.
+    _RECONNECT_BACKOFF = (1, 2, 4, 8, 15, 30)
+    # Give up resuming after this long. Must stay UNDER the server's resume grace
+    # window (RESUME_GRACE_SECONDS there), or we'd reconnect to a finalized session.
+    _RESUME_DEADLINE_SECS = 150
 
     def __init__(
         self,
@@ -802,6 +1050,25 @@ class AudioStreamer:
         self._pause_event = threading.Event()
         # Phase 3: set by MainWindow to receive inbound server messages.
         self.on_message = None
+
+        # ── Interrupted-call buffering ──────────────────────────────────────
+        # Set while the socket is down: send_audio spools to disk instead of
+        # dropping chunks, and a reconnect thread works on resuming the session.
+        self._degraded = threading.Event()
+        self._closing = threading.Event()
+        self._spool_path: Path | None = None
+        self._spool_w = None            # append handle
+        self._spool_r = None            # read handle (opened when draining)
+        self._spool_lock = threading.Lock()   # guards the spool handles only
+        self._reconnect_thread: threading.Thread | None = None
+        # Streams we've started, so a resumed connection can be closed down
+        # properly (stop per stream, then session_end) if the call already ended.
+        self._started_streams: list = []
+        self._final_stop = threading.Event()  # user ended the call while degraded
+        # Only set once the server has accepted session_start. Until then there is
+        # no session to resume, so a failure must surface to connect() as an error
+        # rather than kicking off a pointless reconnect loop.
+        self._session_live = threading.Event()
 
     def set_paused(self, paused: bool):
         """Set the pause state (idempotent). Paused = audio chunks dropped."""
@@ -859,6 +1126,9 @@ class AudioStreamer:
         if resp.get("status") != "session_started":
             raise RuntimeError(f"Server session_start failed: {resp}")
         self.live_pipeline = bool(resp.get("live_pipeline", True))
+        # From here on a socket failure is recoverable: the server holds the session
+        # open for a grace period, so we buffer locally and resume.
+        self._session_live.set()
 
         self._receiver_stop.clear()
         self._receiver_thread = threading.Thread(
@@ -886,6 +1156,12 @@ class AudioStreamer:
                 continue                      # idle tick – re-check stop flag
             except Exception as exc:
                 print(f"[recv] loop EXIT on {type(exc).__name__}: {exc}")
+                # A dead socket usually shows up here first (the server closed it,
+                # or the link died). If the call is still running, start buffering
+                # immediately rather than waiting for the next chunk to fail.
+                if (self._session_live.is_set() and not self._receiver_stop.is_set()
+                        and not self._closing.is_set()):
+                    self._enter_degraded(f"receiver: {type(exc).__name__}")
                 break                         # socket closed / error – exit
             if not raw:
                 continue
@@ -902,6 +1178,8 @@ class AudioStreamer:
         print("[recv] receiver loop ended")
 
     def start_stream(self, stream_type: str, channels: int, sample_rate: int):
+        if stream_type not in self._started_streams:
+            self._started_streams.append(stream_type)
         self._send_json({
             "command":     "start",
             "client_id":  self.client_id,
@@ -911,18 +1189,240 @@ class AudioStreamer:
         })
 
     def send_audio(self, stream_type: str, audio_data: bytes):
-        """Send a raw PCM chunk with the binary framing the server expects."""
+        """Send a raw PCM chunk with the binary framing the server expects.
+
+        If the socket is down the chunk is written to the local spool instead of
+        being discarded, and a reconnect is kicked off. Nothing is ever lost to a
+        dropped connection — the spool is replayed once the session resumes.
+        """
         # PCI pause: drop the chunk while paused so card audio is never sent or
         # written. Both mic and speaker flow through here, so both pause together.
         if self._pause_event.is_set():
             return
         type_bytes = stream_type.encode("utf-8")
         packet = struct.pack("I", len(type_bytes)) + type_bytes + audio_data
+
+        # Already buffering -> straight to disk, preserving order.
+        if self._degraded.is_set():
+            self._spool_write(packet)
+            return
         try:
             with self._lock:
                 self._ws.send_binary(packet)
+        except Exception as exc:
+            # The socket just died mid-call. Keep this chunk and start recovering.
+            self._enter_degraded(f"send failed: {type(exc).__name__}")
+            self._spool_write(packet)
+
+    # ── interrupted-call buffering ─────────────────────────────────────────
+    def _spool_write(self, packet: bytes) -> None:
+        """Append one length-prefixed frame to the local spool file."""
+        try:
+            with self._spool_lock:
+                if self._spool_w is None:
+                    if self._spool_path is None:
+                        self._spool_path = _spool_dir() / f"{self.session_id}.spool"
+                    self._spool_w = open(self._spool_path, "ab")
+                self._spool_w.write(struct.pack("<I", len(packet)) + packet)
+                self._spool_w.flush()
+        except Exception as exc:
+            print(f"[buffer] spool write failed: {exc}")
+
+    def _spool_next(self):
+        """Read the next spooled frame, or None at end-of-spool."""
+        try:
+            with self._spool_lock:
+                if self._spool_r is None:
+                    if self._spool_path is None or not self._spool_path.exists():
+                        return None
+                    self._spool_r = open(self._spool_path, "rb")
+                header = self._spool_r.read(4)
+                if len(header) < 4:
+                    # Partial header (writer mid-flush). Rewind so the next read starts
+                    # on the frame boundary — otherwise the whole spool desyncs.
+                    if header:
+                        self._spool_r.seek(-len(header), os.SEEK_CUR)
+                    return None
+                (n,) = struct.unpack("<I", header)
+                payload = self._spool_r.read(n)
+                if len(payload) < n:          # torn tail (writer mid-flush) — retry later
+                    self._spool_r.seek(-len(header) - len(payload), os.SEEK_CUR)
+                    return None
+                return payload
+        except Exception as exc:
+            print(f"[buffer] spool read failed: {exc}")
+            return None
+
+    def _spool_discard(self) -> None:
+        """Delete the local copy — called once everything has reached the server."""
+        with self._spool_lock:
+            for h in ("_spool_r", "_spool_w"):
+                try:
+                    handle = getattr(self, h)
+                    if handle is not None:
+                        handle.close()
+                except Exception:
+                    pass
+                setattr(self, h, None)
+            try:
+                if self._spool_path is not None and self._spool_path.exists():
+                    self._spool_path.unlink()
+            except OSError as exc:
+                print(f"[buffer] could not delete spool: {exc}")
+
+    def _enter_degraded(self, reason: str) -> None:
+        """Switch to local buffering and start trying to resume the session."""
+        if self._degraded.is_set() or self._closing.is_set():
+            return
+        self._degraded.set()
+        print(f"[buffer] connection lost ({reason}) — buffering locally and reconnecting")
+        self._notify({"type": "connection_status", "state": "buffering", "reason": reason})
+        # The old receiver is looping on a dead socket; let it exit.
+        self._receiver_stop.set()
+        if self._reconnect_thread is None or not self._reconnect_thread.is_alive():
+            self._reconnect_thread = threading.Thread(
+                target=self._reconnect_loop, daemon=True, name="ws-reconnect")
+            self._reconnect_thread.start()
+
+    def _notify(self, msg: dict) -> None:
+        """Surface a locally-generated status message on the same path as server
+        messages, so the UI can show 'reconnecting' without a second mechanism."""
+        if self.on_message:
+            try:
+                self.on_message(msg)
+            except Exception:
+                pass
+
+    def _reconnect_loop(self) -> None:
+        deadline = time.time() + self._RESUME_DEADLINE_SECS
+        attempt = 0
+        while self._degraded.is_set() and not self._closing.is_set():
+            if time.time() > deadline:
+                print(f"[buffer] gave up resuming after {self._RESUME_DEADLINE_SECS}s; "
+                      f"buffered audio kept at {self._spool_path}")
+                self._notify({"type": "connection_status", "state": "failed"})
+                return
+            delay = self._RECONNECT_BACKOFF[min(attempt, len(self._RECONNECT_BACKOFF) - 1)]
+            attempt += 1
+            if self._closing.wait(timeout=delay):
+                return
+            try:
+                if self._reconnect_once():
+                    print("[buffer] session resumed — buffered audio delivered")
+                    self._notify({"type": "connection_status", "state": "resumed"})
+                    if self._final_stop.is_set():
+                        self._finish_after_resume()
+                    return
+            except Exception as exc:
+                print(f"[buffer] resume attempt {attempt} failed: {exc}")
+
+    def _reconnect_once(self) -> bool:
+        """One resume attempt: reopen, re-identify, resume the SAME session, then
+        replay the spool. Returns True only when the spool is fully delivered."""
+        ws = _websocket.create_connection(
+            self.server_url, timeout=10, enable_multithread=True)
+        try:
+            ws.send(json.dumps({
+                "command": "identify",
+                "client_id": self.client_id,       # same id -> same server-side streams
+                "client_name": "SparkFlowWidget",
+            }))
+            if json.loads(ws.recv()).get("status") != "identified":
+                ws.close()
+                return False
+            ws.send(json.dumps({
+                "command": "session_resume",
+                "client_id": self.client_id,
+                "session_id": self.session_id,
+                "token": self.token,
+            }))
+            resp = json.loads(ws.recv())
+            if resp.get("status") != "session_resumed":
+                print(f"[buffer] server refused resume: {resp}")
+                ws.close()
+                return False
+        except Exception:
+            try:
+                ws.close()
+            except Exception:
+                pass
+            raise
+
+        # Swap in the live socket and restart the receiver.
+        with self._lock:
+            old, self._ws = self._ws, ws
+        try:
+            if old is not None:
+                old.close()
         except Exception:
             pass
+        self._receiver_stop.clear()
+        self._receiver_thread = threading.Thread(
+            target=self._receiver_loop, daemon=True, name="ws-receiver")
+        self._receiver_thread.start()
+
+        return self._drain_spool()
+
+    def _drain_spool(self) -> bool:
+        """Replay buffered frames in order, then hand back to live streaming.
+
+        Capture keeps appending while we drain, so we only flip back to live when
+        the spool is genuinely empty — under the same lock the writer uses, so no
+        chunk can slip in behind us and arrive out of order.
+        """
+        while not self._closing.is_set():
+            packet = self._spool_next()
+            if packet is None:
+                # Looks empty. Re-check while holding the send lock so a chunk can't
+                # be spooled between the check and the flip back to live.
+                with self._lock:
+                    packet = self._spool_next()
+                    if packet is None:
+                        self._degraded.clear()
+                        self._spool_discard()
+                        return True
+                    # A chunk landed in that window. We've already consumed it from
+                    # the spool, so it MUST be sent here — dropping it would lose
+                    # ~93ms of the call.
+                    try:
+                        self._ws.send_binary(packet)
+                        continue
+                    except Exception as exc:
+                        self._rewind_spool(packet)
+                        print(f"[buffer] replay interrupted: {exc}")
+                        return False
+            try:
+                with self._lock:
+                    self._ws.send_binary(packet)
+            except Exception as exc:
+                # Dropped again mid-replay: put this frame back so the next attempt
+                # re-sends it instead of losing it.
+                self._rewind_spool(packet)
+                print(f"[buffer] replay interrupted: {exc}")
+                return False
+        return False
+
+    def _rewind_spool(self, packet: bytes) -> None:
+        """Un-consume the frame we just read, so a failed send doesn't lose it.
+        The record on disk is 4 length bytes + the frame."""
+        with self._spool_lock:
+            try:
+                if self._spool_r is not None:
+                    self._spool_r.seek(-(len(packet) + 4), os.SEEK_CUR)
+            except Exception as exc:
+                print(f"[buffer] rewind failed: {exc}")
+
+    def _finish_after_resume(self) -> None:
+        """The agent ended the call while we were offline: now that the buffered
+        audio has landed, close the call down properly so the server finalizes a
+        COMPLETE recording instead of timing the session out as dropped."""
+        try:
+            for stream_type in list(self._started_streams):
+                self.stop_stream(stream_type)
+            self.end_session()
+            print("[buffer] deferred session_end delivered after resume")
+        except Exception as exc:
+            print(f"[buffer] deferred session_end failed: {exc}")
 
     def stop_stream(self, stream_type: str):
         self._send_json({
@@ -943,7 +1443,18 @@ class AudioStreamer:
         })
 
     def close(self):
-        """Release the connection after post-call messages have arrived."""
+        """Release the connection after post-call messages have arrived.
+
+        If we're still buffering, the reconnect thread is deliberately left running
+        (as a daemon) so it can finish delivering this call's audio — closing here
+        would throw away recording we already captured. It stops itself on success
+        or at its own deadline.
+        """
+        if self._degraded.is_set():
+            print("[buffer] call closed while offline — resume still in progress")
+            self._final_stop.set()
+            return
+        self._closing.set()
         self._receiver_stop.set()
         try:
             self._ws.close()
@@ -952,10 +1463,26 @@ class AudioStreamer:
         if self._receiver_thread is not None:
             self._receiver_thread.join(timeout=3)
             self._receiver_thread = None
+        self._spool_discard()
 
     def _send_json(self, data: dict):
-        with self._lock:
-            self._ws.send(json.dumps(data))
+        """Send a control frame. While the socket is down these are dropped on
+        purpose: replaying stale control frames after a resume would confuse the
+        server, and _finish_after_resume re-sends the ones that still matter."""
+        if self._degraded.is_set():
+            print(f"[buffer] control frame '{data.get('command')}' deferred (offline)")
+            return
+        try:
+            with self._lock:
+                self._ws.send(json.dumps(data))
+        except Exception as exc:
+            # Before the session exists there is nothing to resume — let connect()
+            # see the failure and fail the call cleanly, as it always has.
+            if not self._session_live.is_set():
+                raise
+            # A control frame failing is the same signal as audio failing: the
+            # socket is gone. Start buffering so the call keeps recording.
+            self._enter_degraded(f"control send failed: {type(exc).__name__}")
 
 
 def _smooth_fonts(root: "QWidget"):
@@ -1396,7 +1923,17 @@ class MainWindow(QMainWindow):
         self._token_expiry: float = 0.0        # epoch secs; 0 = unknown -> refresh soon
         self._refresh_inflight: bool = False
         self._refresh_worker: "RefreshWorker | None" = None
-        self._user: dict = {}
+        # Cached agent identity. Persisted so a restart with no network still knows who
+        # is signed in (name + agent id for the dialer control connection) instead of
+        # waiting on /api/me.
+        self._user: dict = _load_json_setting(self._settings, "auth/user")
+        # Backoff for retrying a startup validation that failed transiently.
+        self._validate_retry_secs: int = 0
+        # Auto-update state: checked once per run; an update found mid-call is held
+        # here and applied as soon as the agent is off the phone.
+        self._update_checked: bool = False
+        self._update_worker = None
+        self._pending_update: tuple | None = None
         self._config: dict = {}
         # Active department key for this widget (from the loaded config; the
         # dialer can switch it per call leg, e.g. on a transfer).
@@ -1421,7 +1958,6 @@ class MainWindow(QMainWindow):
         self._control = None
         self._control_client_id = str(uuid.uuid4())
         self._company_name: str = ""
-        self._remember: bool = True
         self._api_base = self._settings.value("api/base_url", DEFAULT_API_BASE_URL)
         self._ws_url = self._settings.value("ws/url", DEFAULT_RECORDING_WS)
 
@@ -1463,6 +1999,11 @@ class MainWindow(QMainWindow):
         self._refresh_timer.setInterval(240000)   # 4 minutes
         self._refresh_timer.timeout.connect(self._maybe_refresh_token)
         self._refresh_timer.start()
+
+        # Bound how long undeliverable call audio lingers on the agent's machine.
+        purged = purge_old_spools()
+        if purged:
+            print(f"[buffer] purged {purged} stale spool file(s)")
 
         self._build_ui()
         self._build_tray()
@@ -1977,8 +2518,8 @@ class MainWindow(QMainWindow):
         return page
 
     # ── Login handling ────────────────────────────────────────
-    def _on_login_requested(self, email: str, password: str, remember: bool):
-        self._remember = remember
+    def _on_login_requested(self, email: str, password: str, remember: bool = True):
+        # `remember` is vestigial — the session is ALWAYS persisted now (sign in once).
         base = self._api_edit.text().strip() or self._api_base
         self._api_base = base
         self._login_worker = LoginWorker(base, email, password)
@@ -1989,25 +2530,33 @@ class MainWindow(QMainWindow):
     def _on_login_succeeded(self, token: str, refresh_token: str, expires_in: int,
                             user: dict, config: dict, etag: str):
         self._set_auth_tokens(token, refresh_token, expires_in)
-        self._user = user or {}
+        self._set_user(user or {})
         self._apply_config(config, etag)
-        if not self._remember:
-            self._settings.remove("auth/token")
-            self._settings.remove("auth/refresh_token")
         self._settings.setValue("api/base_url", self._api_base)
         self._set_login_busy(False)
         self._pw_edit.clear()
         self._enter_main()
 
+    def _set_user(self, user: dict) -> None:
+        """Cache the agent's identity in memory AND on disk, so the next launch knows
+        who is signed in even before (or without) reaching the backend."""
+        self._user = user or {}
+        try:
+            self._settings.setValue("auth/user", json.dumps(self._user))
+        except Exception:
+            pass
+
     def _set_auth_tokens(self, token: str, refresh_token: str, expires_in) -> None:
-        """Store the id token, refresh token, and id-token expiry. Persisted (when
-        'remember' is on) so the background refresh keeps the session alive past the
-        ~1-hour id-token lifetime without the agent logging in again."""
+        """Store the id token, refresh token, and id-token expiry.
+
+        Always persisted: the agent signs in once and stays signed in. The id token
+        lives ~1 hour, so it is the long-lived refresh token that actually keeps the
+        session alive — renewed by the background timer and again at every launch."""
         self._token = token or ""
         if refresh_token:
             self._refresh_token = refresh_token
         self._token_expiry = time.time() + _as_expires_in(expires_in)
-        if self._remember and self._token:
+        if self._token:
             self._settings.setValue("auth/token", self._token)
             if self._refresh_token:
                 self._settings.setValue("auth/refresh_token", self._refresh_token)
@@ -2052,31 +2601,108 @@ class MainWindow(QMainWindow):
                 self._apply_config(json.loads(cached), etag, persist=False)
             except Exception:
                 pass
-        self._validate_worker = ValidateWorker(self._api_base, self._token, etag)
+        self._validate_worker = ValidateWorker(
+            self._api_base, self._token, etag, self._refresh_token)
         self._validate_worker.valid.connect(self._on_validate_ok)
         self._validate_worker.invalid.connect(self._on_validate_bad)
+        self._validate_worker.unreachable.connect(self._on_validate_unreachable)
         self._validate_worker.start()
 
-    def _on_validate_ok(self, config: dict, etag: str, user: dict):
-        # Restore the agent's identity from /api/me so a remembered session shows
-        # the name and sends a real agent_id (not 'unknown'). Empty user (e.g.
-        # /api/me hiccup) -> keep whatever we had rather than wiping it.
+    def _on_validate_ok(self, config: dict, etag: str, user: dict,
+                        token: str, refresh_token: str, expires_in: int):
+        self._validate_retry_secs = 0
+        # The worker renews the id token before validating, so store what it got back.
+        if token:
+            self._set_auth_tokens(token, refresh_token, expires_in)
+        # Restore the agent's identity from /api/me so the session shows the name and
+        # sends a real agent_id (not 'unknown'). Empty user (e.g. an /api/me hiccup)
+        # -> keep the cached one rather than wiping it.
         if user and user.get("id"):
-            self._user = user
+            self._set_user(user)
         if config:   # 200 with fresh config; {} means 304 -> keep cache
             self._apply_config(config, etag)
         self._enter_main()
-        # Remembered session: the stored id token may be old, so renew it now (if we
-        # have a refresh token) rather than waiting for it to expire mid-shift.
-        self._maybe_refresh_token()
+
+    # ── Auto-update ───────────────────────────────────────────
+    def _maybe_check_for_update(self):
+        """Look for a newer release and, if there is one, fetch it in the background.
+
+        Only from a packaged build (a dev checkout has nothing to install over), only
+        once per run, and never while a call is in progress."""
+        if self._update_checked or self._recording or self._starting:
+            return
+        if not getattr(sys, "frozen", False):
+            print("[update] dev run — skipping update check")
+            return
+        self._update_checked = True
+        self._update_worker = UpdateCheckWorker(self._api_base, APP_VERSION)
+        self._update_worker.update_ready.connect(self._on_update_ready)
+        self._update_worker.no_update.connect(
+            lambda: print(f"[update] up to date ({APP_VERSION})"))
+        self._update_worker.start()
+
+    def _on_update_ready(self, installer_path: str, version: str):
+        """Installer downloaded. Install it once the agent isn't on a call."""
+        self._pending_update = (installer_path, version)
+        self._apply_pending_update()
+
+    def _apply_pending_update(self):
+        """Hand off to a detached helper and quit so the installer can replace us.
+
+        Deferred while recording — an update must never cut off a live call. The
+        deferral is retried from _stop_recording, so it lands right after the call.
+        """
+        if not self._pending_update:
+            return
+        if self._recording or self._starting:
+            print("[update] on a call — update deferred until it ends")
+            return
+        installer, version = self._pending_update
+        self._pending_update = None
+        try:
+            exe = sys.executable
+            minimized = "--minimized" in sys.argv
+            script = Path(tempfile.gettempdir()) / "sparkflow_update.cmd"
+            script.write_text(build_updater_script(installer, exe, minimized),
+                              encoding="utf-8")
+            flags = 0
+            if hasattr(subprocess, "DETACHED_PROCESS"):
+                flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            subprocess.Popen(["cmd", "/c", str(script)], creationflags=flags,
+                             close_fds=True)
+            print(f"[update] installing {version} — restarting")
+            self._quit()
+        except Exception as exc:  # noqa: BLE001 — a failed update must not kill the widget
+            print(f"[update] could not start the installer: {exc}")
+
+    def _on_validate_unreachable(self, reason: str):
+        """Transient failure — the backend was unreachable / erroring, which says
+        nothing about whether this agent is allowed in. Keep the session, carry on with
+        the cached config + identity, and retry with backoff. This is the common case at
+        Windows login, when the widget auto-starts before the network is ready."""
+        print(f"[widget] session check deferred ({reason}) — keeping the stored session")
+        self._enter_main()
+        # 30s, 60s, 2m, 4m … capped at 5m.
+        self._validate_retry_secs = min(300, (self._validate_retry_secs or 15) * 2)
+        QTimer.singleShot(self._validate_retry_secs * 1000, self._retry_validate)
+
+    def _retry_validate(self):
+        # Only still relevant if we're signed in and no other check is running.
+        if not self._token:
+            return
+        if self._validate_worker is not None and self._validate_worker.isRunning():
+            return
+        self._validate_stored_token()
 
     def _on_validate_bad(self):
         self._settings.remove("auth/token")
         self._settings.remove("auth/refresh_token")
+        self._settings.remove("auth/user")
         self._token = ""
         self._refresh_token = ""
+        self._user = {}
         self._stack.setCurrentWidget(self._page_login)
-        # If we auto-started minimized but the remembered session turned out invalid,
+        # If we auto-started minimized but the stored session turned out invalid,
         # reveal the window so the agent can log in (otherwise it'd hide the login).
         self.showNormal()
         self.raise_()
@@ -2147,6 +2773,8 @@ class MainWindow(QMainWindow):
         self._start_control_connection()
         # First-run: block use behind the mic-setup gate until a mic is chosen.
         self._maybe_show_mic_gate()
+        # Pick up a new release in the background (once per run, never mid-call).
+        self._maybe_check_for_update()
 
     def _start_control_connection(self):
         """Open the persistent dialer-reachable control connection (idempotent)."""
@@ -2171,8 +2799,14 @@ class MainWindow(QMainWindow):
         if self._recording:
             self._stop_recording()
         self._stop_control_connection()
+        # Clear the WHOLE session. The refresh token is long-lived, so leaving it on
+        # disk after an explicit sign-out would let the session be resumed.
         self._settings.remove("auth/token")
+        self._settings.remove("auth/refresh_token")
+        self._settings.remove("auth/user")
         self._token = ""
+        self._refresh_token = ""
+        self._token_expiry = 0.0
         self._user = {}
         self._settings_card.setVisible(False)
         self._front_card.setVisible(True)
@@ -2527,9 +3161,15 @@ class MainWindow(QMainWindow):
         customer_name = self._customer_name_edit.text().strip()
         reference_id = self._reference_edit.text().strip()
 
+        # When the superadmin has hidden the customer fields there is nothing for the
+        # agent to fill in, so demanding them would make manual Start impossible.
+        # The dialer/CRM supplies the reference in that setup.
+        fields_hidden = bool(self._config.get("hide_customer_fields", False))
+        missing = (not all([customer_name, reference_id]) if require_name
+                   else not reference_id)
         # Reference ID is always required. Customer Name is required for the
         # manual flow, but optional for dialer auto-start (resolved via CRM).
-        if not all([customer_name, reference_id]) if require_name else not reference_id:
+        if missing and not fields_hidden:
             QMessageBox.warning(
                 self, "Missing Info",
                 "Please fill in Customer Name and Reference ID before starting a recording."
@@ -2742,6 +3382,10 @@ class MainWindow(QMainWindow):
             else:
                 # Recording-only: no compliance to summarise — just confirm the save.
                 self._show_saved_confirmation(duration)
+
+        # An update that arrived mid-call was deferred; the agent is free now.
+        if self._pending_update:
+            QTimer.singleShot(2000, self._apply_pending_update)
 
     # ── Inbound server messages (Phase 3) ─────────────────────
     def _on_inbound_message(self, msg: dict):
