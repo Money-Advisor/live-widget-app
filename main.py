@@ -161,12 +161,38 @@ def _needs_mic_gate(token: str, saved_mic: str) -> bool:
 DEFAULT_API_BASE_URL = "http://192.168.80.52:8080"
 DEFAULT_RECORDING_WS = "ws://192.168.80.52:8765"
 
+# WebSocket budgets. These answer two DIFFERENT questions and must not share a number:
+#   - connect: "is the recording server reachable?" A server that isn't listening
+#     should fail fast, so this stays short.
+#   - handshake: "how long may the server take to ANSWER?" Answering identify /
+#     session_start / session_resume means authenticating the agent's token and
+#     writing a session row, so on a busy server it is legitimately slow.
+# create_connection's timeout silently governs every later read on the socket too, so
+# both used to be 10s. A server queueing behind a database connection then looked
+# exactly like an unreachable one: the agent got "Connection timed out" and the call
+# refused to start, and a buffered call could not be resumed so it stored as dropped.
+# Keep the handshake budget comfortably above the server's worst-case DB wait
+# (_ACQUIRE_* in the server's persistence.py).
+WS_CONNECT_TIMEOUT = 10
+WS_HANDSHAKE_TIMEOUT = 30
+# Socket timeout while a call is streaming. The receiver thread used to set this to
+# 1.0s just so it could poll its stop flag — but websocket-client applies ONE timeout
+# to the whole socket, so that 1s governed audio SENDS as well. One busy second on the
+# server (its TCP buffer momentarily undrained) made a 16KB chunk time out, send_audio
+# treats any send failure as "the socket died mid-call", and a perfectly healthy call
+# was buffered, resumed, and — when the resume couldn't complete — stored as a dropped
+# recording. At fleet scale that was most calls.
+# The trade-off: the capture thread blocks on a stuck send for up to this long, and
+# the audio device's buffer can overflow meanwhile, so this must stay small. A few
+# seconds tolerates a server hiccup without pretending a genuinely dead link is fine.
+WS_STREAM_TIMEOUT = 5
+
 ORG = "Spark Flow"
 APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.7"
+APP_VERSION = "2.9.8"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -624,7 +650,11 @@ class ControlConnection(QThread):
     def _serve_once(self):
         """One connect → identify → receive-until-error pass (no reconnect)."""
         ws = _websocket.create_connection(
-            self.server_url, timeout=10, enable_multithread=True)
+            self.server_url, timeout=WS_CONNECT_TIMEOUT, enable_multithread=True)
+        # Let the server take its time to answer identify; a 10s read budget made a
+        # busy server drop every widget out of the dialer index for a 3s backoff,
+        # adding reconnect churn to the very load that caused it.
+        ws.settimeout(WS_HANDSHAKE_TIMEOUT)
         self._ws = ws
         try:
             ws.send(json.dumps({
@@ -1074,6 +1104,8 @@ class AudioStreamer:
     recording has no gap, and the local copy is deleted as soon as it is delivered.
     """
 
+    _CONNECT_TIMEOUT = WS_CONNECT_TIMEOUT
+    _HANDSHAKE_TIMEOUT = WS_HANDSHAKE_TIMEOUT
     # Reconnect backoff (seconds) — quick at first, then easy on a struggling network.
     _RECONNECT_BACKOFF = (1, 2, 4, 8, 15, 30)
     # Give up resuming after this long. Must stay UNDER the server's resume grace
@@ -1171,8 +1203,11 @@ class AudioStreamer:
     def connect(self):
         """Open WebSocket, identify the client, and start a session."""
         self._ws = _websocket.create_connection(
-            self.server_url, timeout=10, enable_multithread=True
+            self.server_url, timeout=self._CONNECT_TIMEOUT, enable_multithread=True
         )
+        # The connect timeout also governs every later read on this socket, and the
+        # two handshake replies below wait on the server, not on the network.
+        self._ws.settimeout(self._HANDSHAKE_TIMEOUT)
 
         identify_msg = {
             "command":     "identify",
@@ -1240,7 +1275,10 @@ class AudioStreamer:
         """
         ws = ws if ws is not None else self._ws
         try:
-            ws.settimeout(1.0)
+            # NOT a poll interval: this is the whole socket's timeout, sends included
+            # (see WS_STREAM_TIMEOUT). The loop doesn't need a short tick to shut down —
+            # close() closes the socket, which makes a blocked recv raise at once.
+            ws.settimeout(WS_STREAM_TIMEOUT)
         except Exception:
             pass
         print("[recv] receiver loop started")
@@ -1450,7 +1488,11 @@ class AudioStreamer:
         """One resume attempt: reopen, re-identify, resume the SAME session, then
         replay the spool. Returns True only when the spool is fully delivered."""
         ws = _websocket.create_connection(
-            self.server_url, timeout=10, enable_multithread=True)
+            self.server_url, timeout=self._CONNECT_TIMEOUT, enable_multithread=True)
+        # Same reasoning as connect(): the resume handshake waits on the server. A
+        # 10s read budget here meant a busy server could not be resumed at all, so a
+        # recording that WAS safely buffered still got stored as a dropped call.
+        ws.settimeout(self._HANDSHAKE_TIMEOUT)
         try:
             ws.send(json.dumps({
                 "command": "identify",
