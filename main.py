@@ -158,8 +158,8 @@ def _needs_mic_gate(token: str, saved_mic: str) -> bool:
 # Backend API (login + config) and recording-server WebSocket.
 # Point at the deployed server; both are overridable via QSettings (Settings panel).
 # (Update these to the public subdomain — https:// + wss:// — once DNS/HTTPS is live.)
-DEFAULT_API_BASE_URL = "http://192.168.80.52:8080"
-DEFAULT_RECORDING_WS = "ws://192.168.80.52:8765"
+DEFAULT_API_BASE_URL = "http://192.168.80.53:8080"
+DEFAULT_RECORDING_WS = "ws://192.168.80.53:8765"
 
 # WebSocket budgets. These answer two DIFFERENT questions and must not share a number:
 #   - connect: "is the recording server reachable?" A server that isn't listening
@@ -192,7 +192,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.8"
+APP_VERSION = "2.9.9"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2171,6 +2171,7 @@ class MainWindow(QMainWindow):
         self._company_name: str = ""
         self._api_base = self._settings.value("api/base_url", DEFAULT_API_BASE_URL)
         self._ws_url = self._settings.value("ws/url", DEFAULT_RECORDING_WS)
+        self._migrate_server_urls()
 
         # Recording state
         self._recording = False
@@ -3091,6 +3092,30 @@ class MainWindow(QMainWindow):
             self._start_rescan_poll()   # keep catching hot-plugged devices
         else:
             self._stop_rescan_poll()
+
+    # Servers moved from 192.168.80.52 to .53 in Aug 2026. A NEW BUILD IS NOT ENOUGH:
+    # QSettings takes precedence over DEFAULT_*, so an agent who has ever run the widget
+    # keeps the dead address and sees a 502 at login (the old box still runs nginx but
+    # not the API). This rewrites only the retired host, so anyone who has deliberately
+    # set a different server (a test box, a future move) is left alone.
+    RETIRED_HOSTS = ("192.168.80.52",)
+
+    def _migrate_server_urls(self) -> None:
+        """One-time: repoint a saved address that still names a retired server."""
+        changed = []
+        for host in self.RETIRED_HOSTS:
+            if host in (self._api_base or ""):
+                self._api_base = DEFAULT_API_BASE_URL
+                self._settings.setValue("api/base_url", self._api_base)
+                changed.append("api")
+            if host in (self._ws_url or ""):
+                self._ws_url = DEFAULT_RECORDING_WS
+                self._settings.setValue("ws/url", self._ws_url)
+                changed.append("ws")
+        if changed:
+            self._settings.sync()
+            print(f"[migrate] retired server address replaced ({', '.join(changed)}) "
+                  f"-> {self._api_base} / {self._ws_url}")
 
     def _save_settings(self):
         self._api_base = self._api_edit.text().strip() or DEFAULT_API_BASE_URL
