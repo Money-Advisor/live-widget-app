@@ -348,6 +348,25 @@ def api_login(base_url: str, email: str, password: str) -> dict:
     raise BackendError(f"Login failed (server error {r.status_code}).")
 
 
+def api_forgot_password(base_url: str, email: str) -> None:
+    """POST /auth/forgot-password. The server answers the same way whether or not the
+    address exists (it must not confirm who has an account), so there is nothing to
+    return — anything other than a network/server failure counts as done."""
+    try:
+        r = requests.post(
+            f"{base_url.rstrip('/')}/auth/forgot-password",
+            json={"email": email},
+            timeout=15,
+        )
+    except requests.RequestException:
+        raise BackendError("Could not reach the server. Check your connection.")
+    if r.status_code == 200:
+        return
+    if r.status_code == 429:
+        raise BackendError("Too many attempts. Please wait a minute and try again.")
+    raise BackendError(f"Could not send the reset email (server error {r.status_code}).")
+
+
 def api_refresh(base_url: str, refresh_token: str) -> dict:
     """POST /auth/refresh-widget -> {token, refresh_token, expires_in}. Renews the
     session's id token from the long-lived refresh token (no password needed)."""
@@ -447,6 +466,27 @@ def _needs_token_refresh(token, refresh_token, inflight, expiry, now=None) -> bo
     renew it, and no refresh is already running."""
     now = time.time() if now is None else now
     return bool(token and refresh_token and not inflight and now >= expiry - 600)
+
+
+class ForgotPasswordWorker(QThread):
+    """Requests the reset email off the UI thread, like every other network call here."""
+    succeeded = pyqtSignal()
+    failed = pyqtSignal(str)
+
+    def __init__(self, base_url, email, parent=None):
+        super().__init__(parent)
+        self.base_url = base_url
+        self.email = email
+
+    def run(self):
+        try:
+            api_forgot_password(self.base_url, self.email)
+        except BackendError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:                       # noqa: BLE001
+            self.failed.emit(f"Unexpected error: {exc}")
+        else:
+            self.succeeded.emit()
 
 
 class LoginWorker(QThread):
@@ -2399,6 +2439,19 @@ class MainWindow(QMainWindow):
         self._signin_btn.clicked.connect(self._attempt_login)
         c.addWidget(self._signin_btn)
 
+        # ── Forgot password (self-service; no admin needed) ───
+        self._forgot_btn = QPushButton("Forgot password?")
+        self._forgot_btn.setObjectName("forgot")
+        self._forgot_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._forgot_btn.setFlat(True)
+        self._forgot_btn.setStyleSheet(
+            "QPushButton#forgot { background:transparent; border:none; color:#93B4FF;"
+            f" font-size:12px; font-family:{FF}; padding:8px 0 0 0; }}"
+            "QPushButton#forgot:hover { color:#C7D8FF; text-decoration:underline; }"
+            "QPushButton#forgot:disabled { color: rgba(147,180,255,0.45); }")
+        self._forgot_btn.clicked.connect(self._attempt_forgot_password)
+        c.addWidget(self._forgot_btn, 0, Qt.AlignmentFlag.AlignHCenter)
+
         # ── Error line ────────────────────────────────────────
         self._login_error = QLabel("")
         self._login_error.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -2429,7 +2482,48 @@ class MainWindow(QMainWindow):
             self._pw_edit.setEchoMode(QLineEdit.EchoMode.Password)
             self._pw_action.setIcon(svg_icon("eye", "#AEB4C6"))
 
+    def _attempt_forgot_password(self):
+        """Email a reset link for whatever is in the email box.
+
+        Reuses the email field rather than opening a dialog: the agent has usually just
+        typed it and failed to sign in, so it is already there.
+        """
+        email = self._email_edit.text().strip()
+        if not email or "@" not in email:
+            self._login_error.setText("Enter your email address first, then click "
+                                      "“Forgot password?”.")
+            return
+        self._login_error.setText("")
+        self._forgot_btn.setEnabled(False)
+        self._forgot_btn.setText("Sending…")
+        self._forgot_worker = ForgotPasswordWorker(self._api_base, email, self)
+        self._forgot_worker.succeeded.connect(self._on_forgot_sent)
+        self._forgot_worker.failed.connect(self._on_forgot_failed)
+        self._forgot_worker.start()
+
+    def _on_forgot_sent(self):
+        self._forgot_btn.setEnabled(True)
+        self._forgot_btn.setText("Forgot password?")
+        # Deliberately worded like the server's reply: we must not reveal whether the
+        # address is registered, so this says the same thing either way.
+        self._login_error.setStyleSheet(
+            f"color:#86EFAC; font-size:13px; font-family:{FF};")
+        self._login_error.setText(
+            "If that email is registered, a reset link is on its way. "
+            "Check your inbox, set a new password, then sign in here.")
+
+    def _on_forgot_failed(self, msg: str):
+        self._forgot_btn.setEnabled(True)
+        self._forgot_btn.setText("Forgot password?")
+        self._login_error.setStyleSheet(
+            f"color:#FCA5A5; font-size:13px; font-family:{FF};")
+        self._login_error.setText(msg)
+
     def _attempt_login(self):
+        # The error line doubles as the reset-email confirmation (green); put it back to
+        # red so a failed login after a reset request isn't rendered as success.
+        self._login_error.setStyleSheet(
+            f"color:#FCA5A5; font-size:13px; font-family:{FF};")
         email = self._email_edit.text().strip()
         password = self._pw_edit.text()
         if not email or not password:
