@@ -629,6 +629,9 @@ def test_control_connection_identifies_and_dispatches(monkeypatch):
     assert identify["command"] == "identify"
     assert identify["agent_email"] == "agent@x.test"
     assert identify["agent_id"] == "u1"
+    # The build rides the control connection so supervisors can see, on the dashboard,
+    # which agents are on an out-of-date widget.
+    assert identify["app_version"] == main.APP_VERSION
     assert got == [{"type": "dialer_activate", "action": "start"}]
 
 

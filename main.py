@@ -192,7 +192,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.11"
+APP_VERSION = "2.9.12"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -703,6 +703,11 @@ class ControlConnection(QThread):
                 "client_name": "SparkFlowWidget-control",
                 "agent_email": self.agent_email,
                 "agent_id": self.agent_id,
+                # Reported so supervisors can see each agent's build on the dashboard
+                # (the Aug-2026 server move left agents stranded on old builds with no
+                # way to spot them). Rides the control connection, which is open the
+                # whole shift, rather than the per-call stream.
+                "app_version": APP_VERSION,
             }))
             if json.loads(ws.recv()).get("status") != "identified":
                 return   # server didn't accept us — let run() back off + retry
