@@ -192,7 +192,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.10"
+APP_VERSION = "2.9.11"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2182,6 +2182,11 @@ class MainWindow(QMainWindow):
         # Auto-update state: checked once per run; an update found mid-call is held
         # here and applied as soon as the agent is off the phone.
         self._update_checked: bool = False
+        # True while signed out: the window pins itself on screen (see
+        # _enter_logged_out_mode). Set before any UI is built so the close/minimise
+        # guards can read it safely.
+        self._logged_out_sticky: bool = False
+        self._resurface_timer = None
         self._update_worker = None
         self._pending_update: tuple | None = None
         self._update_attempts: dict = {}
@@ -2269,7 +2274,10 @@ class MainWindow(QMainWindow):
             self._stack.setCurrentWidget(self._page_main)
             self._validate_stored_token()
         else:
-            self._stack.setCurrentWidget(self._page_login)
+            # No stored session (fresh install, or a previous sign-out). The widget can
+            # auto-start minimised at Windows login, which would hide the login screen
+            # entirely — so make it sticky here too.
+            self._enter_logged_out_mode("Sign in to start recording calls.")
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -3045,12 +3053,12 @@ class MainWindow(QMainWindow):
         self._token = ""
         self._refresh_token = ""
         self._user = {}
-        self._stack.setCurrentWidget(self._page_login)
-        # If we auto-started minimized but the stored session turned out invalid,
-        # reveal the window so the agent can log in (otherwise it'd hide the login).
-        self.showNormal()
-        self.raise_()
-        self.activateWindow()
+        # Sticky: show it, keep it on top, and refuse to be hidden until they sign in.
+        # Previously this only did showNormal/raise/activateWindow, so the window could
+        # be minimised straight back into the tray and the sign-out became invisible
+        # again. activateWindow() is deliberately gone — see _surface_login_window.
+        self._enter_logged_out_mode(
+            "Your session expired or was revoked (for example after a password change).")
 
     def _apply_config(self, config: dict, etag: str, persist: bool = True):
         self._config = config or {}
@@ -3105,6 +3113,8 @@ class MainWindow(QMainWindow):
             self._agent_display_lbl.setText(name if name else "Not Set")
 
     def _enter_main(self):
+        # Signed in: stop pinning the window on top and allow hide-to-tray again.
+        self._exit_logged_out_mode()
         self._refresh_identity_labels()
         self._show_front()
         self._stack.setCurrentWidget(self._page_main)
@@ -3220,6 +3230,65 @@ class MainWindow(QMainWindow):
         self._show_front()
 
     # ── Tray ──────────────────────────────────────────────────
+    # ── Sticky sign-out ──────────────────────────────────────────────────────
+    # A revoked session used to fail SILENTLY: _on_validate_bad switched the stack to
+    # the login page, but if the window was hidden in the tray (the normal state — it
+    # hides on close AND on minimise) the agent saw nothing and carried on working while
+    # nothing recorded. The signal was there; it just had nowhere to appear.
+    #
+    # So while signed out the window forces itself back on screen, stays on top, and
+    # refuses to hide. Quitting from the tray still works, so an agent can genuinely
+    # shut down at the end of a shift.
+    #
+    # It deliberately does NOT call activateWindow(): agents type customer details into
+    # the dialer, and stealing keyboard focus mid-call could send half a phone number
+    # into our window. Raising without focus is unmissable but harmless.
+    RESURFACE_MS = 60_000          # if it gets buried, come back a minute later
+
+    def _enter_logged_out_mode(self, reason: str = ""):
+        """Make the sign-out impossible to miss. Idempotent."""
+        self._logged_out_sticky = True
+        self._stack.setCurrentWidget(self._page_login)
+        self._surface_login_window()
+        if not getattr(self, "_resurface_timer", None):
+            self._resurface_timer = QTimer(self)
+            self._resurface_timer.setInterval(self.RESURFACE_MS)
+            self._resurface_timer.timeout.connect(self._resurface_if_buried)
+        self._resurface_timer.start()
+        if getattr(self, "_tray", None):
+            self._tray.setToolTip("Spark Flow – SIGNED OUT (calls are not recorded)")
+            self._tray.showMessage(
+                "Spark Flow – you are signed out",
+                reason or "Calls are NOT being recorded. Sign in to start recording again.",
+                QSystemTrayIcon.MessageIcon.Warning, 10_000)
+
+    def _exit_logged_out_mode(self):
+        """Back to normal: hideable, not on top."""
+        self._logged_out_sticky = False
+        if getattr(self, "_resurface_timer", None):
+            self._resurface_timer.stop()
+        if self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint:
+            self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, False)
+            self.show()                      # re-show: changing flags hides the window
+        if getattr(self, "_tray", None):
+            self._tray.setToolTip("Spark Flow – idle")
+
+    def _surface_login_window(self):
+        """Show + raise + pin on top, WITHOUT taking keyboard focus."""
+        if not (self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint):
+            self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        self.showNormal()
+        self.raise_()
+
+    def _resurface_if_buried(self):
+        """Nothing to do once signed in; otherwise make sure it is still visible."""
+        if not getattr(self, "_logged_out_sticky", False):
+            if getattr(self, "_resurface_timer", None):
+                self._resurface_timer.stop()
+            return
+        if not self.isVisible() or self.isMinimized():
+            self._surface_login_window()
+
     def _build_tray(self):
         self._tray = QSystemTrayIcon(ICON_IDLE, self)
         self._tray.setToolTip("Spark Flow – idle")
@@ -4000,6 +4069,15 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         event.ignore()
+        # While signed out the window must stay put — hiding it is what made the
+        # sign-out invisible in the first place. Quit from the tray still works.
+        if getattr(self, "_logged_out_sticky", False):
+            self._surface_login_window()
+            self._tray.showMessage(
+                "Spark Flow – sign in required",
+                "Calls are NOT being recorded until you sign in.",
+                QSystemTrayIcon.MessageIcon.Warning, 4000)
+            return
         self.hide()
         self._tray.showMessage(
             "Spark Flow",
@@ -4009,6 +4087,9 @@ class MainWindow(QMainWindow):
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange and self.isMinimized():
             event.ignore()
+            if getattr(self, "_logged_out_sticky", False):
+                self._surface_login_window()   # minimising away a sign-out is the bug
+                return
             self.hide()
             return
         super().changeEvent(event)
