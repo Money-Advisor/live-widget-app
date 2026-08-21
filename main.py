@@ -192,7 +192,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.12"
+APP_VERSION = "2.9.13"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -3183,7 +3183,14 @@ class MainWindow(QMainWindow):
         self._pw_edit.clear()
         self._login_error.setText("")
         self._set_login_busy(False)
-        self._stack.setCurrentWidget(self._page_login)
+        # Sticky, exactly like an expired session and like a cold start with no token.
+        # A deliberate sign-out leaves the agent in the SAME state as an involuntary
+        # one — signed out, with calls not being recorded — so it must be just as hard
+        # to lose behind other windows. Without this the window minimised to the tray
+        # and the sign-out went unnoticed for the rest of the shift.
+        # (_enter_logged_out_mode switches to the login page itself.)
+        self._enter_logged_out_mode(
+            "You signed out. Calls are NOT being recorded until you sign in.")
 
     # ── Settings helpers ──────────────────────────────────────
     def _show_front(self):

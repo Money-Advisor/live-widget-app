@@ -102,3 +102,83 @@ def test_it_never_steals_keyboard_focus():
     src = inspect.getsource(main.MainWindow._surface_login_window)
     assert "raise_()" in src
     assert "activateWindow" not in src
+
+
+# --- the manual "Log Out" button ---------------------------------------------
+#
+# Sticky mode was wired only into _on_validate_bad (expired/revoked session) and the
+# cold start with no token. Pressing Log Out just swapped the stack to the login page,
+# so the window still hid on close/minimise and the sign-out could be lost behind other
+# windows for the rest of the shift — the same failure the feature was built to prevent.
+# Reported from the field on 2026-08-21.
+
+class _FakeSettings:
+    """QSettings stand-in: _logout only removes keys, and we must not touch the real
+    registry of whoever is running the tests."""
+
+    def __init__(self):
+        self.removed = []
+
+    def remove(self, key):
+        self.removed.append(key)
+
+    def value(self, key, default=None, type=None):   # noqa: A002 - QSettings' own name
+        return default
+
+    def setValue(self, key, value):
+        pass
+
+
+@pytest.fixture
+def signed_in(win):
+    win._settings = _FakeSettings()
+    win._recording = False
+    return win
+
+
+def test_manual_logout_pins_the_window(signed_in):
+    signed_in._logout()
+    assert signed_in._logged_out_sticky, "Log Out must be as sticky as an expired session"
+    assert signed_in.isVisible()
+    assert _on_top(signed_in)
+    assert signed_in._stack.currentWidget() is signed_in._page_login
+
+
+def test_manual_logout_then_close_stays_visible(signed_in, app):
+    """The exact behaviour reported: Log Out, press X, and it vanished to the tray."""
+    signed_in._logout()
+    signed_in.close()
+    app.processEvents()
+    assert signed_in.isVisible()
+
+
+def test_manual_logout_then_minimise_stays_visible(signed_in, app):
+    signed_in._logout()
+    signed_in.showMinimized()
+    app.processEvents()
+    assert signed_in.isVisible()
+
+
+def test_manual_logout_still_clears_the_session(signed_in):
+    """The fix must not weaken the sign-out itself: the long-lived refresh token has to
+    go, or the session could simply be resumed."""
+    signed_in._logout()
+    assert signed_in._token == "" and signed_in._refresh_token == ""
+    assert signed_in._user == {}
+    for key in ("auth/token", "auth/refresh_token", "auth/user"):
+        assert key in signed_in._settings.removed
+
+
+def test_manual_logout_then_signing_in_unpins(signed_in, app):
+    signed_in._logout()
+    signed_in._exit_logged_out_mode()
+    assert not signed_in._logged_out_sticky
+    assert not _on_top(signed_in)
+    signed_in.close()
+    app.processEvents()
+    assert not signed_in.isVisible()
+
+
+def test_manual_logout_starts_the_resurface_timer(signed_in):
+    signed_in._logout()
+    assert signed_in._resurface_timer.isActive()
