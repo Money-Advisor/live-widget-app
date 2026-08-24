@@ -119,6 +119,71 @@ def _match_device_index(names: list[str], target: str) -> int:
     return -1
 
 
+# PortAudio's global init/terminate is reference-counted but NOT thread-safe, and the
+# widget stands up one PyAudio handle per RecordingThread, both started back to back.
+# Constructing two concurrently segfaults the interpreter — reproduced deterministically
+# on this hardware, 5 trials out of 5, while sequential construction never failed. A
+# crash here takes the whole widget down mid-call, silently, from the agent's point of
+# view. Serialising construction and teardown costs a few milliseconds once per call.
+_PA_LOCK = threading.Lock()
+
+
+def _new_pyaudio():
+    """Construct a PyAudio handle without racing another thread's Pa_Initialize."""
+    with _PA_LOCK:
+        return pyaudio.PyAudio()
+
+
+def _end_pyaudio(p) -> None:
+    """Terminate a PyAudio handle without racing another thread's Pa_Terminate."""
+    if p is None:
+        return
+    with _PA_LOCK:
+        try:
+            p.terminate()
+        except Exception:
+            pass
+
+
+def _now() -> float:
+    """Monotonic clock. Indirected through a function purely so the gap-fill can be
+    driven deterministically in tests instead of by sleeping through real stalls."""
+    return time.monotonic()
+
+
+# pyaudiowpatch names a loopback after the render endpoint it taps, e.g.
+# 'Headphones (PLT Focus)' -> 'Headphones (PLT Focus) [Loopback]'.
+_LOOPBACK_SUFFIX = " [Loopback]"
+
+
+def _render_index_for_loopback(devices: list[dict], loopback_name: str) -> int:
+    """PortAudio index of the render endpoint a loopback taps, or -1.
+
+    Needed by RenderKeepAlive: to hold an endpoint open we must write to the
+    OUTPUT device, and the loopback entry we capture from is a different device
+    with a different index. Matching is by name, tolerant in the same way as
+    _match_device_index (Bluetooth headsets get renamed between profiles)."""
+    base = (loopback_name or "").strip()
+    if base.lower().endswith(_LOOPBACK_SUFFIX.lower()):
+        base = base[: -len(_LOOPBACK_SUFFIX)].strip()
+    if not base:
+        return -1
+    outputs = [
+        d for d in devices
+        if int(d.get("maxOutputChannels", 0)) > 0
+        and not d.get("isLoopbackDevice", False)
+    ]
+    nb = _norm_dev(base)
+    for d in outputs:                                  # exact first
+        if _norm_dev(d.get("name", "")) == nb:
+            return int(d.get("index", -1))
+    for d in outputs:                                  # then substring either way
+        n = _norm_dev(d.get("name", ""))
+        if n and (nb in n or n in nb):
+            return int(d.get("index", -1))
+    return -1
+
+
 def _index_for_saved_mic(names: list[str], saved_name: str) -> int:
     """Index of the agent's remembered mic in the dropdown list, else 0.
 
@@ -192,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.13"
+APP_VERSION = "2.9.14"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -774,6 +839,104 @@ class ConfigRefreshWorker(QThread):
 # ──────────────────────────────────────────────────────────────
 # Recording thread  (UNCHANGED audio capture logic)
 # ──────────────────────────────────────────────────────────────
+class RenderKeepAlive:
+    """Hold the agent's output endpoint open with digital silence for the whole call.
+
+    WASAPI loopback only produces samples while its render endpoint is actually
+    rendering something. When the softphone plays nothing — far-end silence
+    suppression, hold, the moment the customer hangs up — the loopback delivers
+    NOTHING (not silence, no samples at all) and `stream.read()` simply blocks.
+    Those seconds never reach the customer WAV, so it ends up SHORTER than the mic
+    WAV. The post-call merge lines the two files up at sample 0 and pads the short
+    one at the end, so every lost second slides the customer's speech earlier and
+    the agent sounds progressively later.
+
+    Measured on two real calls before this existed: the customer channel was 10s
+    short on an 80-minute call and 51s short on an 87-minute one, with an audible
+    ~3s skew by mid-call. Measured on this estate's hardware, capturing a loopback
+    with nothing rendering: 15.0s elapsed -> 0.00s captured. With this running:
+    12.06s elapsed -> 12.03s captured.
+
+    Writing silence to the same endpoint keeps the Windows audio engine running so
+    the loopback delivers continuously. It is inaudible (digital zero) and WASAPI
+    shared mode lets it coexist with the softphone.
+
+    Strictly best-effort: every failure path leaves recording exactly as it was —
+    a silent keep-alive is an optimisation, a lost recording is an incident.
+    """
+
+    def __init__(self, pa, device_index: int, channels: int = 2, rate: int = 48000):
+        # The caller's PyAudio handle, deliberately NOT one of our own. PortAudio's
+        # init/terminate are reference-counted but not thread-safe, and the widget
+        # already stands up two instances at once (one per RecordingThread). Adding a
+        # third, concurrently, segfaulted the interpreter outright while this was being
+        # built. Borrowing the capture thread's handle means no extra Pa_Initialize.
+        self._pa = pa
+        self.device_index = int(device_index)
+        self.channels = max(1, min(int(channels), 2))
+        self.rate = int(rate) if int(rate) > 0 else 48000
+        self._stream = None
+        self._stop_event = threading.Event()
+        self._thread = None
+        self.active = False
+
+    def start(self) -> bool:
+        """Open the endpoint and begin feeding silence. True if it is running."""
+        if self.device_index < 0 or self._pa is None:
+            return False
+        try:
+            self._stream = self._pa.open(
+                format=AUDIO_FORMAT,
+                channels=self.channels,
+                rate=self.rate,
+                output=True,
+                output_device_index=self.device_index,
+                frames_per_buffer=CHUNK,
+            )
+        except Exception as exc:
+            print(f"[keepalive] could not open render device {self.device_index}: "
+                  f"{exc} — customer channel may lose silent stretches")
+            self._teardown()
+            return False
+        self._stop_event.clear()
+        # Daemon: it holds no state worth draining, and must never keep the app alive.
+        self._thread = threading.Thread(target=self._feed, name="render-keepalive",
+                                        daemon=True)
+        self._thread.start()
+        self.active = True
+        print(f"[keepalive] holding render device {self.device_index} open "
+              f"({self.channels}ch @ {self.rate}Hz)")
+        return True
+
+    def _feed(self):
+        """Blocking writes self-pace: write() returns as the device consumes."""
+        silence = b"\x00" * (CHUNK * 2 * self.channels)
+        while not self._stop_event.is_set():
+            try:
+                self._stream.write(silence)
+            except Exception as exc:
+                print(f"[keepalive] write stopped: {exc}")
+                break
+
+    def stop(self):
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.5)
+            self._thread = None
+        self._teardown()
+        self.active = False
+
+    def _teardown(self):
+        """Close our stream only. The PyAudio handle is the caller's to terminate."""
+        if self._stream is not None:
+            try:
+                self._stream.stop_stream()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+
+
 class RecordingThread(QThread):
     """Captures audio from one PyAudio device and writes it to a WAV file."""
 
@@ -788,6 +951,8 @@ class RecordingThread(QThread):
         channels: int,
         send_callback,
         is_loopback: bool = False,
+        keepalive_device_index: int = -1,
+        start_ref: float | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -797,8 +962,88 @@ class RecordingThread(QThread):
         self.channels = channels
         self.send_callback = send_callback
         self.is_loopback = is_loopback
+        # Render endpoint to hold open for a loopback capture (-1 = none/unknown).
+        self.keepalive_device_index = int(keepalive_device_index)
+        # The instant BOTH channels are supposed to begin. The merge lines the two WAVs
+        # up at sample 0, so sample 0 has to mean the same moment in each — but the two
+        # devices do not open together: measured 0.46-0.66s apart on this hardware, and
+        # serialising PortAudio init (see _PA_LOCK) can widen it further. Whichever
+        # stream opens later pads the difference so both files start at this instant.
+        self.start_ref = start_ref
+        self._keepalive = None
+        # Observability for the gap-fill below; read by tests and printed at stop.
+        self.gaps_filled = 0
+        self.seconds_filled = 0.0
+        self._gap_started_at = None      # seconds_filled when the current gap opened
         self._stop_event = threading.Event()
         self._start_ack = threading.Event()
+
+    # Slack on top of the one chunk we are always legitimately behind by. Comfortably
+    # clear of scheduling jitter, comfortably under anything audible.
+    GAP_TOLERANCE_S = 0.25
+    # Never insert more than this in one go. A pathological stall should leave a short
+    # recording (obvious, recoverable) rather than an hour of fabricated silence.
+    GAP_FILL_CAP_S = 60.0
+    # How often to look for newly-available frames. A twentieth of a chunk: invisible
+    # next to the 85ms a chunk takes to fill, and it keeps _stop_event responsive.
+    POLL_S = 0.005
+
+    @classmethod
+    def _gap_to_fill(cls, deficit_s: float, chunk_s: float) -> float:
+        """Silence needed to put this channel back on the wall clock.
+
+        `deficit_s` is elapsed-time minus audio-delivered, evaluated only when the
+        device has nothing ready for us. One chunk of slack is subtracted because in
+        normal running we are always up to a chunk behind — a chunk has to fill before
+        it can be read, and that is not a gap.
+
+        This is what makes fabricating time impossible: if WE stalled (a slow socket
+        send), the device buffered through it and the backlog is sitting in the stream,
+        so `get_read_available()` returns it and we never reach this branch at all.
+        Only a device that has genuinely produced nothing leaves a deficit standing.
+        """
+        over = deficit_s - chunk_s
+        if over <= cls.GAP_TOLERANCE_S:
+            return 0.0
+        return min(over, cls.GAP_FILL_CAP_S)
+
+    def _emit_silence(self, seconds: float, rate: int, frame_bytes: int) -> int:
+        """Send `seconds` of silence down the normal audio path. Returns frames sent.
+
+        Deliberately routed through send_callback like real audio so it inherits
+        every existing behaviour: PCI pause drops it, a dead socket spools it.
+
+        A dead device is topped up a fraction of a second at a time rather than in one
+        block, so the stream keeps flowing for the live pipeline and a resuming device
+        is picked up immediately. Gap ACCOUNTING is the loop's job — a device that
+        stays dead calls this many times over for what is one gap.
+        """
+        total = int(seconds * rate)
+        full = b"\x00" * (CHUNK * frame_bytes)
+        sent = 0
+        while sent < total and not self._stop_event.is_set():
+            n = min(CHUNK, total - sent)
+            self.send_callback(
+                self.stream_type, full if n == CHUNK else b"\x00" * (n * frame_bytes))
+            sent += n
+        self.seconds_filled += sent / float(rate)
+        return sent
+
+    def _gap_opened(self):
+        """First top-up of a new gap. One log line per gap, not per top-up."""
+        self.gaps_filled += 1
+        self._gap_started_at = self.seconds_filled
+        print(f"[gapfill] {self.stream_type}: device stopped producing — holding the "
+              f"channel on the clock with silence (gap #{self.gaps_filled})")
+
+    def _gap_closed(self, reason: str = "device resumed"):
+        """Device came back (or the call ended). Report what the gap cost."""
+        if self._gap_started_at is None:
+            return
+        span = self.seconds_filled - self._gap_started_at
+        self._gap_started_at = None
+        print(f"[gapfill] {self.stream_type}: {reason} after {span:.2f}s of silence "
+              f"(total {self.seconds_filled:.2f}s over {self.gaps_filled} gap(s))")
 
     @staticmethod
     def _try_open_stream(p, channels: int, rate: int, device_index: int):
@@ -815,10 +1060,25 @@ class RecordingThread(QThread):
             return None
 
     def run(self):
-        p = pyaudio.PyAudio()
+        p = _new_pyaudio()
         stream = None
         try:
             if self.is_loopback:
+                # Hold the render endpoint open BEFORE the capture opens, so the
+                # audio engine is already running when we start reading. Without
+                # this a loopback yields literally nothing while the softphone is
+                # quiet — see RenderKeepAlive for the measurements.
+                if self.keepalive_device_index >= 0:
+                    self._keepalive = RenderKeepAlive(
+                        p, self.keepalive_device_index,
+                        channels=max(1, min(self.channels, 2)),
+                        rate=self.sample_rate if self.sample_rate > 0 else 48000)
+                    if not self._keepalive.start():
+                        self._keepalive = None
+                else:
+                    print("[keepalive] no render endpoint matched this loopback — "
+                          "relying on gap-fill alone")
+
                 # Capture the customer side at the render device's TRUE mix format.
                 # Probe device-supported (channels, rate) — guessing a wrong format
                 # (the old blind open) produced misaligned/garbled audio. Candidates
@@ -884,6 +1144,9 @@ class RecordingThread(QThread):
                     )
                     return
 
+            # The device begins capturing the moment it is opened, so this is the real
+            # time that this channel's sample 0 corresponds to.
+            stream_opened_at = _now()
             self.stream_ready.emit(
                 self.stream_type, actual_channels, actual_rate)
             if not self._start_ack.wait(timeout=10):
@@ -892,10 +1155,72 @@ class RecordingThread(QThread):
                 )
                 return
 
+            # Gap-fill bookkeeping. The channel's WAV length must track WALL CLOCK,
+            # not "bytes the device happened to hand us" — the merge aligns the two
+            # channels by sample index, so a channel that silently loses time drags
+            # everything after it out of sync with the other one.
+            frame_bytes = 2 * actual_channels
+            chunk_seconds = CHUNK / float(actual_rate)
+            delivered_frames = 0
+
+            # Put sample 0 of this channel at the shared start instant. Done here,
+            # before a single frame is sent, because the padding has to come in FRONT
+            # of the audio — and before the loop, which would otherwise drain the
+            # backlog the device buffered while we waited for the server's ack.
+            t_zero = _now()
+            if self.start_ref is not None:
+                lead = stream_opened_at - self.start_ref
+                if lead > self.GAP_TOLERANCE_S:
+                    print(f"[align] {self.stream_type}: stream opened {lead:.2f}s after "
+                          f"the other channel — padding the difference so both files "
+                          f"start together")
+                    delivered_frames += self._emit_silence(
+                        lead, actual_rate, frame_bytes)
+                t_zero = self.start_ref
+
+            # POLL rather than block. A blocking read() on a starved loopback never
+            # returns — it does not time out and it does not return short — so the
+            # thread would sit in it for the rest of the call: no gap could be
+            # detected (nothing resumes to detect it with) and _stop_event would go
+            # unseen, leaving the thread alive past the end of the call. Polling
+            # get_read_available() keeps the loop alive through a dead device, which
+            # is the case that actually happens: the far end hangs up, the softphone
+            # stops rendering, and the loopback is finished for good.
+            can_poll = True
+            try:
+                stream.get_read_available()
+            except Exception:
+                can_poll = False
+                print(f"[gapfill] {self.stream_type}: device cannot report available "
+                      f"frames — falling back to blocking reads, no gap detection")
+
             while not self._stop_event.is_set():
                 try:
-                    data = stream.read(CHUNK, exception_on_overflow=False)
-                    self.send_callback(self.stream_type, data)
+                    if not can_poll:
+                        data = stream.read(CHUNK, exception_on_overflow=False)
+                        delivered_frames += len(data) // frame_bytes
+                        self.send_callback(self.stream_type, data)
+                        continue
+
+                    if stream.get_read_available() >= CHUNK:
+                        data = stream.read(CHUNK, exception_on_overflow=False)
+                        delivered_frames += len(data) // frame_bytes
+                        self.send_callback(self.stream_type, data)
+                        self._gap_closed()
+                        continue
+
+                    # Nothing ready. Either the chunk is still filling (normal) or the
+                    # device has stopped producing (the bug) — the clock tells us which.
+                    deficit = ((_now() - t_zero)
+                               - (delivered_frames / float(actual_rate)))
+                    fill = self._gap_to_fill(deficit, chunk_seconds)
+                    if fill > 0:
+                        if self._gap_started_at is None:
+                            self._gap_opened()
+                        delivered_frames += self._emit_silence(
+                            fill, actual_rate, frame_bytes)
+                    else:
+                        time.sleep(self.POLL_S)
                 except OSError as exc:
                     self.error_occurred.emit(f"Stream read error: {exc}")
                     break
@@ -903,13 +1228,25 @@ class RecordingThread(QThread):
         except Exception as exc:
             self.error_occurred.emit(str(exc))
         finally:
+            # A gap still open at the end is the common one: the customer hung up, the
+            # softphone stopped rendering, and the loopback never came back.
+            self._gap_closed("call ended")
+            if self.gaps_filled:
+                print(f"[gapfill] {self.stream_type}: {self.seconds_filled:.2f}s of "
+                      f"silence inserted across {self.gaps_filled} gap(s) this call")
+            if self._keepalive is not None:
+                try:
+                    self._keepalive.stop()
+                except Exception:
+                    pass
+                self._keepalive = None
             if stream is not None:
                 try:
                     stream.stop_stream()
                     stream.close()
                 except Exception:
                     pass
-            p.terminate()
+            _end_pyaudio(p)
 
     def stop(self):
         self._stop_event.set()
@@ -2239,9 +2576,10 @@ class MainWindow(QMainWindow):
         self._login_worker: LoginWorker | None = None
         self._validate_worker: ValidateWorker | None = None
 
-        self._pa = pyaudio.PyAudio()
+        self._pa = _new_pyaudio()
         self._mic_devices: list[dict] = []
         self._spk_devices: list[dict] = []
+        self._all_devices: list[dict] = []   # incl. output-only; see _enumerate_devices
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -3325,6 +3663,10 @@ class MainWindow(QMainWindow):
     def _enumerate_devices(self):
         self._mic_devices.clear()
         self._spk_devices.clear()
+        # Every WASAPI endpoint, including pure OUTPUT devices which neither combo
+        # lists. RenderKeepAlive needs those: to hold an endpoint open we write to
+        # the render device, not to the loopback we capture from.
+        self._all_devices: list[dict] = []
         self._mic_combo.clear()
         self._spk_combo.clear()
 
@@ -3341,6 +3683,7 @@ class MainWindow(QMainWindow):
         for i in range(int(wasapi_info["deviceCount"])):
             dev = self._pa.get_device_info_by_host_api_device_index(
                 int(wasapi_info["index"]), i)
+            self._all_devices.append(dev)
             if dev.get("isLoopbackDevice", False):
                 self._spk_devices.append(dev)
                 self._spk_combo.addItem(dev["name"])
@@ -3405,11 +3748,8 @@ class MainWindow(QMainWindow):
         PyAudio instance. NEVER while recording — that would break live streams."""
         if self._recording:
             return
-        try:
-            self._pa.terminate()
-        except Exception:
-            pass
-        self._pa = pyaudio.PyAudio()
+        _end_pyaudio(self._pa)
+        self._pa = _new_pyaudio()
         self._enumerate_devices()   # preserves selection via saved names
         # Keep the gate's picker in sync if the gate is currently up.
         if self._mic_gate_active and self._mic_gate_overlay is not None:
@@ -3748,14 +4088,25 @@ class MainWindow(QMainWindow):
         mic_rate = int(mic_dev["defaultSampleRate"])
         spk_rate = int(spk_dev["defaultSampleRate"])
 
+        # One instant both channels are anchored to. Whichever device opens later pads
+        # the difference, so sample 0 of each WAV is the same moment and the merge's
+        # "line them up at sample 0" assumption actually holds.
+        start_ref = _now()
+
         self._mic_thread = RecordingThread(
             device_index=int(mic_dev["index"]), stream_type="mic",
             sample_rate=mic_rate, channels=mic_ch,
-            send_callback=self._streamer.send_audio)
+            send_callback=self._streamer.send_audio, start_ref=start_ref)
+        # The render endpoint behind this loopback, so the capture can hold it open
+        # for the call (see RenderKeepAlive). -1 when it can't be matched, which is
+        # not fatal — the gap-fill in RecordingThread still keeps the clock honest.
+        keepalive_idx = _render_index_for_loopback(
+            getattr(self, "_all_devices", []), spk_dev.get("name", ""))
         self._spk_thread = RecordingThread(
             device_index=int(spk_dev["index"]), stream_type="speaker",
             sample_rate=spk_rate, channels=spk_ch,
-            send_callback=self._streamer.send_audio, is_loopback=True)
+            send_callback=self._streamer.send_audio, is_loopback=True,
+            keepalive_device_index=keepalive_idx, start_ref=start_ref)
         for t in (self._mic_thread, self._spk_thread):
             t.error_occurred.connect(self._on_error)
             t.stream_ready.connect(self._on_stream_ready)
@@ -4110,7 +4461,7 @@ class MainWindow(QMainWindow):
         if self._recording:
             self._stop_recording()
         self._stop_control_connection()
-        self._pa.terminate()
+        _end_pyaudio(self._pa)
         QApplication.quit()
 
 
