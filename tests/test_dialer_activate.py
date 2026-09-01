@@ -869,3 +869,60 @@ def test_dialer_activate_honors_department(monkeypatch):
         "customer_reference": "REF123", "department": "advisor",
     })
     assert w._active_department == "advisor"
+
+
+# ── the end-of-call screen must never claim a score the dashboard lacks ─────
+# Scoring is switched per department, separately from the live prompts. When it is
+# off the server omits the numbers entirely, so the widget's test is simply "was a
+# score sent" — it never has to know the rules, and an older build cannot show a
+# figure the dashboard does not have.
+
+def _summary_win(app, monkeypatch):
+    w = _win(app)
+    w._live_pipeline = True
+    w._all_criteria_labels = {}
+    seen = {}
+    monkeypatch.setattr(w._summary_card, "show_summary",
+                        lambda *a, **k: seen.__setitem__("summary", a))
+    monkeypatch.setattr(w._summary_card, "show_saved_only",
+                        lambda *a, **k: seen.__setitem__("saved_only", a))
+    return w, seen
+
+
+def test_no_score_sent_means_no_performance_shown(monkeypatch):
+    """Scoring off for this department: a saved confirmation and nothing else."""
+    app = QApplication.instance() or QApplication([])
+    w, seen = _summary_win(app, monkeypatch)
+    w._show_server_summary({"duration_seconds": 65, "recording_saved": True,
+                            "scoring_enabled": False})
+    assert "saved_only" in seen
+    assert "summary" not in seen, "no score was sent, so none may be displayed"
+
+
+def test_a_score_of_zero_is_still_a_score(monkeypatch):
+    """0.0 is falsy but real — a call that genuinely met nothing must show 0%, not
+    be mistaken for 'no scoring' and hidden."""
+    app = QApplication.instance() or QApplication([])
+    w, seen = _summary_win(app, monkeypatch)
+    w._show_server_summary({"score": 0.0, "covered": [], "missing": ["a"],
+                            "duration_seconds": 30, "scoring_enabled": True})
+    assert "summary" in seen
+    assert seen["summary"][0] == 0.0
+
+
+def test_a_normal_scored_call_still_shows_its_scorecard(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    w, seen = _summary_win(app, monkeypatch)
+    w._show_server_summary({"score": 0.75, "covered": ["a"], "missing": ["b"],
+                            "duration_seconds": 120, "scoring_enabled": True})
+    assert "summary" in seen and seen["summary"][0] == 0.75
+
+
+def test_an_old_server_that_omits_the_flag_still_scores(monkeypatch):
+    """Backward compatibility: a server predating the switch sends a score and no
+    scoring_enabled field. That must behave exactly as before."""
+    app = QApplication.instance() or QApplication([])
+    w, seen = _summary_win(app, monkeypatch)
+    w._show_server_summary({"score": 0.5, "covered": [], "missing": [],
+                            "duration_seconds": 10})
+    assert "summary" in seen

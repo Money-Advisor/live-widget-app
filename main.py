@@ -4264,6 +4264,7 @@ class MainWindow(QMainWindow):
             self._compliance_panel.set_transcription_status(msg.get("state", ""))
         elif mtype == "session_summary":
             print(f"[widget] session_summary received: score={msg.get('score')} "
+                  f"scoring={msg.get('scoring_enabled')} "
                   f"covered={msg.get('covered')} missing={msg.get('missing')} "
                   f"recording_saved={msg.get('recording_saved')}")
             self._show_server_summary(msg)
@@ -4380,8 +4381,15 @@ class MainWindow(QMainWindow):
 
     def _show_server_summary(self, msg: dict):
         self._server_summary_shown = True  # authoritative — wins over local
-        # Recording-only: ignore any compliance numbers, just confirm the save.
-        if not self._live_pipeline:
+        # No score => show the agent nothing about performance, just that the call
+        # was saved. Two cases reach here: the live layer is off for this agent, and
+        # scoring is switched off for their department (a separate setting).
+        #
+        # The test is "did the server send a score", not "which switches are set".
+        # The server decides and simply omits the numbers; the widget never has to
+        # know the rules, and an older build cannot end up showing a score the
+        # dashboard does not have. `is None` and not falsiness — 0.0 is a real score.
+        if not self._live_pipeline or msg.get("score") is None:
             self._summary_card.show_saved_only(
                 int(msg.get("duration_seconds", self._elapsed) or 0))
             self._front_card.setVisible(False)
