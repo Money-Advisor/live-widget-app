@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.14"
+APP_VERSION = "2.9.15"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2094,6 +2094,255 @@ def _smooth_fonts(root: "QWidget"):
 # ──────────────────────────────────────────────────────────────
 # Compliance alert panel  (live checklist during a call)
 # ──────────────────────────────────────────────────────────────
+class _Marker(QLabel):
+    """The little status disc beside a check: green tick, or red exclamation."""
+
+    def __init__(self, done: bool, parent=None):
+        super().__init__("\u2713" if done else "!", parent)
+        self.setFixedSize(15, 15)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        colour = "#16A34A" if done else "#DC2626"
+        self.setStyleSheet(
+            f"background:{colour}; color:white; border-radius:7px;"
+            f" font-family:{FF}; font-size:9px; font-weight:800;")
+
+
+class SectionAccordion(QWidget):
+    """The stage the call is in, opened out: every requirement, ticked or not.
+
+    A tick alone is not worth much on a compliance panel - an advisor who does not
+    trust it will ignore it. So a covered check carries the advisor's OWN WORDS
+    underneath, and an outstanding one carries the thing to say. That is also the
+    honest division of what this system knows: the evidence is solid, the score is
+    not (the same call scores several points apart between runs).
+
+    Hidden entirely unless the server sends `section_checks`, so the old matcher's
+    messages leave the panel exactly as it was.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setVisible(False)
+        self._lay = QVBoxLayout(self)
+        self._lay.setContentsMargins(0, 0, 0, 0)
+        self._lay.setSpacing(0)
+
+        self._head = QFrame()
+        self._head.setObjectName("secHead")
+        self._head.setStyleSheet(
+            "QFrame#secHead { background:#F3F0FF;"
+            " border-top-left-radius:10px; border-top-right-radius:10px; }")
+        hb = QHBoxLayout(self._head)
+        hb.setContentsMargins(10, 9, 10, 9)
+        hb.setSpacing(10)
+        self._title = QLabel("")
+        self._title.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:13px;"
+            " font-weight:800; color:#1A1A2E;")
+        hb.addWidget(self._title, 1)
+        self._ratio = QLabel("")
+        self._ratio.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:11px;"
+            " font-weight:800; color:#6B4EFF;")
+        hb.addWidget(self._ratio)
+        self._lay.addWidget(self._head)
+
+        self._body = QFrame()
+        self._body.setObjectName("secBody")
+        self._body.setStyleSheet(
+            "QFrame#secBody { background:#FBFAFF;"
+            " border-bottom-left-radius:10px; border-bottom-right-radius:10px; }")
+        self._rows = QVBoxLayout(self._body)
+        self._rows.setContentsMargins(10, 4, 10, 10)
+        self._rows.setSpacing(1)
+        self._lay.addWidget(self._body)
+
+    def _clear(self):
+        while self._rows.count():
+            it = self._rows.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.deleteLater()
+
+    def _done_row(self, chk: dict) -> QWidget:
+        row = QWidget()
+        col = QVBoxLayout(row)
+        col.setContentsMargins(2, 7, 2, 7)
+        col.setSpacing(4)
+        top = QHBoxLayout()
+        top.setSpacing(9)
+        top.addWidget(_Marker(True), 0, Qt.AlignmentFlag.AlignTop)
+        lab = QLabel(chk.get("label", ""))
+        lab.setWordWrap(True)
+        lab.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:12px;"
+            " font-weight:600; color:#3B3B54;")
+        top.addWidget(lab, 1)
+        col.addLayout(top)
+        quote = (chk.get("evidence") or "").strip()
+        if quote:
+            q = QLabel(f"\u201c{quote}\u201d")
+            q.setWordWrap(True)
+            q.setStyleSheet(
+                f"background:transparent; font-family:{FF}; font-size:11px;"
+                " font-weight:500; color:#8888A8; font-style:italic;")
+            q.setContentsMargins(23, 0, 0, 0)
+            col.addWidget(q)
+        return row
+
+    def _due_row(self, chk: dict) -> QWidget:
+        row = QFrame()
+        row.setObjectName("dueNow")
+        row.setStyleSheet("QFrame#dueNow { background:#FFF5F5; border-radius:8px; }")
+        col = QVBoxLayout(row)
+        col.setContentsMargins(8, 8, 8, 8)
+        col.setSpacing(4)
+        top = QHBoxLayout()
+        top.setSpacing(9)
+        top.addWidget(_Marker(False), 0, Qt.AlignmentFlag.AlignTop)
+        lab = QLabel(chk.get("label", ""))
+        lab.setWordWrap(True)
+        lab.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:12px;"
+            " font-weight:800; color:#991B1B;")
+        top.addWidget(lab, 1)
+        pill = QLabel("DUE NOW")
+        pill.setStyleSheet(
+            f"font-family:{FF}; font-size:9px; font-weight:800; color:white;"
+            " background:#DC2626; border-radius:6px; padding:2px 6px;"
+            " letter-spacing:0.6px;")
+        top.addWidget(pill, 0, Qt.AlignmentFlag.AlignTop)
+        col.addLayout(top)
+
+        # what to say. The outstanding PARTS beat the generic prompt when we have
+        # them: "explain the other person stays liable" is actionable in a way that
+        # "ask about joint debts" is not, once the advisor has already asked.
+        parts = [p for p in (chk.get("missing_parts") or []) if p]
+        text = ""
+        if parts:
+            text = "  ".join(f"\u2022 {p}" for p in parts[:2])
+            if len(parts) > 2:
+                text += f"  \u2022 +{len(parts) - 2} more"
+        elif chk.get("prompt"):
+            text = chk["prompt"]
+        if text:
+            hint = QLabel(text)
+            hint.setWordWrap(True)
+            hint.setStyleSheet(
+                f"background:transparent; font-family:{FF}; font-size:11px;"
+                " font-weight:500; color:#7F3B3B;")
+            hint.setContentsMargins(23, 0, 0, 0)
+            col.addWidget(hint)
+        return row
+
+    def update_section(self, label: str, checks: list):
+        """Called on the UI thread. No checks -> the accordion hides itself."""
+        checks = checks or []
+        if not checks:
+            self.setVisible(False)
+            return
+        done = [c for c in checks if c.get("done")]
+        self._title.setText(label or "")
+        self._ratio.setText(f"{len(done)}/{len(checks)}")
+
+        self._clear()
+        # Outstanding work first: the advisor is looking for what to do next, and
+        # on a long stage the red row would otherwise sit below the fold.
+        for chk in [c for c in checks if not c.get("done")]:
+            self._rows.addWidget(self._due_row(chk))
+        for chk in done:
+            self._rows.addWidget(self._done_row(chk))
+        self.setVisible(True)
+
+
+class StageTracker(QWidget):
+    """Where the call has got to: the stage name, and one segment per stage.
+
+    Only the rulebook path sends `stage` and `sections`; the old matcher does not,
+    so this stays hidden until a message actually carries them. That keeps one
+    widget working against both servers instead of shipping two panels.
+    """
+
+    DONE = "#6B4EFF"        # stages the advisor has finished
+    HERE = "#A897FF"        # the stage they are in now
+    TODO = "#E8E8F0"        # not reached yet
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setVisible(False)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(7)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        cap = QLabel("STAGE")
+        cap.setStyleSheet(
+            f"background:transparent; font-size:10px; font-family:{FF};"
+            " font-weight:800; color:#8888A8; letter-spacing:1.2px;")
+        row.addWidget(cap)
+        row.addStretch(1)
+        self._name = QLabel("")
+        self._name.setStyleSheet(
+            f"background:transparent; font-size:12px; font-family:{FF};"
+            " font-weight:700; color:#6B4EFF;")
+        row.addWidget(self._name)
+        self._count = QLabel("")
+        self._count.setStyleSheet(
+            f"background:transparent; font-size:10px; font-family:{FF};"
+            " font-weight:700; color:#AEB4C6;")
+        row.addWidget(self._count)
+        lay.addLayout(row)
+
+        self._bar = QHBoxLayout()
+        self._bar.setSpacing(3)
+        lay.addLayout(self._bar)
+
+    def _clear_bar(self):
+        while self._bar.count():
+            it = self._bar.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.deleteLater()
+
+    def update_stage(self, stage: str, sections: list):
+        """Called on the UI thread. Empty sections hides the tracker."""
+        if not sections:
+            self.setVisible(False)
+            return
+
+        current_i = next((i for i, sec in enumerate(sections) if sec.get("current")), None)
+        label = ""
+        for sec in sections:
+            if sec.get("current"):
+                label = sec.get("label") or sec.get("key") or ""
+                break
+        if not label and stage:
+            label = str(stage).replace("_", " ").title()
+        self._name.setText(label)
+        self._count.setText(
+            f"{current_i + 1} of {len(sections)}" if current_i is not None
+            else f"{len(sections)} stages")
+
+        self._clear_bar()
+        for i, sec in enumerate(sections):
+            seg = QLabel("")
+            seg.setFixedHeight(4)
+            seg.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            if current_i is not None and i == current_i:
+                colour = self.HERE
+            elif current_i is not None and i < current_i:
+                colour = self.DONE
+            elif sec.get("total") and sec.get("done") == sec.get("total"):
+                # finished, but the advisor has doubled back to an earlier stage
+                colour = self.DONE
+            else:
+                colour = self.TODO
+            seg.setStyleSheet(f"background:{colour}; border-radius:2px;")
+            self._bar.addWidget(seg)
+        self.setVisible(True)
+
+
 class ComplianceAlertPanel(QFrame):
     """Live compliance checklist. update_missing() must be called on the UI thread."""
 
@@ -2108,7 +2357,10 @@ class ComplianceAlertPanel(QFrame):
         self.setVisible(False)
         self.setObjectName("compliancePanel")
         self.setStyleSheet("QFrame#compliancePanel { background:white; border-radius:18px; }")
-        self.setFixedWidth(300)   # own floating column beside the call card
+        # 340 to match the mockup and every other card in this widget (front,
+        # settings, summary). At 300 the opened-out stage wrapped its check labels
+        # onto three lines and the panel grew taller than the call card beside it.
+        self.setFixedWidth(340)   # own floating column beside the call card
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(16, 14, 16, 16)
@@ -2130,6 +2382,14 @@ class ComplianceAlertPanel(QFrame):
             " background:#6B4EFF; border-radius:8px; padding:1px 8px;")
         head.addWidget(self._count)
         self._lay.addLayout(head)
+
+        # ── where the call has got to (rulebook path only) ──
+        self._stage = StageTracker()
+        self._lay.addWidget(self._stage)
+
+        # ── the current stage, opened out (rulebook path only) ──
+        self._accordion = SectionAccordion()
+        self._lay.addWidget(self._accordion)
 
         # ── transcription status notice (R2): shown when live checking is
         # degraded / down so the agent knows the safety net dropped. ──
@@ -2168,6 +2428,16 @@ class ComplianceAlertPanel(QFrame):
             " padding:9px 12px; }}")
         self._suggestion.setVisible(False)
         self._lay.addWidget(self._suggestion)
+
+        # ── the outstanding PARTS of a multi-part requirement ──
+        self._parts = QLabel("")
+        self._parts.setWordWrap(True)
+        self._parts.setVisible(False)
+        self._parts.setStyleSheet(
+            f"QLabel {{ font-size:12px; font-family:{FF}; font-weight:600;"
+            " color:#7C3AED; background:#F5F3FF; border-radius:8px;"
+            " padding:8px 11px; }}")
+        self._lay.addWidget(self._parts)
 
     def _clear_items(self):
         while self._items_box.count():
@@ -2311,7 +2581,11 @@ class ComplianceAlertPanel(QFrame):
 
     def _sync_window(self):
         """Grow/shrink the (frameless, translucent) window leftward so the
-        panel slides in beside the card without shifting it on screen."""
+        panel slides in beside the card without shifting it on screen.
+
+        Also pins the widget above other windows while the panel is showing: a
+        compliance prompt behind the advisor's browser is a prompt nobody acts on.
+        """
         win = self.window()
         if win is None or not win.isVisible():
             return
@@ -2320,12 +2594,43 @@ class ComplianceAlertPanel(QFrame):
         if new_w != old_w:
             win.move(win.x() - (new_w - old_w), win.y())
             win.resize(new_w, win.height())
+        pin = getattr(win, "set_compliance_on_top", None)
+        if callable(pin):
+            pin(self.isVisible())
+
+    def update_stage(self, stage, sections, section_checks=None):
+        """Show the stage tracker and the opened-out stage. Safe to call empty."""
+        sections = sections or []
+        self._stage.update_stage(stage, sections)
+        label = next((s.get("label") or s.get("key") for s in sections
+                      if s.get("current")), stage or "")
+        self._accordion.update_section(label, section_checks or [])
+
+    def set_missing_parts(self, parts):
+        """The specific parts of a multi-part requirement still outstanding.
+
+        This is the most useful thing the panel can say, and the benchmark is why:
+        the SCORE moves several points between runs of the same call, but the list
+        of what is missing, with the words that prove it, does not. So the advisor
+        is told "explain the other person stays liable", never "you are at 78%".
+        """
+        parts = [p for p in (parts or []) if p]
+        if not parts:
+            self._parts.setVisible(False)
+            return
+        shown = parts[:3]
+        text = "\n".join(f"•  {p}" for p in shown)
+        if len(parts) > len(shown):
+            text += f"\n•  +{len(parts) - len(shown)} more"
+        self._parts.setText(text)
+        self._parts.setVisible(True)
 
     def update_missing(self, missing_items: list):
         """Render missing requirements. Empty list -> hide the panel."""
         self._clear_items()
         if not missing_items:
             self._suggestion.setVisible(False)
+            self._parts.setVisible(False)
             # keep the panel visible if forbidden breaches, cues, or a status
             # notice are showing
             self.setVisible(self._forbidden_box.count() > 0
@@ -3612,6 +3917,34 @@ class MainWindow(QMainWindow):
                 reason or "Calls are NOT being recorded. Sign in to start recording again.",
                 QSystemTrayIcon.MessageIcon.Warning, 10_000)
 
+    def set_compliance_on_top(self, on: bool):
+        """Keep the widget above other windows while compliance is showing.
+
+        The advisor works in Aryza and a browser all call; a prompt that slides
+        behind them is a prompt nobody acts on, and the whole point is to catch a
+        breach BEFORE the customer rings off.
+
+        Two rules this must not break:
+
+        * **Never take keyboard focus.** Advisors are typing customer details into
+          another window, and stealing focus mid-sentence loses their input. So:
+          raise, never activateWindow() (see _surface_login_window, which learned
+          this the same way).
+        * **Never fight the signed-out sticky mode.** That pins the window for its
+          own reason; unpinning here because a call ended would let the "you are
+          signed out, calls are NOT recording" warning drift behind a browser.
+        """
+        if getattr(self, "_logged_out_sticky", False):
+            return                       # sticky mode owns the flag right now
+        if bool(self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint) == on:
+            return                       # already there; re-setting flags flickers
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, on)
+        # Changing a window flag HIDES the window on Windows - it must be re-shown,
+        # or the widget vanishes the moment the first check is ticked.
+        self.show()
+        if on:
+            self.raise_()
+
     def _exit_logged_out_mode(self):
         """Back to normal: hideable, not on top."""
         self._logged_out_sticky = False
@@ -4255,6 +4588,12 @@ class MainWindow(QMainWindow):
                 return
             items = msg.get("missing_items", []) or []
             self._missing_ids = {i.get("id") for i in items if i.get("id")}
+            # New rulebook fields. The old matcher sends neither, and the panel
+            # hides both when they are absent, so one widget serves both servers.
+            self._compliance_panel.update_stage(
+                msg.get("stage"), msg.get("sections"), msg.get("section_checks"))
+            alert = msg.get("alert") or {}
+            self._compliance_panel.set_missing_parts(alert.get("missing_parts"))
             self._compliance_panel.update_missing(items)
         elif mtype == "connection_status":
             # Locally generated by AudioStreamer while the socket is down. The call
