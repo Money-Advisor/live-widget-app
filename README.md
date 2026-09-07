@@ -49,7 +49,7 @@ development.
 The backend and the recording server both have to be running.
 
 ```powershell
-python -m pytest tests/ -q       # 268 tests, all offscreen — no window appears
+python -m pytest tests/ -q       # 294 tests, all offscreen — no window appears
 python smoke_test.py             # 21 headless checks
 ```
 

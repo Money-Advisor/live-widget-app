@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.20"
+APP_VERSION = "2.9.21"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2107,6 +2107,29 @@ class _Marker(QLabel):
             f" font-family:{FF}; font-size:9px; font-weight:800;")
 
 
+def wrapped_label(text: str, css: str = "") -> QLabel:
+    """One factory for every word-wrapped label in the checklist.
+
+    Expanding/Preferred is not decoration: the default policy lets a wrapped
+    label collapse to nothing inside a horizontal row, and it is the reason each
+    of these is set the same way.
+
+    What this deliberately does NOT do is switch on heightForWidth. It looks like
+    the right answer - QLabel really does compute it - but combined with a small
+    minimum width the layout asks "how tall at 1px wide?", gets an enormous
+    number, and treats that as the panel's minimum height. Measured: the panel
+    went from 533px to 1406px and the stage bar inflated to 338px. Plain wrapping
+    lays out correctly here; leave it alone.
+    """
+    lab = QLabel(text)
+    lab.setWordWrap(True)
+    lab.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+    lab.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+    if css:
+        lab.setStyleSheet(css)
+    return lab
+
+
 class SectionAccordion(QWidget):
     """The stage the call is in, opened out: every requirement, ticked or not.
 
@@ -2153,8 +2176,8 @@ class SectionAccordion(QWidget):
             "QFrame#secBody { background:#FBFAFF;"
             " border-bottom-left-radius:10px; border-bottom-right-radius:10px; }")
         self._rows = QVBoxLayout(self._body)
-        self._rows.setContentsMargins(10, 4, 10, 10)
-        self._rows.setSpacing(1)
+        self._rows.setContentsMargins(10, 6, 10, 11)
+        self._rows.setSpacing(3)
         self._lay.addWidget(self._body)
 
         # Which checks the advisor has opened. Kept on the ACCORDION, not the row
@@ -2171,137 +2194,223 @@ class SectionAccordion(QWidget):
             if w is not None:
                 w.deleteLater()
 
+    # ---------------------------------------------------------------- marks --
+    # A tick, an exclamation or an empty ring, all the same size, so every label
+    # in the list starts at the same x. Rows that do not line up were the other
+    # half of why this looked shredded.
+    MARK = 16
+
+    def _mark(self, kind: str) -> QLabel:
+        lab = QLabel({self.ROW_DONE: "\u2713",
+                      self.ROW_DUE: "!"}.get(kind, ""))
+        lab.setFixedSize(self.MARK, self.MARK)
+        lab.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        fill = {self.ROW_DONE: "#16A34A", self.ROW_DUE: "#DC2626"}.get(kind)
+        if fill:
+            lab.setStyleSheet(
+                f"background:{fill}; color:#FFFFFF; border-radius:8px;"
+                f" font-family:{FF}; font-size:10px; font-weight:800;")
+        else:
+            lab.setStyleSheet("background:transparent;"
+                              " border:1.5px solid #D3D3E2; border-radius:8px;")
+        return lab
+
+    def _caption(self, text: str) -> QLabel:
+        """A quiet divider between the outstanding items and the finished ones."""
+        lab = QLabel(text)
+        lab.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:9px;"
+            " font-weight:800; color:#A2A2BC; letter-spacing:1.1px;")
+        lab.setContentsMargins(3, 8, 0, 2)
+        return lab
+
+    # --------------------------------------------------------- the dropdown --
     def _parts_block(self, chk: dict) -> QWidget:
-        """The individual questions inside one check, shown when it is opened."""
-        box = QWidget()
+        """The individual questions inside one check, shown when it is opened.
+
+        Indented and on its own tinted card, so that at a glance it plainly
+        belongs to the check above it rather than reading as four more checks.
+        """
+        outer = QWidget()
+        pad = QHBoxLayout(outer)
+        pad.setContentsMargins(24, 1, 2, 3)
+        pad.setSpacing(0)
+
+        box = QFrame()
+        box.setObjectName("partsBox")
+        box.setStyleSheet(
+            "QFrame#partsBox { background:#F4F2FF; border:1px solid #E4DEFF;"
+            " border-radius:9px; }")
         col = QVBoxLayout(box)
-        col.setContentsMargins(23, 2, 2, 6)
-        col.setSpacing(3)
+        col.setContentsMargins(10, 8, 10, 9)
+        col.setSpacing(7)
+
+        cap = QLabel("WHAT THIS CHECK COVERS")
+        cap.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:9px;"
+            " font-weight:800; color:#9A8FD0; letter-spacing:1px;")
+        col.addWidget(cap)
+
         for part in chk.get("parts") or []:
+            ok = bool(part.get("done"))
             row = QHBoxLayout()
-            row.setSpacing(7)
-            mark = QLabel("\u2713" if part.get("done") else "\u00b7")
-            mark.setFixedWidth(10)
+            row.setSpacing(8)
+            row.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+            mark = QLabel("\u2713" if ok else "")
+            mark.setFixedSize(13, 13)
+            mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
             mark.setStyleSheet(
-                f"background:transparent; font-family:{FF}; font-size:11px;"
-                f" font-weight:800; color:{'#16A34A' if part.get('done') else '#B9B9CC'};")
+                f"background:#16A34A; color:#FFFFFF; border-radius:6px;"
+                f" font-family:{FF}; font-size:9px; font-weight:800;" if ok else
+                "background:transparent; border:1.5px solid #CFC7F0;"
+                " border-radius:6px;")
             row.addWidget(mark, 0, Qt.AlignmentFlag.AlignTop)
-            txt = QLabel(str(part.get("text", "")))
-            txt.setWordWrap(True)
-            txt.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-            txt.setStyleSheet(
+
+            row.addWidget(wrapped_label(
+                str(part.get("text", "")),
                 f"background:transparent; font-family:{FF}; font-size:11px;"
-                f" font-weight:500; color:{'#5B6470' if part.get('done') else '#8888A8'};")
-            row.addWidget(txt, 1)
+                f" font-weight:{'600' if ok else '500'};"
+                f" color:{'#4B5563' if ok else '#8A8AA8'};"), 1)
             col.addLayout(row)
-        return box
+
+        pad.addWidget(box, 1)
+        return outer
 
     def _toggle(self, check_id):
-        """Open or close one check. Rebuilds so the caret and the list agree."""
+        """Open or close one check. Rebuilds so the arrow and the list agree."""
         if check_id in self._open:
             self._open.discard(check_id)
         else:
             self._open.add(check_id)
         self.update_section(self._label, self._checks)
 
-    def _caret(self, chk, row_widget):
-        """A caret that opens the check, or nothing when there is nothing inside."""
-        n = len(chk.get("parts") or [])
-        if n < 2:
+    def _caret(self, chk, row_widget=None):
+        """The dropdown control: how many parts are proved, and an arrow.
+
+        A bare chevron makes an advisor guess whether there is anything behind
+        it, so the chip carries the tally as well - "2/3" is the reason to open
+        it. Nothing at all for a single-part check: there is nothing inside.
+        """
+        parts = chk.get("parts") or []
+        if len(parts) < 2:
             return None
         cid = chk.get("id")
         is_open = cid in self._open
-        btn = QPushButton(("\u2303  " if is_open else "\u2304  ") + f"{n} parts")
+        proved = sum(1 for p in parts if p.get("done"))
+        arrow = "\u25be" if is_open else "\u25b8"      # down / right triangle
+
+        btn = QPushButton(f"{proved}/{len(parts)}  {arrow}")
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setFlat(True)
+        btn.setFixedHeight(19)
+        btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        btn.setToolTip("Show the individual questions inside this check")
+        fg, bg = ("#FFFFFF", "#6B4EFF") if is_open else ("#6E6E8C", "#ECECF5")
         btn.setStyleSheet(
-            f"QPushButton {{ background:transparent; border:none; padding:0;"
-            f" font-family:{FF}; font-size:10px; font-weight:700; color:#8888A8; }}"
-            "QPushButton:hover { color:#6B4EFF; }")
+            # Segoe UI Symbol is named explicitly: the display faces do not all
+            # carry the small triangles, and a missing glyph draws as a box.
+            f"QPushButton {{ background:{bg}; color:{fg}; border:none;"
+            f" border-radius:9px; padding:0 8px; font-size:10px;"
+            f" font-weight:800; font-family:{FF},'Segoe UI Symbol'; }}"
+            "QPushButton:hover { background:#6B4EFF; color:#FFFFFF; }")
         btn.clicked.connect(lambda _=False, c=cid: self._toggle(c))
         return btn
 
-    def _done_row(self, chk: dict) -> QWidget:
-        row = QWidget()
+    # -------------------------------------------------------------- the row --
+    # One builder, three volumes. Giving EVERY outstanding check the full red
+    # treatment turned a ten-item stage into a wall of text on a real screen -
+    # the advisor has one next thing to say, not ten.
+    ROW_DONE, ROW_TODO, ROW_DUE = "done", "todo", "due"
+
+    def _check_row(self, chk: dict, kind: str) -> QWidget:
+        """A single check. `kind` decides how loud it is."""
+        due = kind == self.ROW_DUE
+        done = kind == self.ROW_DONE
+
+        row = QFrame()
+        row.setObjectName("dueCard" if due else "plainRow")
+        row.setStyleSheet(
+            "QFrame#dueCard { background:#FFF6F6; border:1px solid #F7D8D8;"
+            " border-radius:10px; }" if due else
+            "QFrame#plainRow { background:transparent; }")
         col = QVBoxLayout(row)
-        col.setContentsMargins(2, 7, 2, 7)
-        col.setSpacing(4)
+        if due:
+            col.setContentsMargins(10, 9, 10, 10)
+        else:
+            col.setContentsMargins(3, 4, 3, 4)
+        col.setSpacing(6)
+
         top = QHBoxLayout()
-        top.setSpacing(9)
-        top.addWidget(_Marker(True), 0, Qt.AlignmentFlag.AlignTop)
-        lab = QLabel(chk.get("label", ""))
-        lab.setWordWrap(True)
-        # Expanding/Preferred, exactly as _forbidden_banner does. Without it a
-        # word-wrapped QLabel in a constrained row collapses to zero height and
-        # the row renders as an empty coloured bar — which is what a live call
-        # showed: ten blank rows with only their markers visible.
-        lab.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        lab.setStyleSheet(
+        top.setSpacing(8)
+        top.setAlignment(Qt.AlignmentFlag.AlignTop)
+        top.addWidget(self._mark(kind), 0, Qt.AlignmentFlag.AlignTop)
+        top.addWidget(wrapped_label(
+            chk.get("label", ""),
             f"background:transparent; font-family:{FF}; font-size:12px;"
-            " font-weight:600; color:#3B3B54;")
-        top.addWidget(lab, 1)
+            f" font-weight:{'800' if due else ('600' if done else '500')};"
+            f" color:{'#991B1B' if due else ('#3B3B54' if done else '#5F5F78')};"),
+            1)
+
         caret = self._caret(chk, row)
         if caret is not None:
             top.addWidget(caret, 0, Qt.AlignmentFlag.AlignTop)
         col.addLayout(top)
-        quote = (chk.get("evidence") or "").strip()
-        if quote:
-            q = QLabel(f"\u201c{quote}\u201d")
-            q.setWordWrap(True)
-            q.setStyleSheet(
-                f"background:transparent; font-family:{FF}; font-size:11px;"
-                " font-weight:500; color:#8888A8; font-style:italic;")
-            q.setContentsMargins(23, 0, 0, 0)
-            col.addWidget(q)
-        return row
 
-    def _due_row(self, chk: dict) -> QWidget:
-        row = QFrame()
-        row.setObjectName("dueNow")
-        row.setStyleSheet("QFrame#dueNow { background:#FFF5F5; border-radius:8px; }")
-        col = QVBoxLayout(row)
-        col.setContentsMargins(8, 8, 8, 8)
-        col.setSpacing(4)
-        top = QHBoxLayout()
-        top.setSpacing(9)
-        top.addWidget(_Marker(False), 0, Qt.AlignmentFlag.AlignTop)
-        lab = QLabel(chk.get("label", ""))
-        lab.setWordWrap(True)
-        lab.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        lab.setStyleSheet(
-            f"background:transparent; font-family:{FF}; font-size:12px;"
-            " font-weight:800; color:#991B1B;")
-        top.addWidget(lab, 1)
-        pill = QLabel("DUE NOW")
-        pill.setStyleSheet(
-            f"font-family:{FF}; font-size:9px; font-weight:800; color:white;"
-            " background:#DC2626; border-radius:6px; padding:2px 6px;"
-            " letter-spacing:0.6px;")
-        top.addWidget(pill, 0, Qt.AlignmentFlag.AlignTop)
-        col.addLayout(top)
-        caret = self._caret(chk, row)
-        if caret is not None:
-            col.addWidget(caret, 0, Qt.AlignmentFlag.AlignLeft)
+        # Everything below the first line hangs off the same indent as the label,
+        # so the eye has one column to follow instead of three.
+        indent = self.MARK + 8
 
-        # what to say. The outstanding PARTS beat the generic prompt when we have
-        # them: "explain the other person stays liable" is actionable in a way that
-        # "ask about joint debts" is not, once the advisor has already asked.
-        parts = [p for p in (chk.get("missing_parts") or []) if p]
-        text = ""
-        if parts:
-            text = "  ".join(f"\u2022 {p}" for p in parts[:2])
-            if len(parts) > 2:
-                text += f"  \u2022 +{len(parts) - 2} more"
-        elif chk.get("prompt"):
-            text = chk["prompt"]
-        if text:
-            hint = QLabel(text)
-            hint.setWordWrap(True)
-            hint.setStyleSheet(
-                f"background:transparent; font-family:{FF}; font-size:11px;"
-                " font-weight:500; color:#7F3B3B;")
-            hint.setContentsMargins(23, 0, 0, 0)
-            col.addWidget(hint)
+        if due:
+            pill = QLabel("SAY THIS NOW")
+            pill.setFixedHeight(17)
+            pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            pill.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            pill.setStyleSheet(
+                f"font-family:{FF}; font-size:9px; font-weight:800;"
+                " color:#FFFFFF; background:#DC2626; border-radius:8px;"
+                " padding:0 9px; letter-spacing:0.6px;")
+            bar = QHBoxLayout()
+            bar.setContentsMargins(indent, 0, 0, 0)
+            bar.addWidget(pill, 0, Qt.AlignmentFlag.AlignLeft)
+            bar.addStretch(1)
+            col.addLayout(bar)
+
+            # Named gaps beat a generic prompt, and one gap per line beats a
+            # paragraph - the advisor is reading this while talking.
+            gaps = [p for p in (chk.get("missing_parts") or []) if p]
+            lines = gaps[:3] or ([chk["prompt"]] if chk.get("prompt") else [])
+            if len(gaps) > 3:
+                lines.append(f"+{len(gaps) - 3} more")
+            for line in lines:
+                item = QHBoxLayout()
+                item.setContentsMargins(indent, 0, 0, 0)
+                item.setSpacing(7)
+                item.setAlignment(Qt.AlignmentFlag.AlignTop)
+                dot = QLabel("\u2022")
+                dot.setFixedWidth(7)
+                dot.setStyleSheet(
+                    f"background:transparent; font-family:{FF}; font-size:11px;"
+                    " font-weight:800; color:#C86A6A;")
+                item.addWidget(dot, 0, Qt.AlignmentFlag.AlignTop)
+                item.addWidget(wrapped_label(
+                    str(line),
+                    f"background:transparent; font-family:{FF}; font-size:11px;"
+                    " font-weight:600; color:#8A4444;"), 1)
+                col.addLayout(item)
+
+        elif done:
+            quote = (chk.get("evidence") or "").strip()
+            if quote:
+                if len(quote) > 110:
+                    quote = quote[:109].rstrip() + "\u2026"
+                ev = QHBoxLayout()
+                ev.setContentsMargins(indent, 0, 0, 0)
+                ev.addWidget(wrapped_label(
+                    "\u201c" + quote + "\u201d",
+                    f"background:transparent; font-family:{FF}; font-size:10.5px;"
+                    " font-weight:400; color:#9A9AB4; font-style:italic;"), 1)
+                col.addLayout(ev)
         return row
 
     def update_section(self, label: str, checks: list):
@@ -2311,18 +2420,30 @@ class SectionAccordion(QWidget):
             self.setVisible(False)
             return
         # Kept so _toggle can rebuild without waiting for the next server message
-        # — otherwise a click would do nothing for up to a couple of seconds.
+        # - otherwise a click would do nothing for up to a couple of seconds.
         self._label, self._checks = label, checks
         done = [c for c in checks if c.get("done")]
+        todo = [c for c in checks if not c.get("done")]
         self._title.setText(label or "")
         self._ratio.setText(f"{len(done)}/{len(checks)}")
 
         self._clear()
-        # Outstanding work first: the advisor is looking for what to do next, and
-        # on a long stage the red row would otherwise sit below the fold.
-        for chk in [c for c in checks if not c.get("done")] + done:
-            self._rows.addWidget(self._due_row(chk) if not chk.get("done")
-                                 else self._done_row(chk))
+        # Outstanding work first - the advisor is looking for what to do next,
+        # and on a long stage the red card would otherwise sit below the fold.
+        # Exactly ONE is marked due; the rest are quiet grey rows under a
+        # caption, because ten red cards each with their own guidance is
+        # unreadable at 340px.
+        for i, chk in enumerate(todo):
+            if i == 1:
+                self._rows.addWidget(self._caption("ALSO STILL TO DO"))
+            self._rows.addWidget(self._check_row(
+                chk, self.ROW_DUE if i == 0 else self.ROW_TODO))
+            if chk.get("id") in self._open:
+                self._rows.addWidget(self._parts_block(chk))
+        if done:
+            self._rows.addWidget(self._caption(f"DONE  \u00b7  {len(done)}"))
+        for chk in done:
+            self._rows.addWidget(self._check_row(chk, self.ROW_DONE))
             if chk.get("id") in self._open:
                 self._rows.addWidget(self._parts_block(chk))
         self.setVisible(True)

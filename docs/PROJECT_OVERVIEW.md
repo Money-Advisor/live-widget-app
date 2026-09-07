@@ -74,25 +74,30 @@ always starts signed out.
 
 | | |
 | --- | --- |
-| Version | **2.9.14** |
+| Version | **2.9.21** |
 | Platform | Windows only — `pyaudiowpatch` is required for WASAPI loopback |
 | Distribution | `SparkFlowSetup.exe`, built with PyInstaller and Inno Setup, published as a GitHub release |
 | Build type | A **folder** build, not one-file (see [ARCHITECTURE.md](ARCHITECTURE.md#a-folder-build-not-one-file)) |
 | Server | Points at 192.168.80.53 by default, with a one-time migration off the retired 192.168.80.52 |
-| Live AI | Off, so it runs as a recorder with a post-call confirmation |
-| Tests | 268 passing, plus 21 smoke checks |
+| Live AI | On for SFM only, in a silent trial - scored and shown on the panel, never interrupting |
+| Tests | 294 passing, plus 21 smoke checks |
 | Logs | `%LOCALAPPDATA%\Spark Flow\logs\widget.log` |
 
 ## Recent history worth knowing
 
 Versions 2.9.9 through 2.9.14 were largely about the August 2026 server move and
-about making failures visible:
+about making failures visible; 2.9.15 onward is the live compliance panel:
 
 - **2.9.9** repointed installs at the new server, including rewriting a saved address that still named the retired one.
 - **2.9.10 / "Forgot password?"** self-service reset from the login screen.
 - **2.9.12** reports its own build to the server, so the dashboard can show who is out of date. Anything older shows blank, which is itself the signal.
 - **2.9.13** made the manual Log Out sticky too — it was only wired to expired and revoked sessions.
 - **2.9.14** stopped the customer channel losing time, which had left the agent sounding late relative to the customer.
+- **2.9.15 - 2.9.21, the live compliance panel.** Shipped together and only worth reading as one change. The panel is on screen for the whole of a call and between calls: a stage bar showing where the call has got to, the current stage opened out with every requirement ticked or outstanding, and the advisor's own words underneath each tick. A check made of several parts opens on a dropdown to show which parts are proved and which are still to ask.
+  - **2.9.17** kept the panel on screen instead of hiding it whenever nothing was wrong, which read as the feature being broken.
+  - **2.9.19** fixed rows that rendered blank, and an alert that named the wrong stage.
+  - **2.9.20** added the per-check dropdown.
+  - **2.9.21** made the checklist legible. Every outstanding check had been given the full red card with its own guidance, which on a 340px panel ran into itself; now exactly one item is marked due and the rest are quiet rows under a caption.
 
 ## Owners and contacts
 

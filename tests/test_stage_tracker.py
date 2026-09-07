@@ -227,3 +227,91 @@ def test_the_parts_show_which_are_done():
     text = " ".join(l.text() for l in labels)
     assert "employment income" in text and "Child Benefit" in text
     assert "\u2713" in text, "proved parts are ticked"
+
+
+def _long_stage():
+    """A real stage: seven checks, every label long enough to wrap at 340px."""
+    return [
+        {"id": "ie.income", "label": "All income sources confirmed and evidenced",
+         "done": False, "severity": "critical", "evidence": None,
+         "prompt": "Name every income source, including benefits.",
+         "missing_parts": ["Child Benefit", "any second job", "pension income"],
+         "parts": [{"text": "employment income confirmed", "done": True},
+                   {"text": "self-employment or second job", "done": True},
+                   {"text": "Child Benefit", "done": False},
+                   {"text": "Universal Credit or other benefits", "done": False},
+                   {"text": "pension income", "done": False}]},
+        {"id": "ie.partner",
+         "label": "Partner's income and contribution to the household discussed",
+         "done": False, "severity": "high", "evidence": None,
+         "prompt": "Ask what the partner earns.", "missing_parts": [], "parts": []},
+        {"id": "ie.spend",
+         "label": "Expenditure walked through against the trigger figures",
+         "done": False, "severity": "high", "evidence": None, "prompt": None,
+         "missing_parts": [], "parts": []},
+        {"id": "ie.arrears", "label": "Priority arrears identified", "done": False,
+         "severity": "critical", "evidence": None, "prompt": None,
+         "missing_parts": [], "parts": []},
+        {"id": "onb.dob",
+         "label": "Date of birth and email address confirmed with the customer",
+         "done": True, "severity": "critical",
+         "evidence": "Can I just take your date of birth please, and the best "
+                     "email address for you?",
+         "prompt": None, "missing_parts": [], "parts": []},
+        {"id": "ie.freq", "label": "Pay frequency captured", "done": True,
+         "severity": "normal", "evidence": "So you're paid every four weeks?",
+         "prompt": None, "missing_parts": [], "parts": []},
+    ]
+
+
+def test_only_one_check_is_marked_due():
+    """Ten red cards, each with its own guidance, is not a checklist.
+
+    That is exactly what the advisor saw: every outstanding item got the full
+    treatment and the text ran into itself. The advisor has ONE next thing to
+    say, so exactly one card is red however many items are outstanding.
+    """
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.update_stage("IE", _sections(4), _long_stage())
+    acc = panel._accordion
+    due = [acc._rows.itemAt(i).widget() for i in range(acc._rows.count())]
+    red = [w for w in due if w is not None and w.objectName() == "dueCard"]
+    assert len(red) == 1, f"expected one due card, got {len(red)}"
+
+
+def test_a_full_stage_does_not_inflate_the_panel():
+    """A guard against the heightForWidth trap, which cost a rebuild.
+
+    Switching heightForWidth on for the wrapped labels looks correct - QLabel
+    really does implement it - but the layout then asks how tall the label would
+    be at its minimum width, gets an enormous answer, and adopts it as the
+    panel's minimum height. Measured at the time: 533px became 1406px and the
+    stage bar alone inflated to 338px, pushing the checklist off the screen.
+
+    Six checks with wrapping labels is an ordinary stage. If this ever needs
+    raising, look for a size policy before raising it.
+    """
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.update_stage("IE", _sections(4), _long_stage())
+    panel.adjustSize()
+    assert panel.height() < 800, f"panel ballooned to {panel.height()}px"
+    assert panel._stage.height() < 90, \
+        f"stage bar ballooned to {panel._stage.height()}px"
+
+
+def test_the_dropdown_says_how_many_parts_are_proved():
+    """A bare arrow gives an advisor no reason to click it. "2/5" does."""
+    _app()
+    panel = main.ComplianceAlertPanel()
+    chk = _long_stage()[0]
+    caret = panel._accordion._caret(chk)
+    assert caret is not None
+    assert "2/5" in caret.text(), caret.text()
+    assert "\u25b8" in caret.text(), "closed shows a right-pointing arrow"
+    panel._accordion._open.add(chk["id"])
+    assert "\u25be" in panel._accordion._caret(chk).text(), \
+        "open shows a down-pointing arrow"

@@ -8,7 +8,7 @@
 
 ```powershell
 cd "Spark Flow\live-widget-app"
-python -m pytest tests\ -q      # 268 tests, about 4 seconds
+python -m pytest tests\ -q      # 294 tests, about 4 seconds
 python smoke_test.py            # 21 headless checks
 python -m pytest tests\test_dialer_activate.py -v
 python -m pytest -k "mic or loopback" tests\ -q
@@ -23,7 +23,7 @@ All Qt runs offscreen, so nothing appears on screen and no display is needed. No
 database, no backend and no audio hardware are required — devices, sockets and HTTP
 are all faked.
 
-Verified on 27 August 2026: **268 passed**, and the smoke test **all 21 pass**.
+Verified on 7 September 2026: **294 passed**, and the smoke test **all 21 pass**.
 
 ## What is covered
 
@@ -36,6 +36,8 @@ Verified on 27 August 2026: **268 passed**, and the smoke test **all 21 pass**.
 | `test_mic_filter.py` | 26 | That Krisp's virtual microphone is excluded, and that tolerant device-name matching survives Windows renaming a device (including the curly-apostrophe case). |
 | `test_session_persistence.py` | 25 | Session state across restarts. |
 | `test_sticky_signout.py` | 15 | That a sign-out cannot be minimised away — including the manual Log Out button, which was missing until 2.9.13. |
+| `test_stage_tracker.py` | 18 | The compliance panel: that it stays hidden when the old matcher is on the other end and sends none of the new fields, that a check opens to show its individual parts and stays open across the next transcript fragment, that exactly **one** outstanding check is marked due, and that a full stage does not inflate the panel — the last two are regression contracts for a checklist that was unreadable on a real screen. |
+| `test_panel_on_top.py` | 4 | That the panel is on screen for the whole call and stays visible between calls, rather than hiding whenever nothing is wrong. |
 | `test_handshake_timeout.py` | 9 | The 30-second handshake deadline. |
 | `test_forgot_password.py` | 8 | The reset flow on the login screen. |
 | `test_token_refresh.py` | 7 | Silent renewal before the one-hour expiry. |
