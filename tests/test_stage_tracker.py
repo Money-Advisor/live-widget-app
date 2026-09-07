@@ -113,3 +113,42 @@ def test_clearing_the_checklist_clears_the_parts_line():
     panel.set_missing_parts(["explain the liability"])
     panel.update_missing([])
     assert not panel._parts.isVisibleTo(panel)
+
+
+def test_the_panel_appears_for_the_stage_tracker_alone():
+    """No alert is not a reason to show an advisor nothing.
+
+    Visibility used to be decided solely by update_missing(), so with no alert
+    firing the whole panel was hidden — stage tracker and opened-out stage
+    included. On a real call with the advisor doing everything right, nothing
+    appeared at all, and it read as the feature being broken.
+    """
+    _app()
+    panel = main.ComplianceAlertPanel()
+    assert not panel.isVisible()
+    panel.update_stage("CREDITOR_CHECK", _sections(4), [
+        {"id": "cc.x", "label": "Creditors captured", "done": True,
+         "severity": "high", "evidence": "every creditor and balance",
+         "prompt": None, "missing_parts": []}])
+    assert panel.isVisible(), "the stage tracker must be able to show the panel"
+
+
+def test_an_empty_alert_list_no_longer_hides_the_stage():
+    """The advisor covering everything must still see where they are."""
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.update_stage("CREDITOR_CHECK", _sections(4), [
+        {"id": "cc.x", "label": "Creditors captured", "done": True,
+         "severity": "high", "evidence": "", "prompt": None, "missing_parts": []}])
+    panel.update_missing([])          # nothing outstanding — the good case
+    assert panel.isVisible()
+    assert panel._stage.isVisibleTo(panel)
+
+
+def test_it_still_hides_when_there_is_genuinely_nothing():
+    """Between calls the panel must not sit there empty."""
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.update_stage(None, None, None)
+    panel.update_missing([])
+    assert not panel.isVisible()

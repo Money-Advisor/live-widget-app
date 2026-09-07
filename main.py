@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.15"
+APP_VERSION = "2.9.16"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2439,6 +2439,22 @@ class ComplianceAlertPanel(QFrame):
             " padding:8px 11px; }}")
         self._lay.addWidget(self._parts)
 
+    def _has_anything_to_show(self):
+        """Is there anything on this panel worth a pixel?
+
+        Visibility used to be decided solely by update_missing(): no alert meant
+        setVisible(False), which hid the WHOLE panel. That was fine when the panel
+        was only a list of missing items, and wrong the moment it also carried the
+        stage tracker and the opened-out stage — an advisor doing everything right
+        saw nothing at all, including their own progress.
+        """
+        return (self._items_box.count() > 0
+                or self._forbidden_box.count() > 0
+                or self._cue_box.count() > 0
+                or self._status_label.isVisible()
+                or self._stage.isVisibleTo(self)
+                or self._accordion.isVisibleTo(self))
+
     def _clear_items(self):
         while self._items_box.count():
             it = self._items_box.takeAt(0)
@@ -2605,6 +2621,12 @@ class ComplianceAlertPanel(QFrame):
         label = next((s.get("label") or s.get("key") for s in sections
                       if s.get("current")), stage or "")
         self._accordion.update_section(label, section_checks or [])
+        # These arrive before any alert does, so they must be able to show the
+        # panel themselves rather than waiting for something to go wrong.
+        if self._has_anything_to_show():
+            self.setVisible(True)
+            self.updateGeometry()
+            QTimer.singleShot(0, self._sync_window)
 
     def set_missing_parts(self, parts):
         """The specific parts of a multi-part requirement still outstanding.
@@ -2631,11 +2653,10 @@ class ComplianceAlertPanel(QFrame):
         if not missing_items:
             self._suggestion.setVisible(False)
             self._parts.setVisible(False)
-            # keep the panel visible if forbidden breaches, cues, or a status
-            # notice are showing
-            self.setVisible(self._forbidden_box.count() > 0
-                            or self._cue_box.count() > 0
-                            or self._status_label.isVisible())
+            # No alert is NOT a reason to hide: the stage tracker and the
+            # opened-out stage live on this panel too, and an advisor covering
+            # everything correctly still wants to see where they are.
+            self.setVisible(self._has_anything_to_show())
             QTimer.singleShot(0, self._sync_window)
             return
 
