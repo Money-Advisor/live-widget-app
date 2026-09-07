@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.17"
+APP_VERSION = "2.9.18"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2526,6 +2526,21 @@ class ComplianceAlertPanel(QFrame):
             " padding:8px 11px; }}")
         self._lay.addWidget(self._parts)
 
+        # ── live, but nothing from the server yet ──────────────────────────
+        # Without this the panel is an empty header for the first seconds of a
+        # call — worse than the idle block it replaced, because it looks broken
+        # rather than waiting. It also stays up if the compliance layer never
+        # sends anything at all, which is a real state and one worth naming.
+        self._listening = QLabel("Listening — your checklist appears as the call gets going.")
+        self._listening.setWordWrap(True)
+        self._listening.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._listening.setStyleSheet(
+            f"QLabel {{ font-size:12px; font-family:{FF}; font-weight:500;"
+            " color:#8888A8; background:#F7F7FB; border-radius:10px;"
+            " padding:14px 12px; }}")
+        self._listening.setVisible(False)
+        self._lay.addWidget(self._listening)
+
         # Last line of __init__ on purpose: show_idle() touches every widget
         # above, so calling it any earlier raises on whichever one does not
         # exist yet.
@@ -2540,6 +2555,7 @@ class ComplianceAlertPanel(QFrame):
         self._accordion.setVisible(False)
         self._suggestion.setVisible(False)
         self._parts.setVisible(False)
+        self._listening.setVisible(False)
         self._clear_items()
         self._shift["calls"].setText(str(self._shift_calls) if self._shift_calls else "—")
         self._shift["average"].setText(
@@ -2555,6 +2571,11 @@ class ComplianceAlertPanel(QFrame):
         self._idle.setVisible(False)
         self._ready.setVisible(False)
         self._count.setVisible(True)
+        # Until the server sends a stage or a check, say what is happening
+        # instead of showing a bare header.
+        self._listening.setVisible(not (self._stage.isVisibleTo(self)
+                                        or self._accordion.isVisibleTo(self)
+                                        or self._items_box.count() > 0))
         self.setVisible(True)
         self.updateGeometry()
         QTimer.singleShot(0, self._sync_window)
@@ -2751,6 +2772,7 @@ class ComplianceAlertPanel(QFrame):
         # Stage data means a call is under way, so leave idle behind — otherwise
         # the "waiting for a call" block sits underneath a live checklist.
         if sections or section_checks:
+            self._listening.setVisible(False)
             self.show_live()
         elif self._has_anything_to_show():
             self.setVisible(True)
@@ -2793,6 +2815,7 @@ class ComplianceAlertPanel(QFrame):
             QTimer.singleShot(0, self._sync_window)
             return
 
+        self._listening.setVisible(False)
         self._count.setText(str(len(missing_items)))
         for item in missing_items:
             self._items_box.addWidget(self._chip(item))
