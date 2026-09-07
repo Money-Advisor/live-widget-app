@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.18"
+APP_VERSION = "2.9.19"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2174,6 +2174,11 @@ class SectionAccordion(QWidget):
         top.addWidget(_Marker(True), 0, Qt.AlignmentFlag.AlignTop)
         lab = QLabel(chk.get("label", ""))
         lab.setWordWrap(True)
+        # Expanding/Preferred, exactly as _forbidden_banner does. Without it a
+        # word-wrapped QLabel in a constrained row collapses to zero height and
+        # the row renders as an empty coloured bar — which is what a live call
+        # showed: ten blank rows with only their markers visible.
+        lab.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         lab.setStyleSheet(
             f"background:transparent; font-family:{FF}; font-size:12px;"
             " font-weight:600; color:#3B3B54;")
@@ -2202,6 +2207,7 @@ class SectionAccordion(QWidget):
         top.addWidget(_Marker(False), 0, Qt.AlignmentFlag.AlignTop)
         lab = QLabel(chk.get("label", ""))
         lab.setWordWrap(True)
+        lab.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         lab.setStyleSheet(
             f"background:transparent; font-family:{FF}; font-size:12px;"
             " font-weight:800; color:#991B1B;")
