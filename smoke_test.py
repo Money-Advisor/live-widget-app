@@ -18,7 +18,9 @@ def check(name, cond):
 
 # 1. ComplianceAlertPanel visibility + content
 panel = m.ComplianceAlertPanel()
-check("panel hidden initially", not panel.isVisible())
+# The panel is always on screen now: idle between calls, live during one. It used
+# to vanish when there was nothing wrong, which reads as a broken feature.
+check("panel starts in the idle state", panel.isVisible() and panel._idle.isVisibleTo(panel))
 panel.update_missing([
     {"id": "a", "label": "Greeting", "level": "amber", "suggestion_text": ""},
     {"id": "b", "label": "Forbidden phrase", "level": "red",
@@ -27,7 +29,7 @@ panel.update_missing([
 check("panel visible after missing items", panel.isVisible())
 check("suggestion shown for red item", panel._suggestion.isVisible())
 panel.update_missing([])
-check("panel hidden when nothing missing", not panel.isVisible())
+check("panel returns to idle when nothing is missing", panel.isVisible() and panel._idle.isVisibleTo(panel))
 
 # 2. SummaryScreen scoring + colour buckets
 s = m.SummaryScreen()

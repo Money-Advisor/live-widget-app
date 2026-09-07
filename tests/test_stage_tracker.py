@@ -125,7 +125,8 @@ def test_the_panel_appears_for_the_stage_tracker_alone():
     """
     _app()
     panel = main.ComplianceAlertPanel()
-    assert not panel.isVisible()
+    assert panel.isVisible(), "it starts in the idle state, never invisible"
+    assert panel._idle.isVisibleTo(panel)
     panel.update_stage("CREDITOR_CHECK", _sections(4), [
         {"id": "cc.x", "label": "Creditors captured", "done": True,
          "severity": "high", "evidence": "every creditor and balance",
@@ -145,10 +146,19 @@ def test_an_empty_alert_list_no_longer_hides_the_stage():
     assert panel._stage.isVisibleTo(panel)
 
 
-def test_it_still_hides_when_there_is_genuinely_nothing():
-    """Between calls the panel must not sit there empty."""
+def test_it_falls_back_to_idle_rather_than_disappearing():
+    """Between calls the panel stays put and says READY.
+
+    It used to hide completely, which reads as the feature being broken — that is
+    exactly how the panel appeared "not to work" on a real call.
+    """
     _app()
     panel = main.ComplianceAlertPanel()
+    panel.update_stage("CREDITOR_CHECK", _sections(4), [
+        {"id": "x", "label": "A check", "done": True, "severity": "high",
+         "evidence": "", "prompt": None, "missing_parts": []}])
+    assert not panel._idle.isVisibleTo(panel), "live call hides the idle block"
     panel.update_stage(None, None, None)
     panel.update_missing([])
-    assert not panel.isVisible()
+    assert panel.isVisible(), "the panel itself never disappears"
+    assert panel._idle.isVisibleTo(panel), "it returns to the idle block"

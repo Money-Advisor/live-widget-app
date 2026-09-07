@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.16"
+APP_VERSION = "2.9.17"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2381,6 +2381,14 @@ class ComplianceAlertPanel(QFrame):
             f"font-size:10px; font-family:{FF}; font-weight:800; color:white;"
             " background:#6B4EFF; border-radius:8px; padding:1px 8px;")
         head.addWidget(self._count)
+
+        # READY pill — the idle counterpart of the count badge. Only one shows.
+        self._ready = QLabel("READY")
+        self._ready.setStyleSheet(
+            f"font-size:10px; font-family:{FF}; font-weight:800; color:#16A34A;"
+            " background:#F0FDF4; border-radius:10px; padding:3px 9px;"
+            " letter-spacing:0.6px;")
+        head.addWidget(self._ready)
         self._lay.addLayout(head)
 
         # ── where the call has got to (rulebook path only) ──
@@ -2390,6 +2398,85 @@ class ComplianceAlertPanel(QFrame):
         # ── the current stage, opened out (rulebook path only) ──
         self._accordion = SectionAccordion()
         self._lay.addWidget(self._accordion)
+
+        # ── idle: what the advisor sees between calls ──────────────────────
+        # The panel used to vanish entirely between calls, which made a working
+        # feature look like a broken one. It now always says something.
+        self._idle = QWidget()
+        idle = QVBoxLayout(self._idle)
+        idle.setContentsMargins(8, 22, 8, 16)
+        idle.setSpacing(11)
+        idle.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
+        # A drawn ring, not a glyph: the mockup uses an SVG clock, and a unicode
+        # symbol is a gamble on whichever font an agent PC happens to fall back to.
+        _dot = QLabel("")
+        _dot.setFixedSize(48, 48)
+        _dot.setStyleSheet(
+            "background:#F3F0FF; border:2px solid #C9C2F5; border-radius:24px;")
+        idle.addWidget(_dot, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        _wait = QLabel("Waiting for a call")
+        _wait.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        _wait.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:14px;"
+            " font-weight:700; color:#1A1A2E;")
+        idle.addWidget(_wait)
+
+        _hint = QLabel("Your checklist loads the moment the call connects.")
+        _hint.setWordWrap(True)
+        _hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        _hint.setMaximumWidth(250)
+        _hint.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:12px;"
+            " font-weight:500; color:#8888A8;")
+        idle.addWidget(_hint, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        _rule = QLabel("")
+        _rule.setFixedHeight(1)
+        _rule.setStyleSheet("background:#EEF0F6;")
+        idle.addWidget(_rule)
+
+        _shift_cap = QLabel("THIS SHIFT")
+        _shift_cap.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:10px;"
+            " font-weight:800; color:#8888A8; letter-spacing:1.2px;")
+        idle.addWidget(_shift_cap)
+
+        tiles = QHBoxLayout()
+        tiles.setSpacing(8)
+        self._shift = {}
+        for key, cap, colour in (("calls", "CALLS", "#1A1A2E"),
+                                 ("average", "AVERAGE", "#16A34A"),
+                                 ("flags", "FLAGS", "#D97706")):
+            tile = QFrame()
+            tile.setObjectName("tile")
+            tile.setStyleSheet(
+                "QFrame#tile { background:#F7F7FB; border-radius:12px; }")
+            col = QVBoxLayout(tile)
+            col.setContentsMargins(11, 10, 11, 10)
+            col.setSpacing(2)
+            val = QLabel("—")
+            val.setStyleSheet(
+                f"background:transparent; font-family:{FF}; font-size:17px;"
+                f" font-weight:800; color:{colour};")
+            lab = QLabel(cap)
+            lab.setStyleSheet(
+                f"background:transparent; font-family:{FF}; font-size:10px;"
+                " font-weight:700; color:#8888A8;")
+            col.addWidget(val)
+            col.addWidget(lab)
+            tiles.addWidget(tile)
+            self._shift[key] = val
+        idle.addLayout(tiles)
+        self._lay.addWidget(self._idle)
+
+        # Counters for the tiles. Deliberately this SESSION only — the widget has
+        # no history, and inventing a shift figure it cannot stand behind would be
+        # worse than an honest dash.
+        self._shift_calls = 0
+        self._shift_scores = []
+        self._shift_flags = 0
 
         # ── transcription status notice (R2): shown when live checking is
         # degraded / down so the agent knows the safety net dropped. ──
@@ -2438,6 +2525,46 @@ class ComplianceAlertPanel(QFrame):
             " color:#7C3AED; background:#F5F3FF; border-radius:8px;"
             " padding:8px 11px; }}")
         self._lay.addWidget(self._parts)
+
+        # Last line of __init__ on purpose: show_idle() touches every widget
+        # above, so calling it any earlier raises on whichever one does not
+        # exist yet.
+        self.show_idle()
+
+    def show_idle(self):
+        """Between calls: READY, and what this shift has looked like so far."""
+        self._idle.setVisible(True)
+        self._ready.setVisible(True)
+        self._count.setVisible(False)
+        self._stage.setVisible(False)
+        self._accordion.setVisible(False)
+        self._suggestion.setVisible(False)
+        self._parts.setVisible(False)
+        self._clear_items()
+        self._shift["calls"].setText(str(self._shift_calls) if self._shift_calls else "—")
+        self._shift["average"].setText(
+            f"{round(100 * sum(self._shift_scores) / len(self._shift_scores))}%"
+            if self._shift_scores else "—")
+        self._shift["flags"].setText(str(self._shift_flags) if self._shift_flags else "—")
+        self.setVisible(True)
+        self.updateGeometry()
+        QTimer.singleShot(0, self._sync_window)
+
+    def show_live(self):
+        """A call has started: swap the idle block for the live checklist."""
+        self._idle.setVisible(False)
+        self._ready.setVisible(False)
+        self._count.setVisible(True)
+        self.setVisible(True)
+        self.updateGeometry()
+        QTimer.singleShot(0, self._sync_window)
+
+    def record_call_result(self, score=None, flags=0):
+        """Feed the shift tiles from a finished call."""
+        self._shift_calls += 1
+        if score is not None:
+            self._shift_scores.append(float(score))
+        self._shift_flags += int(flags or 0)
 
     def _has_anything_to_show(self):
         """Is there anything on this panel worth a pixel?
@@ -2621,9 +2748,11 @@ class ComplianceAlertPanel(QFrame):
         label = next((s.get("label") or s.get("key") for s in sections
                       if s.get("current")), stage or "")
         self._accordion.update_section(label, section_checks or [])
-        # These arrive before any alert does, so they must be able to show the
-        # panel themselves rather than waiting for something to go wrong.
-        if self._has_anything_to_show():
+        # Stage data means a call is under way, so leave idle behind — otherwise
+        # the "waiting for a call" block sits underneath a live checklist.
+        if sections or section_checks:
+            self.show_live()
+        elif self._has_anything_to_show():
             self.setVisible(True)
             self.updateGeometry()
             QTimer.singleShot(0, self._sync_window)
@@ -2653,10 +2782,14 @@ class ComplianceAlertPanel(QFrame):
         if not missing_items:
             self._suggestion.setVisible(False)
             self._parts.setVisible(False)
-            # No alert is NOT a reason to hide: the stage tracker and the
-            # opened-out stage live on this panel too, and an advisor covering
-            # everything correctly still wants to see where they are.
-            self.setVisible(self._has_anything_to_show())
+            # Never hide the panel outright. With nothing live to show it falls
+            # back to the idle block — a panel that disappears reads as broken,
+            # and an advisor mid-call with everything covered still wants to see
+            # their progress.
+            if not self._has_anything_to_show():
+                self.show_idle()
+            else:
+                self.setVisible(True)
             QTimer.singleShot(0, self._sync_window)
             return
 
@@ -4434,6 +4567,7 @@ class MainWindow(QMainWindow):
         self._compliance_panel.clear_cues()
         self._compliance_panel.set_transcription_status("recovered")  # hide any stale notice
         self._compliance_panel.update_missing([])
+        self._compliance_panel.show_live()   # a call is starting: leave idle
 
         mic_dev = self._mic_devices[self._mic_combo.currentIndex()]
         spk_dev = self._spk_devices[self._spk_combo.currentIndex()]
@@ -4550,6 +4684,7 @@ class MainWindow(QMainWindow):
             f"padding:4px 12px; font-size:12px; font-family:{FF}; font-weight:700;")
         self._timer_lbl.setText("")
         self._compliance_panel.update_missing([])
+        self._compliance_panel.show_idle()   # back to READY between calls
         self._tray_rec_act.setText("⏺  Start Recording")
         self._tray.setIcon(ICON_IDLE)
         self._tray.setToolTip("Spark Flow – idle")
@@ -4741,6 +4876,11 @@ class MainWindow(QMainWindow):
 
     def _show_server_summary(self, msg: dict):
         self._server_summary_shown = True  # authoritative — wins over local
+        # Feed the idle panel's THIS SHIFT tiles. Session-only, and the score is
+        # recorded only when the server actually sent one — a silent trial sends
+        # none, and a made-up average would be worse than a dash.
+        self._compliance_panel.record_call_result(
+            score=msg.get("score"), flags=len(self._missing_ids or ()))
         # No score => show the agent nothing about performance, just that the call
         # was saved. Two cases reach here: the live layer is off for this agent, and
         # scoring is switched off for their department (a separate setting).
