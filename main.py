@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.19"
+APP_VERSION = "2.9.20"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2157,12 +2157,69 @@ class SectionAccordion(QWidget):
         self._rows.setSpacing(1)
         self._lay.addWidget(self._body)
 
+        # Which checks the advisor has opened. Kept on the ACCORDION, not the row
+        # widgets, because every update rebuilds the rows from scratch — without
+        # this an open check would snap shut on the next transcript fragment,
+        # roughly twice a second.
+        self._open = set()
+        self._label, self._checks = "", []
+
     def _clear(self):
         while self._rows.count():
             it = self._rows.takeAt(0)
             w = it.widget()
             if w is not None:
                 w.deleteLater()
+
+    def _parts_block(self, chk: dict) -> QWidget:
+        """The individual questions inside one check, shown when it is opened."""
+        box = QWidget()
+        col = QVBoxLayout(box)
+        col.setContentsMargins(23, 2, 2, 6)
+        col.setSpacing(3)
+        for part in chk.get("parts") or []:
+            row = QHBoxLayout()
+            row.setSpacing(7)
+            mark = QLabel("\u2713" if part.get("done") else "\u00b7")
+            mark.setFixedWidth(10)
+            mark.setStyleSheet(
+                f"background:transparent; font-family:{FF}; font-size:11px;"
+                f" font-weight:800; color:{'#16A34A' if part.get('done') else '#B9B9CC'};")
+            row.addWidget(mark, 0, Qt.AlignmentFlag.AlignTop)
+            txt = QLabel(str(part.get("text", "")))
+            txt.setWordWrap(True)
+            txt.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            txt.setStyleSheet(
+                f"background:transparent; font-family:{FF}; font-size:11px;"
+                f" font-weight:500; color:{'#5B6470' if part.get('done') else '#8888A8'};")
+            row.addWidget(txt, 1)
+            col.addLayout(row)
+        return box
+
+    def _toggle(self, check_id):
+        """Open or close one check. Rebuilds so the caret and the list agree."""
+        if check_id in self._open:
+            self._open.discard(check_id)
+        else:
+            self._open.add(check_id)
+        self.update_section(self._label, self._checks)
+
+    def _caret(self, chk, row_widget):
+        """A caret that opens the check, or nothing when there is nothing inside."""
+        n = len(chk.get("parts") or [])
+        if n < 2:
+            return None
+        cid = chk.get("id")
+        is_open = cid in self._open
+        btn = QPushButton(("\u2303  " if is_open else "\u2304  ") + f"{n} parts")
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFlat(True)
+        btn.setStyleSheet(
+            f"QPushButton {{ background:transparent; border:none; padding:0;"
+            f" font-family:{FF}; font-size:10px; font-weight:700; color:#8888A8; }}"
+            "QPushButton:hover { color:#6B4EFF; }")
+        btn.clicked.connect(lambda _=False, c=cid: self._toggle(c))
+        return btn
 
     def _done_row(self, chk: dict) -> QWidget:
         row = QWidget()
@@ -2183,6 +2240,9 @@ class SectionAccordion(QWidget):
             f"background:transparent; font-family:{FF}; font-size:12px;"
             " font-weight:600; color:#3B3B54;")
         top.addWidget(lab, 1)
+        caret = self._caret(chk, row)
+        if caret is not None:
+            top.addWidget(caret, 0, Qt.AlignmentFlag.AlignTop)
         col.addLayout(top)
         quote = (chk.get("evidence") or "").strip()
         if quote:
@@ -2219,6 +2279,9 @@ class SectionAccordion(QWidget):
             " letter-spacing:0.6px;")
         top.addWidget(pill, 0, Qt.AlignmentFlag.AlignTop)
         col.addLayout(top)
+        caret = self._caret(chk, row)
+        if caret is not None:
+            col.addWidget(caret, 0, Qt.AlignmentFlag.AlignLeft)
 
         # what to say. The outstanding PARTS beat the generic prompt when we have
         # them: "explain the other person stays liable" is actionable in a way that
@@ -2247,6 +2310,9 @@ class SectionAccordion(QWidget):
         if not checks:
             self.setVisible(False)
             return
+        # Kept so _toggle can rebuild without waiting for the next server message
+        # — otherwise a click would do nothing for up to a couple of seconds.
+        self._label, self._checks = label, checks
         done = [c for c in checks if c.get("done")]
         self._title.setText(label or "")
         self._ratio.setText(f"{len(done)}/{len(checks)}")
@@ -2254,10 +2320,11 @@ class SectionAccordion(QWidget):
         self._clear()
         # Outstanding work first: the advisor is looking for what to do next, and
         # on a long stage the red row would otherwise sit below the fold.
-        for chk in [c for c in checks if not c.get("done")]:
-            self._rows.addWidget(self._due_row(chk))
-        for chk in done:
-            self._rows.addWidget(self._done_row(chk))
+        for chk in [c for c in checks if not c.get("done")] + done:
+            self._rows.addWidget(self._due_row(chk) if not chk.get("done")
+                                 else self._done_row(chk))
+            if chk.get("id") in self._open:
+                self._rows.addWidget(self._parts_block(chk))
         self.setVisible(True)
 
 

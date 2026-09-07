@@ -162,3 +162,68 @@ def test_it_falls_back_to_idle_rather_than_disappearing():
     panel.update_missing([])
     assert panel.isVisible(), "the panel itself never disappears"
     assert panel._idle.isVisibleTo(panel), "it returns to the idle block"
+
+
+def _parts_check(open_id="ie.income"):
+    return [{"id": open_id, "label": "Income confirmed", "done": False,
+             "severity": "critical", "evidence": None,
+             "prompt": "Name every income source.", "missing_parts": ["Child Benefit"],
+             "parts": [{"text": "employment income", "done": True, "evidence": None},
+                       {"text": "second job", "done": True, "evidence": None},
+                       {"text": "Child Benefit", "done": False, "evidence": None}]},
+            {"id": "onb.dob", "label": "Date of birth confirmed", "done": True,
+             "severity": "critical", "evidence": "your date of birth",
+             "prompt": None, "missing_parts": [], "parts": []}]
+
+
+def test_a_multi_part_check_can_be_opened():
+    """A twelve-part check that just says "not done" tells an advisor nothing.
+
+    Opened, it shows which parts are proved and which are still to ask.
+    """
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.update_stage("IE", _sections(0), _parts_check())
+    acc = panel._accordion
+    closed = acc._rows.count()
+    acc._toggle("ie.income")
+    assert acc._rows.count() == closed + 1, "the parts block should appear"
+    acc._toggle("ie.income")
+    assert acc._rows.count() == closed, "and disappear again"
+
+
+def test_an_open_check_survives_the_next_transcript():
+    """Rows are rebuilt on every server message — roughly twice a second.
+
+    If open/closed lived on the row widgets, a check would snap shut the instant
+    the advisor said anything, which is worse than not having the control.
+    """
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.update_stage("IE", _sections(0), _parts_check())
+    panel._accordion._toggle("ie.income")
+    opened = panel._accordion._rows.count()
+    panel.update_stage("IE", _sections(0), _parts_check())   # next fragment
+    assert panel._accordion._rows.count() == opened, "it must stay open"
+    assert "ie.income" in panel._accordion._open
+
+
+def test_a_single_part_check_has_nothing_to_open():
+    """No caret where there is nothing behind it."""
+    _app()
+    panel = main.ComplianceAlertPanel()
+    chk = {"id": "x", "label": "One thing", "done": True, "severity": "high",
+           "evidence": "", "prompt": None, "missing_parts": [], "parts": []}
+    assert panel._accordion._caret(chk, None) is None
+
+
+def test_the_parts_show_which_are_done():
+    _app()
+    panel = main.ComplianceAlertPanel()
+    block = panel._accordion._parts_block(_parts_check()[0])
+    labels = block.findChildren(main.QLabel)
+    text = " ".join(l.text() for l in labels)
+    assert "employment income" in text and "Child Benefit" in text
+    assert "\u2713" in text, "proved parts are ticked"
