@@ -408,3 +408,73 @@ def test_a_check_the_stage_does_not_show_still_gets_a_chip():
     panel.update_missing([{"id": "onb.fca_statement", "label": "FCA statement",
                            "level": "red", "suggestion_text": "Say the full name."}])
     assert panel._items_box.count() == 1
+
+
+# ── the end-of-call summary ───────────────────────────────────────────────
+# It showed raw check ids - "onb.dpa_dob, cc.aryza_loaded, ff.duration" - at an
+# advisor, because the widget's id -> label map is built from the backend's
+# `criteria` config, which is the OLD matcher's list and holds none of the
+# rulebook's ids, so every lookup fell through to the id.
+
+def _summary_msg():
+    return {
+        "type": "session_summary", "duration_seconds": 132,
+        "recording_saved": True, "scoring_enabled": True,
+        "score": {"covered": 1, "total": 3, "earned": 1.0, "fraction": 0.333},
+        "covered": {"onb.fca_statement": {"how": "keyword", "evidence": "fca"}},
+        "missing": ["onb.dpa_dob", "ie.income"],
+        "check_info": {
+            "onb.fca_statement": {"label": "FCA regulated statement",
+                                  "section": "Onboarding"},
+            "onb.dpa_dob": {"label": "Date of birth confirmed",
+                            "section": "Onboarding"},
+            "ie.income": {"label": "All income sources confirmed",
+                          "section": "Income & Expenditure"}},
+    }
+
+
+def _summary_text(card):
+    return " | ".join(
+        l.text() for l in card.findChildren(main.QLabel) if l.text())
+
+
+def test_the_summary_names_checks_the_way_the_checklist_does():
+    _app()
+    card = main.SummaryScreen()
+    msg = _summary_msg()
+    info = msg["check_info"]
+    covered = [{"label": info[i]["label"], "section": info[i]["section"]}
+               for i in msg["covered"]]
+    missed = [{"label": info[i]["label"], "section": info[i]["section"]}
+              for i in msg["missing"]]
+    card.show_summary(0.333, covered, missed, 132)
+
+    text = _summary_text(card)
+    assert "Date of birth confirmed" in text
+    assert "All income sources confirmed" in text
+    for raw in ("onb.dpa_dob", "ie.income", "onb.fca_statement"):
+        assert raw not in text, f"the advisor was shown the raw id {raw}"
+
+
+def test_the_missed_list_is_grouped_by_stage():
+    """A call that ends early misses every later stage. Without the headings a
+    flat run of fifty reds reads as a catastrophe rather than as a short call.
+    """
+    _app()
+    card = main.SummaryScreen()
+    info = _summary_msg()["check_info"]
+    missed = [{"label": info["onb.dpa_dob"]["label"], "section": "Onboarding"},
+              {"label": info["ie.income"]["label"],
+               "section": "Income & Expenditure"}]
+    card.show_summary(0.0, [], missed, 132)
+    text = _summary_text(card)
+    assert "Onboarding" in text and "Income & Expenditure" in text
+
+
+def test_the_old_matcher_summary_still_reads_properly():
+    """No check_info from the old server: plain labels, no stage headings."""
+    _app()
+    card = main.SummaryScreen()
+    card.show_summary(0.5, ["Greeting given"], ["Fee disclosure"], 60)
+    text = _summary_text(card)
+    assert "Greeting given" in text and "Fee disclosure" in text

@@ -451,8 +451,10 @@ def test_summary_card_saved_only_hides_compliance():
     card = main.SummaryScreen()
     card.show_saved_only(65)
     assert card._score.text() == "✓"
-    assert card._covered_lbl.text() == ""
-    assert card._missed_lbl.text() == ""
+    # The two comma-joined labels became a list of checklist rows in 2.9.23;
+    # "no compliance lists" now means the list is empty, not that two labels
+    # are blank.
+    assert card._rows.count() == 0, "no checklist on a recording-only call"
     assert "01:05" in card._duration.text()
 
 

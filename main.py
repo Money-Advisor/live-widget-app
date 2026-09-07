@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.22"
+APP_VERSION = "2.9.23"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -3232,17 +3232,20 @@ class SummaryScreen(QFrame):
             f"font-size:12px; font-family:{FF}; color:#8888A8;")
         lay.addWidget(self._duration)
 
-        self._covered_lbl = QLabel("")
-        self._covered_lbl.setWordWrap(True)
-        self._covered_lbl.setStyleSheet(
-            f"font-size:12px; font-family:{FF}; color:#16A34A;")
-        lay.addWidget(self._covered_lbl)
-
-        self._missed_lbl = QLabel("")
-        self._missed_lbl.setWordWrap(True)
-        self._missed_lbl.setStyleSheet(
-            f"font-size:12px; font-family:{FF}; color:#DC2626;")
-        lay.addWidget(self._missed_lbl)
+        # The list used to be two comma-joined runs of raw check ids. Now it is
+        # the same bullets the advisor read during the call, in a scroller -
+        # a finished call can carry sixty of them and the card is 340px wide.
+        self._list = _PanelScroll()
+        self._list.setMaximumHeight(300)
+        self._list_inner = QWidget()
+        self._list_inner.setObjectName("summaryList")
+        self._list_inner.setStyleSheet(
+            "QWidget#summaryList { background:transparent; }")
+        self._rows = QVBoxLayout(self._list_inner)
+        self._rows.setContentsMargins(0, 0, 6, 0)
+        self._rows.setSpacing(4)
+        self._list.setWidget(self._list_inner)
+        lay.addWidget(self._list)
 
         self._saved_lbl = QLabel("Saving recording…")
         self._saved_lbl.setStyleSheet(
@@ -3278,11 +3281,89 @@ class SummaryScreen(QFrame):
         m, s = divmod(int(duration_seconds or 0), 60)
         self._duration.setText(f"Duration  {m:02d}:{s:02d}")
 
-        self._covered_lbl.setText(
-            "✓ Covered: " + (", ".join(covered) if covered else "none"))
-        self._missed_lbl.setText(
-            "✗ Missed: " + (", ".join(missed) if missed else "none"))
+        self._fill(covered, missed)
         self._saved_lbl.setText("Saving recording…")
+
+    # ---------------------------------------------------------------- rows --
+    @staticmethod
+    def _row_text(item):
+        """Accepts a plain label (old matcher) or {label, section} (rulebook)."""
+        if isinstance(item, dict):
+            return item.get("label") or "", item.get("section") or ""
+        return str(item), ""
+
+    def _clear_rows(self):
+        while self._rows.count():
+            it = self._rows.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.deleteLater()
+
+    def _caption(self, text, colour):
+        lab = QLabel(text)
+        lab.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:9px;"
+            f" font-weight:800; color:{colour}; letter-spacing:1.1px;")
+        lab.setContentsMargins(0, 7, 0, 2)
+        return lab
+
+    def _bullet(self, text, done):
+        """One check, drawn the way the live panel draws it."""
+        row = QWidget()
+        line = QHBoxLayout(row)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(8)
+        line.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        mark = QLabel("\u2713" if done else "")
+        mark.setFixedSize(14, 14)
+        mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        mark.setStyleSheet(
+            f"background:#16A34A; color:#FFFFFF; border-radius:7px;"
+            f" font-family:{FF}; font-size:9px; font-weight:800;" if done else
+            "background:transparent; border:1.5px solid #F0B4B4;"
+            " border-radius:7px;")
+        line.addWidget(mark, 0, Qt.AlignmentFlag.AlignTop)
+        line.addWidget(wrapped_label(
+            text,
+            f"background:transparent; font-family:{FF}; font-size:11.5px;"
+            f" font-weight:{'600' if done else '500'};"
+            f" color:{'#3B3B54' if done else '#8A5555'};"), 1)
+        return row
+
+    def _fill(self, covered, missed):
+        """Covered first, then what was missed, grouped by the stage it sits in.
+
+        Grouping is not decoration. A call that ends during Onboarding misses
+        every later stage, so a flat list of fifty reds reads as a catastrophe
+        when what actually happened is that the call ended early - the stage
+        headings are what make that legible.
+        """
+        self._clear_rows()
+
+        if covered:
+            self._rows.addWidget(
+                self._caption(f"COVERED  \u00b7  {len(covered)}", "#16A34A"))
+            for item in covered:
+                label, _sec = self._row_text(item)
+                self._rows.addWidget(self._bullet(label, True))
+
+        if missed:
+            self._rows.addWidget(
+                self._caption(f"MISSED  \u00b7  {len(missed)}", "#DC2626"))
+            # Stage order is the order the server sent them in, which is call
+            # order - do not sort, or the summary stops matching the panel.
+            current = None
+            for item in missed:
+                label, section = self._row_text(item)
+                if section and section != current:
+                    current = section
+                    self._rows.addWidget(self._caption(section, "#A2A2BC"))
+                self._rows.addWidget(self._bullet(label, False))
+
+        if not covered and not missed:
+            self._rows.addWidget(self._bullet("Nothing to report", True))
+        self._list_inner.adjustSize()
 
     def show_saved_only(self, duration_seconds: int):
         """Recording-only confirmation — no compliance score (pipeline is off)."""
@@ -3291,8 +3372,7 @@ class SummaryScreen(QFrame):
         self._score.setText("✓")
         m, s = divmod(int(duration_seconds or 0), 60)
         self._duration.setText(f"Duration  {m:02d}:{s:02d}")
-        self._covered_lbl.setText("")
-        self._missed_lbl.setText("")
+        self._clear_rows()
         self._saved_lbl.setText("Saving recording…")
 
     def mark_saved(self):
@@ -5261,6 +5341,26 @@ class MainWindow(QMainWindow):
         self._settings_card.setVisible(False)
         self._summary_card.setVisible(True)
 
+    def _name_check(self, check_id, msg):
+        """A check id turned into something a person can read.
+
+        Three sources, in order. `check_info` is the rulebook server telling us
+        the label and the stage outright - it has to, because the widget's own
+        id -> label map is built from the backend's `criteria` config, which is
+        the OLD matcher's list and holds none of the rulebook's ids. Every one
+        of them fell through to the id, and the advisor's summary read
+        "onb.dpa_dob, cc.aryza_loaded, ff.duration".
+
+        The map still serves the old matcher, and the raw id is the last resort
+        - ugly, but better than dropping a missed requirement off the list.
+        """
+        info = (msg.get("check_info") or {}).get(check_id)
+        if info:
+            return {"label": info.get("label") or check_id,
+                    "section": info.get("section") or ""}
+        known = self._all_criteria_labels.get(check_id)
+        return {"label": known or check_id, "section": ""}
+
     def _show_server_summary(self, msg: dict):
         self._server_summary_shown = True  # authoritative — wins over local
         # Feed the idle panel's THIS SHIFT tiles. Session-only, and the score is
@@ -5290,8 +5390,8 @@ class MainWindow(QMainWindow):
         covered = list(msg.get("covered") or [])
         missed = list(msg.get("missing") or [])
         duration = int(msg.get("duration_seconds", self._elapsed) or 0)
-        covered = [self._all_criteria_labels.get(x, x) for x in covered]
-        missed = [self._all_criteria_labels.get(x, x) for x in missed]
+        covered = [self._name_check(x, msg) for x in covered]
+        missed = [self._name_check(x, msg) for x in missed]
         self._summary_card.show_summary(score, covered, missed, duration)
         self._front_card.setVisible(False)
         self._settings_card.setVisible(False)

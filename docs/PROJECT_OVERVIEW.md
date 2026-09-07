@@ -74,13 +74,13 @@ always starts signed out.
 
 | | |
 | --- | --- |
-| Version | **2.9.22** |
+| Version | **2.9.23** |
 | Platform | Windows only — `pyaudiowpatch` is required for WASAPI loopback |
 | Distribution | `SparkFlowSetup.exe`, built with PyInstaller and Inno Setup, published as a GitHub release |
 | Build type | A **folder** build, not one-file (see [ARCHITECTURE.md](ARCHITECTURE.md#a-folder-build-not-one-file)) |
 | Server | Points at 192.168.80.53 by default, with a one-time migration off the retired 192.168.80.52 |
 | Live AI | On for SFM only, in a silent trial - scored and shown on the panel, never interrupting |
-| Tests | 299 passing, plus 21 smoke checks |
+| Tests | 302 passing, plus 21 smoke checks |
 | Logs | `%LOCALAPPDATA%\Spark Flow\logs\widget.log` |
 
 ## Recent history worth knowing
@@ -93,12 +93,13 @@ about making failures visible; 2.9.15 onward is the live compliance panel:
 - **2.9.12** reports its own build to the server, so the dashboard can show who is out of date. Anything older shows blank, which is itself the signal.
 - **2.9.13** made the manual Log Out sticky too — it was only wired to expired and revoked sessions.
 - **2.9.14** stopped the customer channel losing time, which had left the agent sounding late relative to the customer.
-- **2.9.15 - 2.9.22, the live compliance panel.** Shipped together and only worth reading as one change. The panel is on screen for the whole of a call and between calls: a stage bar showing where the call has got to, the current stage opened out with every requirement ticked or outstanding, and the advisor's own words underneath each tick. A check made of several parts opens on a dropdown to show which parts are proved and which are still to ask.
+- **2.9.15 - 2.9.23, the live compliance panel.** Shipped together and only worth reading as one change. The panel is on screen for the whole of a call and between calls: a stage bar showing where the call has got to, the current stage opened out with every requirement ticked or outstanding, and the advisor's own words underneath each tick. A check made of several parts opens on a dropdown to show which parts are proved and which are still to ask.
   - **2.9.17** kept the panel on screen instead of hiding it whenever nothing was wrong, which read as the feature being broken.
   - **2.9.19** fixed rows that rendered blank, and an alert that named the wrong stage.
   - **2.9.20** added the per-check dropdown.
   - **2.9.21** made the checklist legible. Every outstanding check had been given the full red card with its own guidance, which on a 340px panel ran into itself; now exactly one item is marked due and the rest are quiet rows under a caption.
   - **2.9.22** fixed a crash that had been killing the widget after every scored call, and stopped the panel being squashed. The crash: the rulebook server sends the score as a breakdown dict, the widget did `float()` on it, and PyQt6 answers an unhandled exception in a slot by aborting the process - so the widget vanished a second after the summary appeared, leaving no traceback. The squashing: the window only ever resized sideways, so the panel took whatever height the call card left it and every row was squeezed below its natural size. The panel scrolls now, and the window grows to fit up to the screen edge.
+  - **2.9.23** made the end-of-call summary readable. It listed raw check ids at the advisor - "onb.dpa_dob, cc.aryza_loaded, ff.duration" - because the widget's id -> label map is built from the backend's `criteria` config, which is the old matcher's list and holds none of the rulebook's ids. The server now sends the label and the stage with the verdict (the same reasoning as migration 017 storing the label on the row), and the summary draws the same bullets the advisor read during the call, with the misses grouped under their stage.
 
 ## Owners and contacts
 
