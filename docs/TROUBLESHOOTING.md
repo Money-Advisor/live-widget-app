@@ -3,6 +3,27 @@
 > **Spark Flow** · `live-widget-app` · Owner: Faseeh Iqbal · Last reviewed: 2026-08-27
 > System-wide troubleshooting: [live-widget-api/docs/TROUBLESHOOTING.md](https://github.com/Money-Advisor/live-widget-api/blob/main/docs/TROUBLESHOOTING.md)
 
+## The widget disappears a few seconds after a call ends
+
+Look in `%LOCALAPPDATA%\Spark Flow\logs\widget.log` for a
+`===== Spark Flow x.y.z starting =====` line sitting directly underneath a
+`session_summary received` line. That pairing is the signature: the widget did
+not close, it was **aborted**, and the tray relaunch is what wrote the next
+starting line.
+
+The cause is always the same shape - an unhandled Python exception inside a Qt
+slot. PyQt6 responds to that by calling `qFatal()`, which aborts the process
+without unwinding, so **there is no traceback in the log**. Do not go looking
+for one; look instead at the last message the widget handled before the restart
+and at what changed on the server side of it.
+
+The instance this was found on: the rulebook server started sending `score` as
+`{"covered": 1, "total": 59, "earned": 1.0, "fraction": 0.0169}` where the old
+matcher sent a bare float, and `float(dict)` raises TypeError. Fixed in 2.9.22
+by `score_fraction()`, which accepts either shape and returns None rather than
+raising on anything it does not recognise. Any new field the server sends the
+widget should be read the same defensive way.
+
 ## Ask for the log file first
 
 ```

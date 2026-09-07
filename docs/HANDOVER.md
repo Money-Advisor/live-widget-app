@@ -6,7 +6,7 @@
 
 ## Current state
 
-**Version 2.9.21**, in production on agents' machines across Drafters, SFM Advisors
+**Version 2.9.22**, in production on agents' machines across Drafters, SFM Advisors
 and Lead Generation.
 
 | | |
@@ -16,13 +16,13 @@ and Lead Generation.
 | Build | PyInstaller **folder** build, not one-file |
 | Default servers | `http://192.168.80.53:8080` and `ws://192.168.80.53:8765`, with a one-time migration off the retired `192.168.80.52` |
 | Live AI | On for SFM only, in a silent trial - the server scores the call and the panel shows it, but nothing interrupts the advisor |
-| Tests | 294 passing, plus 21 smoke checks |
+| Tests | 299 passing, plus 21 smoke checks |
 | Code | One file, `main.py`, about 4,600 lines |
 | Signed | **No.** SmartScreen warns on first run. |
 
 ## What was most recently shipped
 
-Versions 2.9.8 through 2.9.21. The earlier ones were driven by the August 2026
+Versions 2.9.8 through 2.9.22. The earlier ones were driven by the August 2026
 server move and by making silent failures visible; everything from 2.9.15 is
 the live compliance panel:
 
@@ -32,11 +32,12 @@ the live compliance panel:
 - **2.9.12** reports its own build on the control connection, which is what makes the dashboard's widget-version column and "update needed" badge possible.
 - **2.9.13** made the manual Log Out sticky too. It had only been wired to expired and revoked sessions, so an agent could minimise it away and carry on while nothing recorded.
 - **2.9.14** stopped the customer channel losing time, which had left the agent sounding late relative to the customer.
-- **2.9.15 - 2.9.21, the live compliance panel.** Shipped together and only worth reading as one change. The panel is on screen for the whole of a call and between calls: a stage bar showing where the call has got to, the current stage opened out with every requirement ticked or outstanding, and the advisor's own words underneath each tick. A check made of several parts opens on a dropdown to show which parts are proved and which are still to ask.
+- **2.9.15 - 2.9.22, the live compliance panel.** Shipped together and only worth reading as one change. The panel is on screen for the whole of a call and between calls: a stage bar showing where the call has got to, the current stage opened out with every requirement ticked or outstanding, and the advisor's own words underneath each tick. A check made of several parts opens on a dropdown to show which parts are proved and which are still to ask.
   - **2.9.17** kept the panel on screen instead of hiding it whenever nothing was wrong, which read as the feature being broken.
   - **2.9.19** fixed rows that rendered blank, and an alert that named the wrong stage.
   - **2.9.20** added the per-check dropdown.
   - **2.9.21** made the checklist legible. Every outstanding check had been given the full red card with its own guidance, which on a 340px panel ran into itself; now exactly one item is marked due and the rest are quiet rows under a caption.
+  - **2.9.22** fixed a crash that had been killing the widget after every scored call, and stopped the panel being squashed. The crash: the rulebook server sends the score as a breakdown dict, the widget did `float()` on it, and PyQt6 answers an unhandled exception in a slot by aborting the process - so the widget vanished a second after the summary appeared, leaving no traceback. The squashing: the window only ever resized sideways, so the panel took whatever height the call card left it and every row was squeezed below its natural size. The panel scrolls now, and the window grows to fit up to the screen edge.
 
 ## Priorities
 

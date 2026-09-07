@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.21"
+APP_VERSION = "2.9.22"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2107,6 +2107,42 @@ class _Marker(QLabel):
             f" font-family:{FF}; font-size:9px; font-weight:800;")
 
 
+def score_fraction(score):
+    """The server's score as a fraction of 1, or None when there isn't one.
+
+    Two recording servers are in the field and they disagree about the shape.
+    The old matcher sends a bare float. The rulebook server sends a breakdown:
+
+        {"covered": 1, "total": 59, "earned": 1.0, "fraction": 0.0169}
+
+    The widget did `float(score)` on whichever arrived. Against the rulebook
+    server that is `float(dict)`, which raises TypeError inside a Qt slot - and
+    PyQt6 answers an unhandled exception in a slot by calling qFatal(), which
+    aborts the process outright. No traceback, because abort() does not unwind.
+
+    That is why the widget vanished a few seconds after every scored call. The
+    log shows it exactly: each "Spark Flow x.y.z starting" line sits directly
+    under a session_summary whose score was a dict, and the two calls whose
+    score was None are the only ones that did not restart.
+    """
+    if score is None:
+        return None
+    if isinstance(score, dict):
+        if score.get("fraction") is not None:
+            score = score["fraction"]
+        elif score.get("total"):
+            score = (score.get("earned") or 0) / score["total"]
+        else:
+            return None
+    try:
+        return max(0.0, min(1.0, float(score)))
+    except (TypeError, ValueError):
+        # Never let an unrecognised shape take the widget down with it - a
+        # missing score is a cosmetic loss, a dead widget is a lost recording.
+        print(f"[widget] unrecognised score shape: {score!r}")
+        return None
+
+
 def wrapped_label(text: str, css: str = "") -> QLabel:
     """One factory for every word-wrapped label in the checklist.
 
@@ -2133,6 +2169,11 @@ def wrapped_label(text: str, css: str = "") -> QLabel:
 class SectionAccordion(QWidget):
     """The stage the call is in, opened out: every requirement, ticked or not.
 
+    Emits `contents_changed` whenever the rows are rebuilt. Now that the panel
+    scrolls, nothing else tells it to grow: opening a check simply scrolled
+    inside the height the panel already had, so the parts appeared only if the
+    advisor thought to scroll for them.
+
     A tick alone is not worth much on a compliance panel - an advisor who does not
     trust it will ignore it. So a covered check carries the advisor's OWN WORDS
     underneath, and an outstanding one carries the thing to say. That is also the
@@ -2142,6 +2183,8 @@ class SectionAccordion(QWidget):
     Hidden entirely unless the server sends `section_checks`, so the old matcher's
     messages leave the panel exactly as it was.
     """
+
+    contents_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2447,6 +2490,8 @@ class SectionAccordion(QWidget):
             if chk.get("id") in self._open:
                 self._rows.addWidget(self._parts_block(chk))
         self.setVisible(True)
+        self.updateGeometry()
+        self.contents_changed.emit()
 
 
 class StageTracker(QWidget):
@@ -2537,6 +2582,48 @@ class StageTracker(QWidget):
         self.setVisible(True)
 
 
+class _PanelScroll(QScrollArea):
+    """The compliance panel's scroller, sized by its contents.
+
+    A plain QScrollArea reports a small fixed sizeHint, which would make the
+    panel a stub. This one asks the content how tall it wants to be and only
+    caps that at `setMaximumHeight`, so the panel is exactly as tall as it needs
+    to be until it would run off the screen - and only then does it scroll.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.viewport().setAutoFillBackground(False)
+        self.setStyleSheet(
+            "QScrollArea { background:transparent; border:none; }"
+            "QScrollBar:vertical { background:transparent; width:8px;"
+            " margin:6px 2px 6px 0; }"
+            "QScrollBar::handle:vertical { background:#DCDCE8; border-radius:4px;"
+            " min-height:28px; }"
+            "QScrollBar::handle:vertical:hover { background:#B9B2E8; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical"
+            " { height:0; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical"
+            " { background:transparent; }")
+
+    def sizeHint(self):
+        w = self.widget()
+        if w is None:
+            return super().sizeHint()
+        h = w.sizeHint().height()
+        cap = self.maximumHeight()
+        return QSize(w.sizeHint().width(), min(h, cap) if cap > 0 else h)
+
+    def minimumSizeHint(self):
+        # Deliberately small: the panel must be allowed to scroll rather than
+        # force the window taller than the screen.
+        return QSize(0, 0)
+
+
 class ComplianceAlertPanel(QFrame):
     """Live compliance checklist. update_missing() must be called on the UI thread."""
 
@@ -2556,7 +2643,24 @@ class ComplianceAlertPanel(QFrame):
         # onto three lines and the panel grew taller than the call card beside it.
         self.setFixedWidth(340)   # own floating column beside the call card
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
-        self._lay = QVBoxLayout(self)
+
+        # Everything lives inside a scroll area. A fourteen-check stage is taller
+        # than a laptop screen, and without this the layout answers by squeezing
+        # every row below its natural height: the due card collapsed to a strip
+        # with the pill sliced in half, labels lost their descenders, and an
+        # opened check showed an empty box. Scrolling is the honest answer -
+        # nothing is ever drawn smaller than it needs to be.
+        shell = QVBoxLayout(self)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
+        self._scroll = _PanelScroll()
+        shell.addWidget(self._scroll)
+        inner = QWidget()
+        inner.setObjectName("panelInner")
+        inner.setStyleSheet("QWidget#panelInner { background:transparent; }")
+        self._scroll.setWidget(inner)
+
+        self._lay = QVBoxLayout(inner)
         self._lay.setContentsMargins(16, 14, 16, 16)
         self._lay.setSpacing(10)
 
@@ -2591,6 +2695,7 @@ class ComplianceAlertPanel(QFrame):
 
         # ── the current stage, opened out (rulebook path only) ──
         self._accordion = SectionAccordion()
+        self._accordion.contents_changed.connect(self._refit)
         self._lay.addWidget(self._accordion)
 
         # ── idle: what the advisor sees between calls ──────────────────────
@@ -2777,8 +2882,9 @@ class ComplianceAlertPanel(QFrame):
     def record_call_result(self, score=None, flags=0):
         """Feed the shift tiles from a finished call."""
         self._shift_calls += 1
-        if score is not None:
-            self._shift_scores.append(float(score))
+        fraction = score_fraction(score)
+        if fraction is not None:
+            self._shift_scores.append(fraction)
         self._shift_flags += int(flags or 0)
 
     def _has_anything_to_show(self):
@@ -2796,6 +2902,26 @@ class ComplianceAlertPanel(QFrame):
                 or self._status_label.isVisible()
                 or self._stage.isVisibleTo(self)
                 or self._accordion.isVisibleTo(self))
+
+    def _refit(self):
+        """Re-measure after the contents changed shape, then re-fit the window.
+
+        The scroll area caches its content's size hint, so without the explicit
+        adjustSize() the panel keeps the height it had and the new rows are only
+        reachable by scrolling - which, for a check the advisor just clicked
+        open, means it looks like nothing happened.
+        """
+        inner = self._scroll.widget()
+        if inner is not None:
+            inner.adjustSize()
+        self._scroll.updateGeometry()
+        self.updateGeometry()
+        QTimer.singleShot(0, self._sync_window)
+
+    def shown_check_ids(self):
+        """Check ids the opened-out stage is already displaying."""
+        return {c.get("id") for c in (self._accordion._checks or [])
+                if c.get("id")} if self._accordion.isVisibleTo(self) else set()
 
     def _clear_items(self):
         while self._items_box.count():
@@ -2947,11 +3073,38 @@ class ComplianceAlertPanel(QFrame):
         win = self.window()
         if win is None or not win.isVisible():
             return
+
+        # How tall the panel may be before it has to scroll. Taken from the
+        # screen the window is actually on, not the primary one - an advisor on
+        # a second monitor was getting the wrong ceiling.
+        scr = win.screen() or QApplication.primaryScreen()
+        avail = scr.availableGeometry().height() if scr is not None else 900
+        self._scroll.setMaximumHeight(max(240, avail - 120))
+        self._scroll.updateGeometry()
+        self.updateGeometry()
+
         old_w = win.width()
         new_w = max(win.sizeHint().width(), win.minimumWidth())
         if new_w != old_w:
             win.move(win.x() - (new_w - old_w), win.y())
             win.resize(new_w, win.height())
+
+        # Height too. This was width-only, so the window stayed as tall as the
+        # call card and the panel beside it was squeezed into whatever was left -
+        # which is what shredded the checklist on a real screen. Clamped to the
+        # screen, and the panel scrolls inside whatever it gets.
+        new_h = max(win.sizeHint().height(), win.minimumHeight())
+        new_h = min(new_h, avail)
+        if new_h != win.height():
+            win.resize(win.width(), new_h)
+            # Keep it on screen: growing downward off the bottom edge hides the
+            # Stop Recording button, which is the one control that must never
+            # be out of reach.
+            bottom = scr.availableGeometry().bottom() if scr is not None else None
+            if bottom is not None and win.y() + new_h > bottom:
+                win.move(win.x(), max(scr.availableGeometry().top(),
+                                      bottom - new_h))
+
         pin = getattr(win, "set_compliance_on_top", None)
         if callable(pin):
             pin(self.isVisible())
@@ -2993,8 +3146,19 @@ class ComplianceAlertPanel(QFrame):
         self._parts.setVisible(True)
 
     def update_missing(self, missing_items: list):
-        """Render missing requirements. Empty list -> hide the panel."""
+        """Render missing requirements. Empty list -> hide the panel.
+
+        Anything the opened-out stage is already showing is dropped here. The
+        two halves of the panel are fed from the same server message, so before
+        this the advisor saw "Date of birth confirmed" as the red due card AND
+        again as a chip with the same prompt at the bottom of the panel - twice
+        the height for one instruction, on the panel with the least room to
+        spare. The chips stay for the old matcher, which sends no stage at all.
+        """
         self._clear_items()
+        already = self.shown_check_ids()
+        missing_items = [i for i in (missing_items or [])
+                         if i.get("id") not in already]
         if not missing_items:
             self._suggestion.setVisible(False)
             self._parts.setVisible(False)
@@ -4948,6 +5112,12 @@ class MainWindow(QMainWindow):
     def _handle_server_message(self, msg: dict):
         mtype = msg.get("type")
         if mtype == "compliance_alert":
+            # The server's last few fragments land after the call has stopped -
+            # the log shows one arriving after session_ended - and each of them
+            # put the live checklist back on screen next to the finished call's
+            # summary. Nothing about a call that has ended is worth acting on.
+            if not self._recording:
+                return
             forbidden = msg.get("forbidden_hits") or []
             if forbidden:
                 # forbidden-only message: show the red breach banner without
@@ -5106,7 +5276,8 @@ class MainWindow(QMainWindow):
         # The server decides and simply omits the numbers; the widget never has to
         # know the rules, and an older build cannot end up showing a score the
         # dashboard does not have. `is None` and not falsiness — 0.0 is a real score.
-        if not self._live_pipeline or msg.get("score") is None:
+        score = score_fraction(msg.get("score"))
+        if not self._live_pipeline or score is None:
             self._summary_card.show_saved_only(
                 int(msg.get("duration_seconds", self._elapsed) or 0))
             self._front_card.setVisible(False)
@@ -5114,9 +5285,10 @@ class MainWindow(QMainWindow):
             self._summary_card.setVisible(True)
             return
         print("[widget] showing SERVER summary (authoritative)")
-        score = float(msg.get("score", 0.0) or 0.0)
-        covered = msg.get("covered", []) or []
-        missed = msg.get("missing", []) or []
+        # The rulebook server sends `covered` as {id: {how, evidence}} and the
+        # old matcher as a plain list. Iterating either yields the ids.
+        covered = list(msg.get("covered") or [])
+        missed = list(msg.get("missing") or [])
         duration = int(msg.get("duration_seconds", self._elapsed) or 0)
         covered = [self._all_criteria_labels.get(x, x) for x in covered]
         missed = [self._all_criteria_labels.get(x, x) for x in missed]

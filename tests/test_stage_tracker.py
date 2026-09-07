@@ -12,6 +12,8 @@ not, so the panel tells an advisor "explain the other person stays liable", neve
 """
 import os
 
+import pytest
+
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 from PyQt6.QtWidgets import QApplication
@@ -315,3 +317,94 @@ def test_the_dropdown_says_how_many_parts_are_proved():
     panel._accordion._open.add(chk["id"])
     assert "\u25be" in panel._accordion._caret(chk).text(), \
         "open shows a down-pointing arrow"
+
+
+# ── the score shape that aborted the process ──────────────────────────────
+# The rulebook server sends a breakdown, the old matcher a bare float. float()
+# on the breakdown raises inside a Qt slot, and PyQt6 answers that with
+# qFatal() - the widget disappeared a second after every scored call, with no
+# traceback, because abort() does not unwind.
+
+RULEBOOK_SCORE = {"covered": 1, "total": 59, "earned": 1.0, "fraction": 0.0169}
+
+
+def test_the_rulebook_score_shape_does_not_kill_the_widget():
+    assert main.score_fraction(RULEBOOK_SCORE) == pytest.approx(0.0169)
+    assert main.score_fraction(0.42) == pytest.approx(0.42)   # the old matcher
+    assert main.score_fraction(None) is None
+    # earned/total when the server omits the fraction
+    assert main.score_fraction({"earned": 3.0, "total": 6}) == pytest.approx(0.5)
+    # anything unrecognised is a missing score, never an exception
+    assert main.score_fraction("nonsense") is None
+    assert main.score_fraction({"nothing": "useful"}) is None
+
+
+def test_the_shift_tiles_survive_a_rulebook_score():
+    """record_call_result ran float(score) on the way to the THIS SHIFT tiles."""
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.record_call_result(score=RULEBOOK_SCORE, flags=3)
+    panel.show_idle()
+    assert panel._shift["calls"].text() == "1"
+    assert panel._shift["average"].text() == "2%", panel._shift["average"].text()
+    assert panel._shift["flags"].text() == "3"
+
+
+# ── the panel was being squeezed, not scrolled ────────────────────────────
+
+def test_a_short_window_scrolls_the_panel_instead_of_crushing_it():
+    """The window only ever grew sideways, so the panel took whatever height
+    the call card left it and the layout squeezed every row to fit: the due
+    card collapsed to a strip with its pill sliced in half, labels lost their
+    descenders, and an opened check drew an empty box.
+    """
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.update_stage("IE", _sections(4), _long_stage())
+    panel.adjustSize()
+    panel.layout().activate()
+
+    def due_card():
+        for w in panel.findChildren(main.QFrame):
+            if w.objectName() == "dueCard":
+                return w
+        raise AssertionError("no due card on the panel")
+
+    natural = due_card().sizeHint().height()
+    assert natural > 60, "the due card is a card, not a strip"
+
+    # Squeeze the panel into a third of what the stage needs - which is what a
+    # window sized for the call card beside it actually did.
+    panel.resize(340, max(150, natural))
+    panel.layout().activate()
+    QApplication.processEvents()
+
+    got = due_card().height()
+    assert got >= natural, (
+        f"the due card was crushed to {got}px; it needs {natural}px. "
+        "Squeezing rows is what sliced the SAY THIS NOW pill in half.")
+
+
+# ── the same check was on the panel twice ─────────────────────────────────
+
+def test_a_check_shown_in_the_stage_is_not_repeated_as_a_chip():
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.update_stage("IE", _sections(4), _long_stage())
+    panel.update_missing([{"id": "ie.income", "label": "All income sources",
+                           "level": "red", "suggestion_text": "Ask about income."}])
+    assert panel._items_box.count() == 0, "the due card already says this"
+    assert panel._suggestion.isVisibleTo(panel) is False
+
+
+def test_a_check_the_stage_does_not_show_still_gets_a_chip():
+    """The old matcher sends no stage at all, so the chips must still work."""
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.update_stage(None, None, None)
+    panel.update_missing([{"id": "onb.fca_statement", "label": "FCA statement",
+                           "level": "red", "suggestion_text": "Say the full name."}])
+    assert panel._items_box.count() == 1
