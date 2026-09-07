@@ -3,6 +3,24 @@
 > **Spark Flow** · `live-widget-app` · Owner: Faseeh Iqbal · Last reviewed: 2026-08-27
 > System-wide troubleshooting: [live-widget-api/docs/TROUBLESHOOTING.md](https://github.com/Money-Advisor/live-widget-api/blob/main/docs/TROUBLESHOOTING.md)
 
+## A cleared row is still on screen
+
+Taking an item out of a **layout** does not detach the widget from its
+**parent**, so a row removed with `layout.takeAt()` keeps painting at its last
+position until `deleteLater()` is serviced. Call `hide()` before
+`deleteLater()`.
+
+Do **not** reach for `setParent(None)` instead. It fixes the painting, but it
+hands ownership to Python while Qt still has the widget queued for deletion,
+and the widget suite's rare teardown access violation went from a 1-in-8
+background rate to 3 runs in 8 with it in. `hide()` leaves ownership alone.
+
+Related, and still open: that background access violation at test teardown
+pre-dates all of this - it reproduces on the suite with none of the 2.9.24
+changes present. It has never been seen in the field, only at interpreter exit
+under pytest, so it has not been chased down. If you are hunting a widget
+crash, do not assume this is it.
+
 ## The widget disappears a few seconds after a call ends
 
 Look in `%LOCALAPPDATA%\Spark Flow\logs\widget.log` for a

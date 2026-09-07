@@ -928,3 +928,113 @@ def test_an_old_server_that_omits_the_flag_still_scores(monkeypatch):
     w._show_server_summary({"score": 0.5, "covered": [], "missing": [],
                             "duration_seconds": 10})
     assert "summary" in seen
+
+
+# ── the guessed summary that flashed 100% ─────────────────────────────────
+# At hang-up the widget filled the two seconds before the server answered with
+# a summary of its own, computed from `_all_criteria_labels` - the OLD
+# matcher's criteria list. On a rulebook call none of the check ids are in that
+# list, so nothing counted as missing, everything counted as covered, and every
+# single call flashed a green 100% before the real score replaced it.
+
+def _card_text(card):
+    """What the summary card is actually showing.
+
+    isVisibleTo, not findChildren alone: a cleared row is hidden and queued for
+    deletion, so it is still a child for a moment. Reading every QLabel would
+    show text the advisor cannot see - and would have let a stale "WORKING OUT
+    YOUR SCORE" pass unnoticed underneath the finished summary.
+    """
+    return " ".join(l.text() for l in card.findChildren(main.QLabel)
+                    if l.isVisibleTo(card))
+
+
+def _rulebook_alert():
+    return {"type": "compliance_alert", "missing_items": [],
+            "stage": "INTRODUCTION",
+            "sections": [{"key": "INTRODUCTION", "label": "Onboarding",
+                          "done": 0, "total": 10, "current": True}],
+            "section_checks": [{"id": "onb.dpa_dob", "label": "Date of birth confirmed",
+                                "done": False, "severity": "critical",
+                                "evidence": None, "prompt": None,
+                                "missing_parts": [], "parts": []}]}
+
+
+def _stopped_on_a_rulebook_call(app, monkeypatch):
+    w = _win(app)
+    w._live_pipeline = True
+    w._recording = True
+    # The widget only knows it is a rulebook call because the server said so.
+    w._all_criteria_labels = {"old.greeting": "Greeting", "old.fees": "Fees"}
+    w._handle_server_message(_rulebook_alert())
+    monkeypatch.setattr(w, "_teardown_streams", lambda *a, **k: None,
+                        raising=False)
+    return w
+
+
+def test_a_rulebook_call_waits_instead_of_guessing_100_percent(monkeypatch):
+    """Go through _stop_recording, not straight to the card.
+
+    Written the lazy way first - calling _show_pending_summary() directly - it
+    passed with the routing deliberately disabled, because the thing under test
+    IS the routing: which of the three summaries a hang-up chooses.
+    """
+    app = QApplication.instance() or QApplication([])
+    w = _stopped_on_a_rulebook_call(app, monkeypatch)
+    assert w._rulebook_call is True, "the server sent stage + section_checks"
+
+    w._stop_recording()
+
+    text = _card_text(w._summary_card)
+    assert "100%" not in text, "the widget invented a score it cannot know"
+    assert "WORKING OUT YOUR SCORE" in text
+    w._stop_summary_wait()
+
+
+def test_the_old_matcher_still_gets_its_instant_summary(monkeypatch):
+    """It holds the same criteria list the old server scores against, so its
+    provisional summary is genuinely right - do not take that away."""
+    app = QApplication.instance() or QApplication([])
+    w = _win(app)
+    w._live_pipeline = True
+    w._all_criteria_labels = {"old.greeting": "Greeting", "old.fees": "Fees"}
+    w._missing_ids = {"old.fees"}
+    w._rulebook_call = False
+    w._show_local_summary(60)
+    text = _card_text(w._summary_card)
+    assert "Greeting" in text and "Fees" in text
+    assert "50%" in text
+
+
+def test_the_real_summary_replaces_the_waiting_card(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    w = _stopped_on_a_rulebook_call(app, monkeypatch)
+    w._stop_recording()
+    w._handle_server_message({
+        "type": "session_summary", "duration_seconds": 103,
+        "recording_saved": True, "scoring_enabled": True,
+        "score": {"covered": 1, "total": 2, "earned": 1.0, "fraction": 0.5},
+        "covered": {"onb.fca_statement": {"how": "keyword", "evidence": "fca"}},
+        "missing": ["onb.dpa_dob"],
+        "check_info": {
+            "onb.fca_statement": {"label": "FCA regulated statement",
+                                  "section": "Onboarding"},
+            "onb.dpa_dob": {"label": "Date of birth confirmed",
+                            "section": "Onboarding"}}})
+    text = _card_text(w._summary_card)
+    assert "50%" in text
+    assert "Date of birth confirmed" in text
+    assert "WORKING OUT YOUR SCORE" not in text
+    assert w._summary_wait is None, "the backstop timer must be cancelled"
+
+
+def test_a_summary_that_never_arrives_falls_back_to_saved(monkeypatch):
+    """The card must not sit on "working out your score" for the rest of the
+    shift because a socket dropped. The audio is on disk either way."""
+    app = QApplication.instance() or QApplication([])
+    w = _stopped_on_a_rulebook_call(app, monkeypatch)
+    w._stop_recording()
+    w._summary_never_came(103)          # what the backstop timer fires
+    text = _card_text(w._summary_card)
+    assert "WORKING OUT YOUR SCORE" not in text
+    assert "\u2713" in text or "Duration" in text

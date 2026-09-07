@@ -10,7 +10,7 @@
 ; (run from the repo root, AFTER `python build_all.py` has produced dist\SparkFlow.exe)
 
 #define AppName "Spark Flow"
-#define AppVersion "2.9.23"
+#define AppVersion "2.9.24"
 #define AppPublisher "Spark Flow"
 #define AppExe "SparkFlow.exe"
 

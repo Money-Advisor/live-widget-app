@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.23"
+APP_VERSION = "2.9.24"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2235,6 +2235,18 @@ class SectionAccordion(QWidget):
             it = self._rows.takeAt(0)
             w = it.widget()
             if w is not None:
+                # hide() then deleteLater(). Taking an item out of a LAYOUT
+                # does not detach the widget from its PARENT, so without the
+                # hide() the old row keeps painting at its last position
+                # until the event loop destroys it - a test caught the
+                # finished summary card still showing "WORKING OUT YOUR
+                # SCORE". setParent(None) also fixes that, but it hands
+                # ownership to Python while Qt still has the widget queued,
+                # and the suite's rare teardown access violation got
+                # measurably worse with it (3 runs in 8, against a 1-in-8
+                # background rate). hide() leaves ownership exactly where it
+                # was.
+                w.hide()
                 w.deleteLater()
 
     # ---------------------------------------------------------------- marks --
@@ -2542,6 +2554,18 @@ class StageTracker(QWidget):
             it = self._bar.takeAt(0)
             w = it.widget()
             if w is not None:
+                # hide() then deleteLater(). Taking an item out of a LAYOUT
+                # does not detach the widget from its PARENT, so without the
+                # hide() the old row keeps painting at its last position
+                # until the event loop destroys it - a test caught the
+                # finished summary card still showing "WORKING OUT YOUR
+                # SCORE". setParent(None) also fixes that, but it hands
+                # ownership to Python while Qt still has the widget queued,
+                # and the suite's rare teardown access violation got
+                # measurably worse with it (3 runs in 8, against a 1-in-8
+                # background rate). hide() leaves ownership exactly where it
+                # was.
+                w.hide()
                 w.deleteLater()
 
     def update_stage(self, stage: str, sections: list):
@@ -2928,6 +2952,18 @@ class ComplianceAlertPanel(QFrame):
             it = self._items_box.takeAt(0)
             w = it.widget()
             if w is not None:
+                # hide() then deleteLater(). Taking an item out of a LAYOUT
+                # does not detach the widget from its PARENT, so without the
+                # hide() the old row keeps painting at its last position
+                # until the event loop destroys it - a test caught the
+                # finished summary card still showing "WORKING OUT YOUR
+                # SCORE". setParent(None) also fixes that, but it hands
+                # ownership to Python while Qt still has the widget queued,
+                # and the suite's rare teardown access violation got
+                # measurably worse with it (3 runs in 8, against a 1-in-8
+                # background rate). hide() leaves ownership exactly where it
+                # was.
+                w.hide()
                 w.deleteLater()
 
     def _forbidden_banner(self, item: dict) -> QFrame:
@@ -2970,6 +3006,18 @@ class ComplianceAlertPanel(QFrame):
             it = self._forbidden_box.takeAt(0)
             w = it.widget()
             if w is not None:
+                # hide() then deleteLater(). Taking an item out of a LAYOUT
+                # does not detach the widget from its PARENT, so without the
+                # hide() the old row keeps painting at its last position
+                # until the event loop destroys it - a test caught the
+                # finished summary card still showing "WORKING OUT YOUR
+                # SCORE". setParent(None) also fixes that, but it hands
+                # ownership to Python while Qt still has the widget queued,
+                # and the suite's rare teardown access violation got
+                # measurably worse with it (3 runs in 8, against a 1-in-8
+                # background rate). hide() leaves ownership exactly where it
+                # was.
+                w.hide()
                 w.deleteLater()
 
     def _cue_banner(self, item: dict) -> QFrame:
@@ -3015,6 +3063,18 @@ class ComplianceAlertPanel(QFrame):
             it = self._cue_box.takeAt(0)
             w = it.widget()
             if w is not None:
+                # hide() then deleteLater(). Taking an item out of a LAYOUT
+                # does not detach the widget from its PARENT, so without the
+                # hide() the old row keeps painting at its last position
+                # until the event loop destroys it - a test caught the
+                # finished summary card still showing "WORKING OUT YOUR
+                # SCORE". setParent(None) also fixes that, but it hands
+                # ownership to Python while Qt still has the widget queued,
+                # and the suite's rare teardown access violation got
+                # measurably worse with it (3 runs in 8, against a 1-in-8
+                # background rate). hide() leaves ownership exactly where it
+                # was.
+                w.hide()
                 w.deleteLater()
 
     def set_transcription_status(self, state: str):
@@ -3297,6 +3357,18 @@ class SummaryScreen(QFrame):
             it = self._rows.takeAt(0)
             w = it.widget()
             if w is not None:
+                # hide() then deleteLater(). Taking an item out of a LAYOUT
+                # does not detach the widget from its PARENT, so without the
+                # hide() the old row keeps painting at its last position
+                # until the event loop destroys it - a test caught the
+                # finished summary card still showing "WORKING OUT YOUR
+                # SCORE". setParent(None) also fixes that, but it hands
+                # ownership to Python while Qt still has the widget queued,
+                # and the suite's rare teardown access violation got
+                # measurably worse with it (3 runs in 8, against a 1-in-8
+                # background rate). hide() leaves ownership exactly where it
+                # was.
+                w.hide()
                 w.deleteLater()
 
     def _caption(self, text, colour):
@@ -3364,6 +3436,25 @@ class SummaryScreen(QFrame):
         if not covered and not missed:
             self._rows.addWidget(self._bullet("Nothing to report", True))
         self._list_inner.adjustSize()
+
+    def show_pending(self, duration_seconds: int):
+        """Between hang-up and the server's verdict, roughly two seconds.
+
+        The widget used to fill that gap with a summary of its own, computed
+        from `_all_criteria_labels` - the OLD matcher's criteria list. On a
+        rulebook call none of the check ids appear in that list, so nothing
+        counted as missing and every call flashed a green 100% before the real
+        score replaced it. Saying "working it out" is both honest and, for two
+        seconds, all the advisor needs.
+        """
+        self._score.setStyleSheet(
+            f"font-size:34px; font-weight:800; font-family:{FF}; color:#C7C7D6;")
+        self._score.setText("\u2026")
+        m, s = divmod(int(duration_seconds or 0), 60)
+        self._duration.setText(f"Duration  {m:02d}:{s:02d}")
+        self._clear_rows()
+        self._rows.addWidget(self._caption("WORKING OUT YOUR SCORE", "#8888A8"))
+        self._saved_lbl.setText("Saving recording\u2026")
 
     def show_saved_only(self, duration_seconds: int):
         """Recording-only confirmation — no compliance score (pipeline is off)."""
@@ -5024,6 +5115,11 @@ class MainWindow(QMainWindow):
         # Reset live compliance state for this call.
         self._missing_ids = set()
         self._server_summary_shown = False  # server summary is authoritative
+        # Set the moment the server sends a rulebook-only field. The widget
+        # cannot summarise a rulebook call by itself - it has the ids but not
+        # the labels - so on those calls it waits rather than guessing.
+        self._rulebook_call = False
+        self._summary_wait = None
         self._compliance_panel.clear_forbidden()
         self._compliance_panel.clear_cues()
         self._compliance_panel.set_transcription_status("recovered")  # hide any stale notice
@@ -5152,7 +5248,12 @@ class MainWindow(QMainWindow):
         # No "Recording stopped" toast — its ding can be caught by the loopback tail.
 
         if was_recording:
-            if self._live_pipeline:
+            if self._live_pipeline and getattr(self, "_rulebook_call", False):
+                # The server owns the verdict on a rulebook call; wait for it.
+                self._show_pending_summary(duration)
+            elif self._live_pipeline:
+                # The old matcher: the widget holds the same criteria list the
+                # server scores against, so its provisional summary is right.
                 self._show_local_summary(duration)
             else:
                 # Recording-only: no compliance to summarise — just confirm the save.
@@ -5213,6 +5314,8 @@ class MainWindow(QMainWindow):
             self._missing_ids = {i.get("id") for i in items if i.get("id")}
             # New rulebook fields. The old matcher sends neither, and the panel
             # hides both when they are absent, so one widget serves both servers.
+            if msg.get("sections") or msg.get("section_checks") or msg.get("stage"):
+                self._rulebook_call = True
             self._compliance_panel.update_stage(
                 msg.get("stage"), msg.get("sections"), msg.get("section_checks"))
             alert = msg.get("alert") or {}
@@ -5323,6 +5426,43 @@ class MainWindow(QMainWindow):
         self._settings_card.setVisible(False)
         self._summary_card.setVisible(True)
 
+    SUMMARY_WAIT_MS = 25_000
+
+    def _show_pending_summary(self, duration: int):
+        """Hold the card until the server's verdict lands.
+
+        With a backstop: if the summary never arrives - the socket dropped on
+        the way, the server fell over - the card must not sit on "working out
+        your score" for the rest of the shift. It falls back to the plain saved
+        confirmation, which is the one thing still known to be true. The audio
+        is written to disk during the call, not at the end.
+        """
+        if getattr(self, "_server_summary_shown", False):
+            return
+        print("[widget] waiting for the server summary")
+        self._summary_card.show_pending(duration)
+        self._front_card.setVisible(False)
+        self._settings_card.setVisible(False)
+        self._summary_card.setVisible(True)
+
+        self._summary_wait = QTimer(self)
+        self._summary_wait.setSingleShot(True)
+        self._summary_wait.timeout.connect(
+            lambda d=duration: self._summary_never_came(d))
+        self._summary_wait.start(self.SUMMARY_WAIT_MS)
+
+    def _summary_never_came(self, duration: int):
+        if getattr(self, "_server_summary_shown", False):
+            return
+        print("[widget] no server summary — falling back to 'recording saved'")
+        self._show_saved_confirmation(duration)
+
+    def _stop_summary_wait(self):
+        t = getattr(self, "_summary_wait", None)
+        if t is not None:
+            t.stop()
+            self._summary_wait = None
+
     def _show_local_summary(self, duration: int):
         """Provisional summary from the last live state. The server sends an
         authoritative session_summary that overrides this; once that arrives,
@@ -5363,6 +5503,7 @@ class MainWindow(QMainWindow):
 
     def _show_server_summary(self, msg: dict):
         self._server_summary_shown = True  # authoritative — wins over local
+        self._stop_summary_wait()
         # Feed the idle panel's THIS SHIFT tiles. Session-only, and the score is
         # recorded only when the server actually sent one — a silent trial sends
         # none, and a made-up average would be worse than a dash.
