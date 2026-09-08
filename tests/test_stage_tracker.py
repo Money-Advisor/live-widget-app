@@ -553,3 +553,59 @@ def test_opening_a_check_glides_rather_than_jumping():
     assert anim.startValue() == start
     assert anim.endValue() > start, "opening a check makes the panel taller"
     anim.stop()
+
+
+def test_a_checklist_that_fits_gets_no_scrollbar():
+    """Reported from a real call: a scrollbar on a ten-row Onboarding panel
+    with most of the screen still free.
+
+    The panel was measured with sizeHint(), and a word-wrapped label's plain
+    sizeHint is one line - so a ten-row stage came out about 15px shorter than
+    it really is, the panel was sized to that, and the content overflowed by
+    exactly that much. The labels advertise heightForWidth now and the panel
+    asks the layout how tall it is AT THE VIEWPORT WIDTH.
+    """
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.show()
+    panel._cap = 1200                       # plenty of room; nothing to scroll
+    panel.update_stage("IE", _sections(0), _long_stage())
+    QApplication.processEvents()
+    panel._retarget(animate=False)
+    QApplication.processEvents()
+
+    inner = panel._scroll.widget()
+    have = panel._scroll.viewport().height()
+    need = inner.height()
+    assert need <= have, (
+        f"content is {need}px in a {have}px viewport - {need - have}px overflows, "
+        "which is the spurious scrollbar")
+
+    # Note: the overflow only reproduces with real font metrics and this suite
+    # runs offscreen, so what this actually pins is the measurement path -
+    # _target_height asking the layout for its height AT A WIDTH rather than
+    # taking its size hint. Checked by reverting that: this test goes red.
+
+
+def test_the_panel_still_cannot_inflate_the_window():
+    """heightForWidth is back on, and it is what broke the panel once before.
+
+    Paired with a 1px minimum width the layout asks "how tall at 1px?" and
+    adopts the answer as a minimum height - 533px became 1406px. The guard is
+    that the panel's height is clamped by _set_panel_height, so re-enabling it
+    cannot reach the window.
+    """
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.show()
+    panel.update_stage("IE", _sections(0), _long_stage())
+    QApplication.processEvents()
+    # After processEvents, not before: _sync_window runs on a queued timer and
+    # (correctly) recomputes the ceiling from the real screen, which would
+    # otherwise overwrite the small one this test is about.
+    panel._cap = 400                        # a deliberately small ceiling
+    panel._retarget(animate=False)
+    assert panel._scroll.maximumHeight() <= 400, \
+        f"the panel ignored its ceiling: {panel._scroll.maximumHeight()}px"

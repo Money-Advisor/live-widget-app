@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.25"
+APP_VERSION = "2.9.26"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2150,12 +2150,22 @@ def wrapped_label(text: str, css: str = "") -> QLabel:
     label collapse to nothing inside a horizontal row, and it is the reason each
     of these is set the same way.
 
-    What this deliberately does NOT do is switch on heightForWidth. It looks like
-    the right answer - QLabel really does compute it - but combined with a small
-    minimum width the layout asks "how tall at 1px wide?", gets an enormous
-    number, and treats that as the panel's minimum height. Measured: the panel
-    went from 533px to 1406px and the stage bar inflated to 338px. Plain wrapping
-    lays out correctly here; leave it alone.
+    On heightForWidth, which this does NOT set explicitly, twice for different
+    reasons:
+
+    * An early version paired it with setMinimumWidth(1). The layout then asked
+      "how tall at 1px wide?", got an enormous number and adopted it as the
+      panel's minimum height - 533px became 1406px and the stage bar inflated
+      to 338px. The 1px minimum was the fault, not the flag.
+    * Setting the flag here is a no-op anyway. A word-wrapped QLabel advertises
+      heightForWidth on its own; the two-argument setSizePolicy below clears it,
+      and the setAlignment call after that makes QLabel re-assert it. Verified
+      both offscreen and against real font metrics: adding the flag explicitly
+      changes nothing at all.
+
+    What the panel actually needed was to ASK for the height at a width -
+    see _target_height. A wrapped label's plain sizeHint is one line, so a
+    ten-row checklist measured ~15px short and got a scrollbar it did not need.
     """
     lab = QLabel(text)
     lab.setWordWrap(True)
@@ -2659,8 +2669,8 @@ class _PanelScroll(QScrollArea):
         self.viewport().setAutoFillBackground(False)
         self.setStyleSheet(
             "QScrollArea { background:transparent; border:none; }"
-            "QScrollBar:vertical { background:transparent; width:8px;"
-            " margin:6px 2px 6px 0; }"
+            "QScrollBar:vertical { background:transparent; width:7px;"
+            " margin:8px 1px 8px 0; }"
             "QScrollBar::handle:vertical { background:#DCDCE8; border-radius:4px;"
             " min-height:28px; }"
             "QScrollBar::handle:vertical:hover { background:#B9B2E8; }"
@@ -3009,8 +3019,30 @@ class ComplianceAlertPanel(QFrame):
         inner = self._scroll.widget()
         if inner is None:
             return 0
-        inner.adjustSize()
-        wanted = inner.sizeHint().height()
+        # Measure at the width the content will actually BE GIVEN, which is the
+        # viewport's. adjustSize() measures at the content's own preferred
+        # width instead - wider - so wrapped rows came back shorter than they
+        # really are, the panel was left a few pixels short of what it needed,
+        # and a scrollbar appeared on a checklist that fits.
+        #
+        # (This was here, removed on 2026-09-08 as "changed nothing", and put
+        # back. It genuinely made no difference to the animation, which is all
+        # that was being measured at the time; the scrollbar is what it was
+        # actually for.)
+        width = self._scroll.viewport().width()
+        if width <= 0:
+            width = max(1, self.width() or 340)
+        if inner.width() != width:
+            inner.resize(width, inner.height())
+        lay = inner.layout()
+        wanted = 0
+        if lay is not None:
+            lay.invalidate()      # or activate() hands back the cached hint
+            lay.activate()
+            if lay.hasHeightForWidth():
+                wanted = lay.heightForWidth(width)
+        if wanted <= 0:
+            wanted = inner.sizeHint().height()
         cap = getattr(self, "_cap", 0)
         return min(wanted, cap) if cap else wanted
 
