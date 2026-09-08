@@ -8,7 +8,7 @@
 
 ```powershell
 cd "Spark Flow\live-widget-app"
-python -m pytest tests\ -q      # 306 tests, about 4 seconds
+python -m pytest tests\ -q      # 309 tests, about 4 seconds
 python smoke_test.py            # 21 headless checks
 python -m pytest tests\test_dialer_activate.py -v
 python -m pytest -k "mic or loopback" tests\ -q
@@ -23,7 +23,7 @@ All Qt runs offscreen, so nothing appears on screen and no display is needed. No
 database, no backend and no audio hardware are required — devices, sockets and HTTP
 are all faked.
 
-Verified on 7 September 2026: **306 passed**, and the smoke test **all 21 pass**.
+Verified on 8 September 2026: **309 passed**, and the smoke test **all 21 pass**.
 
 ## What is covered
 

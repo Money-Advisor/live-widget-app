@@ -478,3 +478,78 @@ def test_the_old_matcher_summary_still_reads_properly():
     card.show_summary(0.5, ["Greeting given"], ["Fee disclosure"], 60)
     text = _summary_text(card)
     assert "Greeting given" in text and "Fee disclosure" in text
+
+
+# ── the panel flickered, and jumped ───────────────────────────────────────
+
+def test_an_unchanged_message_rebuilds_nothing():
+    """The server repeats itself about twice a second.
+
+    Every one of those messages was tearing down ten row widgets and building
+    ten more, which is what the advisor saw as flickering. Nothing may be
+    rebuilt unless something actually changed.
+    """
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    checks = _long_stage()
+    panel.update_stage("IE", _sections(4), checks)
+    acc = panel._accordion
+    before = [acc._rows.itemAt(i).widget() for i in range(acc._rows.count())]
+
+    for _ in range(10):
+        panel.update_stage("IE", _sections(4), [dict(c) for c in checks])
+
+    after = [acc._rows.itemAt(i).widget() for i in range(acc._rows.count())]
+    assert before == after, "the identical message rebuilt the rows"
+
+
+def test_a_real_change_does_rebuild():
+    """The skip must not be so eager that a tick never shows up."""
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    checks = _long_stage()
+    panel.update_stage("IE", _sections(4), checks)
+    acc = panel._accordion
+    before = [acc._rows.itemAt(i).widget() for i in range(acc._rows.count())]
+
+    changed = [dict(c) for c in checks]
+    changed[0]["done"] = True
+    changed[0]["evidence"] = "and the child benefit, is that everything?"
+    panel.update_stage("IE", _sections(4), changed)
+
+    after = [acc._rows.itemAt(i).widget() for i in range(acc._rows.count())]
+    assert before != after, "a check going green must redraw the list"
+
+
+def test_opening_a_check_glides_rather_than_jumping():
+    """The height is animated, so the panel grows in one motion.
+
+    The animation is also the thing most easily broken by accident: an earlier
+    version started it and then had _sync_window snap straight to the end value
+    a millisecond later, and every transition measured as a single step.
+    """
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.show()
+    panel._cap = 2000
+    panel.update_stage("IE", _sections(4), _long_stage())
+    panel._retarget(animate=False)          # settle at the closed height
+    start = panel._scroll.maximumHeight()
+
+    panel._accordion._toggle("ie.income")
+    # The real code defers by a zero-length timer precisely so Qt can lay the
+    # new rows out first; without turning the event loop here the test would
+    # measure the same stale height the production bug did.
+    QApplication.processEvents()
+    panel._deferred_retarget()              # what the queued timer would do
+
+    anim = panel._grow
+    assert anim is not None, "no animation was created"
+    assert anim.state() == main.QPropertyAnimation.State.Running, \
+        "the animation is not running"
+    assert anim.startValue() == start
+    assert anim.endValue() > start, "opening a check makes the panel taller"
+    anim.stop()

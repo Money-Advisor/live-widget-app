@@ -3,6 +3,35 @@
 > **Spark Flow** · `live-widget-app` · Owner: Faseeh Iqbal · Last reviewed: 2026-08-27
 > System-wide troubleshooting: [live-widget-api/docs/TROUBLESHOOTING.md](https://github.com/Money-Advisor/live-widget-api/blob/main/docs/TROUBLESHOOTING.md)
 
+## A code change appears to have no effect
+
+Before anything else, check for a stale `__pycache__`. Python decides a `.pyc`
+is current from the source file's **size and mtime in whole seconds** - so a
+same-size edit reverted inside the same second leaves the old bytecode in
+place and running.
+
+This is not theoretical: a script that flips a constant, runs one test and
+flips it back does exactly that. `STAGE_CONFIRM = 2` -> `1` -> `2` left the
+server importing `1` while `grep` and `inspect.getsource` both showed `2`, and
+a passing fix looked like a failing one for several minutes.
+
+    find . -name __pycache__ -type d -exec rm -rf {} +
+
+and run the child process with `python -B` when a tool edits sources under it.
+
+## The panel animation does not animate
+
+`_refit` deliberately defers by one event-loop turn before measuring. Rows added
+a moment ago have not been given a width yet, and nearly every row is a
+word-wrapped label whose height depends on its width - measured synchronously
+the accordion reported 52px when its real height was 358px. Anything that
+measures the panel immediately after a rebuild will get the old height, decide
+there is nothing to animate, and the panel will snap on the following tick.
+
+`_sync_window` must also leave a running animation alone; it used to re-target
+without animating a millisecond after the animation started, which had the same
+effect.
+
 ## A cleared row is still on screen
 
 Taking an item out of a **layout** does not detach the widget from its

@@ -55,7 +55,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import (
     Qt, QThread, pyqtSignal,
     QTimer, QEvent, QSettings, QPropertyAnimation, QEasingCurve,
-    QSize, QRectF, QByteArray,
+    QSize, QRectF, QByteArray, pyqtProperty,
 )
 from PyQt6.QtGui import (
     QIcon, QPixmap, QPainter, QColor, QBrush, QPen, QAction, QFont,
@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.24"
+APP_VERSION = "2.9.25"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2229,6 +2229,7 @@ class SectionAccordion(QWidget):
         # roughly twice a second.
         self._open = set()
         self._label, self._checks = "", []
+        self._sig = None
 
     def _clear(self):
         while self._rows.count():
@@ -2468,6 +2469,20 @@ class SectionAccordion(QWidget):
                 col.addLayout(ev)
         return row
 
+    @staticmethod
+    def _signature(label, checks, open_ids):
+        """Everything about the inputs that changes what is drawn.
+
+        Deliberately not the raw message: it carries timings and counters that
+        differ every time and would defeat the whole point.
+        """
+        return (label, frozenset(open_ids), tuple(
+            (c.get("id"), bool(c.get("done")), c.get("evidence"), c.get("prompt"),
+             tuple(c.get("missing_parts") or ()),
+             tuple((p.get("text"), bool(p.get("done")))
+                   for p in (c.get("parts") or ())))
+            for c in checks))
+
     def update_section(self, label: str, checks: list):
         """Called on the UI thread. No checks -> the accordion hides itself."""
         checks = checks or []
@@ -2477,11 +2492,34 @@ class SectionAccordion(QWidget):
         # Kept so _toggle can rebuild without waiting for the next server message
         # - otherwise a click would do nothing for up to a couple of seconds.
         self._label, self._checks = label, checks
+
+        # The server sends this roughly twice a second, and the overwhelming
+        # majority of those messages say exactly what the last one said. Every
+        # one of them was tearing down ten row widgets and building ten more,
+        # which is what the advisor saw as the panel flickering and breaking up.
+        # Nothing below runs unless something actually changed.
+        sig = self._signature(label, checks, self._open)
+        if sig == self._sig:
+            return
+        self._sig = sig
         done = [c for c in checks if c.get("done")]
         todo = [c for c in checks if not c.get("done")]
         self._title.setText(label or "")
         self._ratio.setText(f"{len(done)}/{len(checks)}")
 
+        # Freeze painting for the rebuild. Without this the panel is drawn
+        # part-built at least once - rows gone, rows back - and that single
+        # frame is the blink.
+        self.setUpdatesEnabled(False)
+        try:
+            self._rebuild(label, checks, done, todo)
+        finally:
+            self.setUpdatesEnabled(True)
+        self.setVisible(True)
+        self.updateGeometry()
+        self.contents_changed.emit()
+
+    def _rebuild(self, label, checks, done, todo):
         self._clear()
         # Outstanding work first - the advisor is looking for what to do next,
         # and on a long stage the red card would otherwise sit below the fold.
@@ -2501,9 +2539,6 @@ class SectionAccordion(QWidget):
             self._rows.addWidget(self._check_row(chk, self.ROW_DONE))
             if chk.get("id") in self._open:
                 self._rows.addWidget(self._parts_block(chk))
-        self.setVisible(True)
-        self.updateGeometry()
-        self.contents_changed.emit()
 
 
 class StageTracker(QWidget):
@@ -2635,12 +2670,16 @@ class _PanelScroll(QScrollArea):
             " { background:transparent; }")
 
     def sizeHint(self):
+        # The panel drives the height through its `panelHeight` property, which
+        # sets minimum == maximum; report that so the layout agrees with the
+        # animation instead of pulling against it.
         w = self.widget()
         if w is None:
             return super().sizeHint()
+        fixed = self.maximumHeight()
         h = w.sizeHint().height()
-        cap = self.maximumHeight()
-        return QSize(w.sizeHint().width(), min(h, cap) if cap > 0 else h)
+        return QSize(w.sizeHint().width(),
+                     fixed if 0 < fixed < 16777215 else h)
 
     def minimumSizeHint(self):
         # Deliberately small: the panel must be allowed to scroll rather than
@@ -2678,6 +2717,9 @@ class ComplianceAlertPanel(QFrame):
         shell.setContentsMargins(0, 0, 0, 0)
         shell.setSpacing(0)
         self._scroll = _PanelScroll()
+        self._cap = 0            # set from the real screen by _sync_window
+        self._grow = None
+        self._retarget_queued = False
         shell.addWidget(self._scroll)
         inner = QWidget()
         inner.setObjectName("panelInner")
@@ -2927,20 +2969,103 @@ class ComplianceAlertPanel(QFrame):
                 or self._stage.isVisibleTo(self)
                 or self._accordion.isVisibleTo(self))
 
-    def _refit(self):
-        """Re-measure after the contents changed shape, then re-fit the window.
+    GROW_MS = 190
 
-        The scroll area caches its content's size hint, so without the explicit
-        adjustSize() the panel keeps the height it had and the new rows are only
-        reachable by scrolling - which, for a check the advisor just clicked
-        open, means it looks like nothing happened.
+    def _get_panel_height(self):
+        return self._scroll.maximumHeight()
+
+    def _set_panel_height(self, h):
+        """One property for the animation to drive; everything follows it."""
+        h = max(0, int(h))
+        self._scroll.setMinimumHeight(h)
+        self._scroll.setMaximumHeight(h)
+        self.updateGeometry()
+        win = self.window()
+        if win is not None and win.isVisible():
+            # Follow the panel frame by frame, or the card grows inside a window
+            # that is still the old size and the bottom rows are clipped away
+            # for the length of the animation.
+            need = max(win.sizeHint().height(), win.minimumHeight())
+            if need != win.height():
+                win.resize(win.width(), need)
+
+    panelHeight = pyqtProperty(int, _get_panel_height, _set_panel_height)
+
+    def _growing(self):
+        anim = getattr(self, "_grow", None)
+        return (anim is not None
+                and anim.state() == QPropertyAnimation.State.Running)
+
+    def _target_height(self):
+        """How tall the contents want to be, capped at what the screen allows.
+
+        Only correct once Qt has laid the rows out, which is why _refit defers
+        by an event-loop turn before calling this - see the note there. An
+        earlier attempt to make it correct SYNCHRONOUSLY, by resizing the
+        content to the viewport width and forcing the layout, was tried and
+        removed: measured against the deferred version it changed nothing, so
+        it was machinery with no effect to explain.
         """
         inner = self._scroll.widget()
-        if inner is not None:
-            inner.adjustSize()
-        self._scroll.updateGeometry()
-        self.updateGeometry()
+        if inner is None:
+            return 0
+        inner.adjustSize()
+        wanted = inner.sizeHint().height()
+        cap = getattr(self, "_cap", 0)
+        return min(wanted, cap) if cap else wanted
+
+    def _retarget(self, animate=True):
+        """Move the panel to the height its contents now need.
+
+        Animated, because the checklist changes shape constantly - a check goes
+        green, a dropdown opens, a stage turns over - and every one of those was
+        a hard jump. One eased motion reads as the list growing; a snap reads as
+        the panel glitching, which is what the advisor reported.
+        """
+        target = self._target_height()
+        anim = getattr(self, "_grow", None)
+        if anim is not None:
+            anim.stop()
+        current = self._scroll.height() or target
+        if not animate or current == target or not self.isVisible():
+            self._set_panel_height(target)
+            return
+        anim = QPropertyAnimation(self, b"panelHeight", self)
+        anim.setDuration(self.GROW_MS)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.setStartValue(current)
+        anim.setEndValue(target)
+        self._grow = anim
+        anim.finished.connect(lambda t=target: self._settle(t))
+        anim.start()
+
+    def _settle(self, target):
+        """Land exactly, then re-fit the window once."""
+        if not self._growing():
+            self._set_panel_height(target)
         QTimer.singleShot(0, self._sync_window)
+
+    def _refit(self):
+        """The contents changed shape: re-measure and glide to the new height.
+
+        On the NEXT event-loop turn, not now. Rows added a moment ago have not
+        been given a width yet, and almost every row here is a word-wrapped
+        label whose height depends entirely on its width - so measured at the
+        instant of the change they report nearly nothing.
+
+        Traced on a live toggle: the accordion claimed 52px when its real height
+        was 358px. The animation compared 382 against a target of 382, concluded
+        there was nothing to do, and the panel snapped to 451px on the following
+        tick. Which is exactly the jump this was meant to remove.
+        """
+        if self._retarget_queued:
+            return
+        self._retarget_queued = True
+        QTimer.singleShot(0, self._deferred_retarget)
+
+    def _deferred_retarget(self):
+        self._retarget_queued = False
+        self._retarget(animate=True)
 
     def shown_check_ids(self):
         """Check ids the opened-out stage is already displaying."""
@@ -3139,9 +3264,16 @@ class ComplianceAlertPanel(QFrame):
         # a second monitor was getting the wrong ceiling.
         scr = win.screen() or QApplication.primaryScreen()
         avail = scr.availableGeometry().height() if scr is not None else 900
-        self._scroll.setMaximumHeight(max(240, avail - 120))
-        self._scroll.updateGeometry()
-        self.updateGeometry()
+        # The ceiling lives here, not on maximumHeight - the height animation
+        # owns that now and would otherwise fight this every frame.
+        self._cap = max(240, avail - 120)
+        # ...and do not snap the panel to its target while a growth animation is
+        # in flight. _refit starts the animation and then queues _sync_window on
+        # a zero-length timer, so this ran roughly a millisecond later and
+        # jumped straight to the end value. Measured: every transition arrived
+        # "in ONE STEP - not animated".
+        if not self._growing() and not self._retarget_queued:
+            self._retarget(animate=False)
 
         old_w = win.width()
         new_w = max(win.sizeHint().width(), win.minimumWidth())

@@ -67,7 +67,7 @@ DEFAULT_API_BASE_URL = "http://192.168.80.53:8080"
 DEFAULT_RECORDING_WS = "ws://192.168.80.53:8765"
 ORG = "Spark Flow";  APP = "Widget"
 CHUNK = 4096
-APP_VERSION = "2.9.24"
+APP_VERSION = "2.9.25"
 WS_CONNECT_TIMEOUT = 10
 WS_HANDSHAKE_TIMEOUT = 30
 WS_STREAM_TIMEOUT = 5
@@ -112,7 +112,7 @@ reg delete "HKCU\Software\Spark Flow\Widget" /f
 ## Testing
 
 ```powershell
-python -m pytest tests\ -q      # 306 tests, ~4 seconds
+python -m pytest tests\ -q      # 309 tests, ~4 seconds
 python smoke_test.py            # 21 headless checks
 ```
 

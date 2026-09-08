@@ -138,7 +138,7 @@ DEFAULT_API_BASE_URL = "http://192.168.80.53:8080"
 DEFAULT_RECORDING_WS = "ws://192.168.80.53:8765"
 ORG = "Spark Flow";  APP = "Widget"
 CHUNK = 4096
-APP_VERSION = "2.9.24"
+APP_VERSION = "2.9.25"
 ```
 
 `QSettings("Spark Flow", "Widget")` keys:
