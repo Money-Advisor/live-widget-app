@@ -6,7 +6,7 @@
 
 ## Current state
 
-**Version 2.9.26**, in production on agents' machines across Drafters, SFM Advisors
+**Version 2.9.27**, in production on agents' machines across Drafters, SFM Advisors
 and Lead Generation.
 
 | | |
@@ -16,7 +16,7 @@ and Lead Generation.
 | Build | PyInstaller **folder** build, not one-file |
 | Default servers | `http://192.168.80.53:8080` and `ws://192.168.80.53:8765`, with a one-time migration off the retired `192.168.80.52` |
 | Live AI | On for SFM only, in a silent trial - the server scores the call and the panel shows it, but nothing interrupts the advisor |
-| Tests | 311 passing, plus 21 smoke checks |
+| Tests | 313 passing, plus 21 smoke checks |
 | Code | One file, `main.py`, about 4,600 lines |
 | Signed | **No.** SmartScreen warns on first run. |
 
@@ -32,7 +32,7 @@ the live compliance panel:
 - **2.9.12** reports its own build on the control connection, which is what makes the dashboard's widget-version column and "update needed" badge possible.
 - **2.9.13** made the manual Log Out sticky too. It had only been wired to expired and revoked sessions, so an agent could minimise it away and carry on while nothing recorded.
 - **2.9.14** stopped the customer channel losing time, which had left the agent sounding late relative to the customer.
-- **2.9.15 - 2.9.26, the live compliance panel.** Shipped together and only worth reading as one change. The panel is on screen for the whole of a call and between calls: a stage bar showing where the call has got to, the current stage opened out with every requirement ticked or outstanding, and the advisor's own words underneath each tick. A check made of several parts opens on a dropdown to show which parts are proved and which are still to ask.
+- **2.9.15 - 2.9.27, the live compliance panel.** Shipped together and only worth reading as one change. The panel is on screen for the whole of a call and between calls: a stage bar showing where the call has got to, the current stage opened out with every requirement ticked or outstanding, and the advisor's own words underneath each tick. A check made of several parts opens on a dropdown to show which parts are proved and which are still to ask.
   - **2.9.17** kept the panel on screen instead of hiding it whenever nothing was wrong, which read as the feature being broken.
   - **2.9.19** fixed rows that rendered blank, and an alert that named the wrong stage.
   - **2.9.20** added the per-check dropdown.
@@ -42,6 +42,7 @@ the live compliance panel:
   - **2.9.24** stopped the widget flashing a green **100%** for two seconds at every hang-up. It filled the gap before the server answered with a summary of its own, computed from the OLD matcher's criteria list; on a rulebook call none of the check ids are in that list, so nothing counted as missing and everything counted as covered. A rulebook call now waits, saying "working out your score", with a 25-second backstop to the plain saved confirmation if the summary never lands. The old matcher keeps its instant summary, which is genuinely right for it.
   - **2.9.25** made the panel move smoothly. Three things were fighting each other: the checklist rebuilt every row on every server message - about twice a second, whether anything had changed or not, which is what read as flickering; a rebuild painted itself part-built at least once; and every height change was a hard jump. Identical messages are now free, a rebuild never paints half-done, and the panel glides to its new height. Measured at 60fps (16ms median frame, no dropped frames) on all four transitions: a stage appearing, a dropdown opening, a dropdown closing, and a check going green.
   - **2.9.26** removed a scrollbar from a panel that fits. A word-wrapped label's plain size hint is one line, so a ten-row Onboarding stage measured about 15px shorter than it really is; the panel was sized to that and the content overflowed by exactly that much. It now asks the layout how tall it is *at the viewport width* rather than taking its size hint.
+  - **2.9.27** stopped the checklist vanishing mid-call. The server sends a "good job" message the instant a check goes green - no stage fields on it at all - and the widget read that as "there is no checklist any more", hid the panel, and then skipped the very next (identical) state message as a no-op rebuild. So the panel dropped to a bare heading and only recovered when some check finally changed. Seen on a 22-minute call.
 
 ## Priorities
 

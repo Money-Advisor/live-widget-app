@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.26"
+APP_VERSION = "2.9.27"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2498,6 +2498,12 @@ class SectionAccordion(QWidget):
         checks = checks or []
         if not checks:
             self.setVisible(False)
+            # Forget what was last drawn. The signature below skips a rebuild
+            # when nothing changed, and a hidden accordion holding the previous
+            # payload's signature would match the very next message and skip
+            # its way back into staying hidden - which is exactly how the panel
+            # blanked and only recovered when some check finally changed.
+            self._sig = None
             return
         # Kept so _toggle can rebuild without waiting for the next server message
         # - otherwise a click would do nothing for up to a couple of seconds.
@@ -2510,6 +2516,9 @@ class SectionAccordion(QWidget):
         # Nothing below runs unless something actually changed.
         sig = self._signature(label, checks, self._open)
         if sig == self._sig:
+            # Same contents, so nothing to rebuild - but visibility is not part
+            # of the contents, and something else may have hidden us.
+            self.setVisible(True)
             return
         self._sig = sig
         done = [c for c in checks if c.get("done")]
@@ -5478,10 +5487,20 @@ class MainWindow(QMainWindow):
             self._missing_ids = {i.get("id") for i in items if i.get("id")}
             # New rulebook fields. The old matcher sends neither, and the panel
             # hides both when they are absent, so one widget serves both servers.
-            if msg.get("sections") or msg.get("section_checks") or msg.get("stage"):
+            has_stage = bool(msg.get("sections") or msg.get("section_checks")
+                             or msg.get("stage"))
+            if has_stage:
                 self._rulebook_call = True
-            self._compliance_panel.update_stage(
-                msg.get("stage"), msg.get("sections"), msg.get("section_checks"))
+            # Only a message that CARRIES stage fields may change the stage.
+            # The server also sends a "good job" message the moment a check goes
+            # green - missing_items empty, praise set, and no stage fields at
+            # all - and passing that straight through read as "there is no
+            # checklist any more", so the panel blanked to a bare heading every
+            # time the advisor got something right.
+            if has_stage:
+                self._compliance_panel.update_stage(
+                    msg.get("stage"), msg.get("sections"),
+                    msg.get("section_checks"))
             alert = msg.get("alert") or {}
             self._compliance_panel.set_missing_parts(alert.get("missing_parts"))
             self._compliance_panel.update_missing(items)

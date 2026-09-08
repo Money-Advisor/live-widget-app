@@ -609,3 +609,63 @@ def test_the_panel_still_cannot_inflate_the_window():
     panel._retarget(animate=False)
     assert panel._scroll.maximumHeight() <= 400, \
         f"the panel ignored its ceiling: {panel._scroll.maximumHeight()}px"
+
+
+# ── the checklist vanished mid-call ───────────────────────────────────────
+# Seen live on a 22-minute call: the panel dropped to a bare COMPLIANCE + STAGE
+# heading, then the checklist reappeared minutes later. The server sends a
+# "good job" message the instant a check goes green - missing_items empty,
+# praise set, and NO stage fields - and that was being passed through as
+# "there is no checklist any more".
+
+def _praise_msg():
+    return {"type": "compliance_alert", "missing_items": [],
+            "covered_ids": ["onb.fca_statement"],
+            "praise": [{"id": "onb.fca_statement",
+                        "label": "FCA regulated statement",
+                        "section": "INTRODUCTION"}]}
+
+
+def _stage_msg(checks):
+    return {"type": "compliance_alert", "missing_items": [],
+            "stage": "IE", "sections": _sections(4),
+            "section_checks": checks}
+
+
+def test_a_good_job_message_does_not_blank_the_checklist():
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    checks = _long_stage()
+    panel.update_stage("IE", _sections(4), checks)
+    assert panel._accordion.isVisibleTo(panel)
+
+    # The praise message carries no stage fields at all.
+    panel.update_stage(None, None, None)
+    # ...and then the next ordinary state message repeats the same checks.
+    panel.update_stage("IE", _sections(4), [dict(c) for c in checks])
+
+    assert panel._accordion.isVisibleTo(panel), (
+        "the checklist stayed hidden - the unchanged payload was skipped as a "
+        "no-op rebuild while the accordion was still hidden")
+    assert panel._accordion._rows.count() > 0
+
+
+def test_the_handler_ignores_a_message_with_no_stage_fields():
+    """Belt and braces: the praise message should never reach update_stage."""
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.update_stage("IE", _sections(4), _long_stage())
+    before = panel._accordion._rows.count()
+
+    seen = []
+    panel.update_stage = lambda *a: seen.append(a)      # spy
+    msg = _praise_msg()
+    has_stage = bool(msg.get("sections") or msg.get("section_checks")
+                     or msg.get("stage"))
+    if has_stage:
+        panel.update_stage(msg.get("stage"), msg.get("sections"),
+                           msg.get("section_checks"))
+    assert seen == [], "a praise-only message must not touch the stage"
+    assert before > 0
