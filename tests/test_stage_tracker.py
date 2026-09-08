@@ -669,3 +669,91 @@ def test_the_handler_ignores_a_message_with_no_stage_fields():
                            msg.get("section_checks"))
     assert seen == [], "a praise-only message must not touch the stage"
     assert before > 0
+
+
+# ── customer safety ───────────────────────────────────────────────────────
+# The one message on this panel that must never be missed, never be hidden by
+# a silent trial, and never depend on a compliance setting being switched on.
+
+CRISIS = {
+    "type": "crisis_alert",
+    "line": "I hear you, and I'm really concerned. What you're describing is "
+            "serious, and I'm not the right support for this.",
+    "resources": [
+        {"name": "Samaritans", "detail": "116 123 - free, 24/7, confidential"},
+        {"name": "Crisis Text Line", "detail": "text SHOUT to 85258"},
+        {"name": "Immediate danger", "detail": "999"},
+    ],
+    "evidence": "I don't know how to go on",
+}
+
+
+def _visible_text(panel):
+    return " ".join(l.text() for l in panel.findChildren(main.QLabel)
+                    if l.isVisibleTo(panel))
+
+
+def test_the_crisis_card_shows_the_numbers_the_advisor_must_read():
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.show()
+    panel.show_crisis(CRISIS)
+
+    text = _visible_text(panel)
+    assert "CUSTOMER SAFETY" in text
+    for number in ("116 123", "85258", "999"):
+        assert number in text, f"{number} is not on screen"
+    assert "I don't know how to go on" in text, "the customer's own words"
+
+
+def test_the_crisis_card_sits_above_the_checklist():
+    """An advisor scanning the panel must meet this before anything else."""
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.show()
+    panel.update_stage("IE", _sections(4), _long_stage())
+    panel.show_crisis(CRISIS)
+    QApplication.processEvents()
+
+    card = panel._crisis_box.itemAt(0).widget()
+    assert card.y() < panel._stage.y(), "the safety card must be above the stage"
+    assert card.y() < panel._accordion.y()
+
+
+def test_it_is_shown_once_however_many_times_it_arrives():
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    for _ in range(4):
+        panel.show_crisis(CRISIS)
+    assert panel._crisis_box.count() == 1
+
+
+def test_a_new_call_starts_without_it():
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.show_crisis(CRISIS)
+    assert panel._crisis_box.count() == 1
+
+    panel.clear_crisis()
+    assert panel._crisis_box.count() == 0
+    panel.show_crisis(CRISIS)
+    assert panel._crisis_box.count() == 1, "and it can be raised again next call"
+
+
+def test_the_panel_stays_up_for_a_crisis_with_nothing_else_on_it():
+    """update_missing([]) sends an otherwise-empty panel back to idle.
+
+    It must not take the safety card with it.
+    """
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.show_crisis(CRISIS)
+    panel.update_missing([])
+    assert panel._crisis_box.count() == 1
+    assert not panel._idle.isVisibleTo(panel), \
+        "a panel carrying a safety warning is not idle"

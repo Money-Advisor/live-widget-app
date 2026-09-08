@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.27"
+APP_VERSION = "2.9.28"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2774,6 +2774,13 @@ class ComplianceAlertPanel(QFrame):
         head.addWidget(self._ready)
         self._lay.addLayout(head)
 
+        # ── customer safety: above the stage, above the checklist, above the
+        # alerts. Nothing on this panel outranks it, and it is deliberately the
+        # first thing under the heading rather than another banner in the pile.
+        self._crisis_box = QVBoxLayout()
+        self._crisis_box.setSpacing(0)
+        self._lay.addLayout(self._crisis_box)
+
         # ── where the call has got to (rulebook path only) ──
         self._stage = StageTracker()
         self._lay.addWidget(self._stage)
@@ -2981,7 +2988,8 @@ class ComplianceAlertPanel(QFrame):
         stage tracker and the opened-out stage — an advisor doing everything right
         saw nothing at all, including their own progress.
         """
-        return (self._items_box.count() > 0
+        return (self._crisis_box.count() > 0
+                or self._items_box.count() > 0
                 or self._forbidden_box.count() > 0
                 or self._cue_box.count() > 0
                 or self._status_label.isVisible()
@@ -3129,6 +3137,85 @@ class ComplianceAlertPanel(QFrame):
                 # measurably worse with it (3 runs in 8, against a 1-in-8
                 # background rate). hide() leaves ownership exactly where it
                 # was.
+                w.hide()
+                w.deleteLater()
+
+    def show_crisis(self, msg: dict):
+        """The customer may be at risk. Say so, and give the advisor the numbers.
+
+        Shown once and never dismissed: it stays for the rest of the call. An
+        advisor who has read it has lost nothing by it remaining, and one who
+        looked away has not lost the numbers.
+
+        This is the only message on the panel that is NOT hidden during a silent
+        trial - the server does not suppress it and neither does this.
+        """
+        if getattr(self, "_crisis_shown", False):
+            return
+        self._crisis_shown = True
+
+        card = QFrame()
+        card.setObjectName("crisis")
+        card.setStyleSheet(
+            "QFrame#crisis { background:#B3170B; border-radius:12px; }")
+        col = QVBoxLayout(card)
+        col.setContentsMargins(15, 13, 15, 14)
+        col.setSpacing(8)
+
+        cap = QLabel("CUSTOMER SAFETY")
+        cap.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:10px;"
+            " font-weight:800; color:#FFD9D4; letter-spacing:1.4px;")
+        col.addWidget(cap)
+
+        line = wrapped_label(
+            msg.get("line") or "",
+            f"background:transparent; font-family:{FF}; font-size:13px;"
+            " font-weight:700; color:#FFFFFF;")
+        col.addWidget(line)
+
+        for res in msg.get("resources") or []:
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            row.setAlignment(Qt.AlignmentFlag.AlignTop)
+            name = QLabel(str(res.get("name", "")))
+            name.setStyleSheet(
+                f"background:transparent; font-family:{FF}; font-size:12px;"
+                " font-weight:800; color:#FFFFFF;")
+            name.setMinimumWidth(96)
+            row.addWidget(name, 0, Qt.AlignmentFlag.AlignTop)
+            row.addWidget(wrapped_label(
+                str(res.get("detail", "")),
+                f"background:transparent; font-family:{FF}; font-size:12px;"
+                " font-weight:600; color:#FFE4E0;"), 1)
+            col.addLayout(row)
+
+        quote = (msg.get("evidence") or "").strip()
+        if quote:
+            col.addWidget(wrapped_label(
+                "\u201c" + quote[:140] + "\u201d",
+                f"background:transparent; font-family:{FF}; font-size:11px;"
+                " font-weight:400; color:#FFC9C2; font-style:italic;"))
+
+        self._crisis_box.addWidget(card)
+        # Explicitly: a widget built without a parent starts hidden, and adding
+        # it to a layout does not reliably show it. Everything else on this
+        # panel is rebuilt inside an already-visible tree, so this is the one
+        # place it bites - and it bit, silently, until a test read the panel by
+        # what is VISIBLE rather than by what exists.
+        card.show()
+        _smooth_fonts(card)
+        self.setVisible(True)
+        self.updateGeometry()
+        self._refit()
+
+    def clear_crisis(self):
+        """New call, clean slate."""
+        self._crisis_shown = False
+        while self._crisis_box.count():
+            it = self._crisis_box.takeAt(0)
+            w = it.widget()
+            if w is not None:
                 w.hide()
                 w.deleteLater()
 
@@ -5293,6 +5380,7 @@ class MainWindow(QMainWindow):
         # the labels - so on those calls it waits rather than guessing.
         self._rulebook_call = False
         self._summary_wait = None
+        self._compliance_panel.clear_crisis()
         self._compliance_panel.clear_forbidden()
         self._compliance_panel.clear_cues()
         self._compliance_panel.set_transcription_status("recovered")  # hide any stale notice
@@ -5465,6 +5553,12 @@ class MainWindow(QMainWindow):
 
     def _handle_server_message(self, msg: dict):
         mtype = msg.get("type")
+        if mtype == "crisis_alert":
+            # Deliberately first, and deliberately not gated on self._recording
+            # or on the live-pipeline flag. Nothing about a customer at risk is
+            # conditional on the compliance layer's settings.
+            self._compliance_panel.show_crisis(msg)
+            return
         if mtype == "compliance_alert":
             # The server's last few fragments land after the call has stopped -
             # the log shows one arriving after session_ended - and each of them

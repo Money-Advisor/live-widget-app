@@ -74,13 +74,13 @@ always starts signed out.
 
 | | |
 | --- | --- |
-| Version | **2.9.27** |
+| Version | **2.9.28** |
 | Platform | Windows only — `pyaudiowpatch` is required for WASAPI loopback |
 | Distribution | `SparkFlowSetup.exe`, built with PyInstaller and Inno Setup, published as a GitHub release |
 | Build type | A **folder** build, not one-file (see [ARCHITECTURE.md](ARCHITECTURE.md#a-folder-build-not-one-file)) |
 | Server | Points at 192.168.80.53 by default, with a one-time migration off the retired 192.168.80.52 |
 | Live AI | On for SFM only, in a silent trial - scored and shown on the panel, never interrupting |
-| Tests | 313 passing, plus 21 smoke checks |
+| Tests | 318 passing, plus 21 smoke checks |
 | Logs | `%LOCALAPPDATA%\Spark Flow\logs\widget.log` |
 
 ## Recent history worth knowing
@@ -93,7 +93,7 @@ about making failures visible; 2.9.15 onward is the live compliance panel:
 - **2.9.12** reports its own build to the server, so the dashboard can show who is out of date. Anything older shows blank, which is itself the signal.
 - **2.9.13** made the manual Log Out sticky too — it was only wired to expired and revoked sessions.
 - **2.9.14** stopped the customer channel losing time, which had left the agent sounding late relative to the customer.
-- **2.9.15 - 2.9.27, the live compliance panel.** Shipped together and only worth reading as one change. The panel is on screen for the whole of a call and between calls: a stage bar showing where the call has got to, the current stage opened out with every requirement ticked or outstanding, and the advisor's own words underneath each tick. A check made of several parts opens on a dropdown to show which parts are proved and which are still to ask.
+- **2.9.15 - 2.9.28, the live compliance panel.** Shipped together and only worth reading as one change. The panel is on screen for the whole of a call and between calls: a stage bar showing where the call has got to, the current stage opened out with every requirement ticked or outstanding, and the advisor's own words underneath each tick. A check made of several parts opens on a dropdown to show which parts are proved and which are still to ask.
   - **2.9.17** kept the panel on screen instead of hiding it whenever nothing was wrong, which read as the feature being broken.
   - **2.9.19** fixed rows that rendered blank, and an alert that named the wrong stage.
   - **2.9.20** added the per-check dropdown.
@@ -104,6 +104,7 @@ about making failures visible; 2.9.15 onward is the live compliance panel:
   - **2.9.25** made the panel move smoothly. Three things were fighting each other: the checklist rebuilt every row on every server message - about twice a second, whether anything had changed or not, which is what read as flickering; a rebuild painted itself part-built at least once; and every height change was a hard jump. Identical messages are now free, a rebuild never paints half-done, and the panel glides to its new height. Measured at 60fps (16ms median frame, no dropped frames) on all four transitions: a stage appearing, a dropdown opening, a dropdown closing, and a check going green.
   - **2.9.26** removed a scrollbar from a panel that fits. A word-wrapped label's plain size hint is one line, so a ten-row Onboarding stage measured about 15px shorter than it really is; the panel was sized to that and the content overflowed by exactly that much. It now asks the layout how tall it is *at the viewport width* rather than taking its size hint.
   - **2.9.27** stopped the checklist vanishing mid-call. The server sends a "good job" message the instant a check goes green - no stage fields on it at all - and the widget read that as "there is no checklist any more", hid the panel, and then skipped the very next (identical) state message as a no-op rebuild. So the panel dropped to a bare heading and only recovered when some check finally changed. Seen on a 22-minute call.
+  - **2.9.28** added the customer-safety card. When the server judges that a caller may be at risk of self-harm, a red card appears above everything else on the panel with the wording to use and the numbers to read out - Samaritans, SHOUT and 999. It is the only message the panel shows during a silent trial, and it does not depend on scoring being switched on. The wording, and what happens after it appears, are compliance decisions still outstanding.
 
 ## Owners and contacts
 
