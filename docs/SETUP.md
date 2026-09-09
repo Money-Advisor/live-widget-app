@@ -136,7 +136,7 @@ that matters.
 # Inno Setup is installed USER-SCOPE on this machine - no administrator
 # rights - so it is NOT under Program Files. That path is the one the
 # Inno docs give, and it fails here with "No such file or directory".
-"$env:USERPROFILE	ools\InnoSetup6\ISCC.exe" installer\installer.iss
+"$env:USERPROFILE\tools\InnoSetup6\ISCC.exe" installer\installer.iss
 ```
 
 Output is `installer\Output\SparkFlowSetup.exe`. Per-user install, no administrator
