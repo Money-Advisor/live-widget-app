@@ -34,7 +34,10 @@ python smoke_test.py
 python build_all.py                    # -> dist\SparkFlow\SparkFlow.exe
 
 # 4. Build the installer
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\installer.iss
+# Inno Setup is installed USER-SCOPE on this machine - no administrator
+# rights - so it is NOT under Program Files. That path is the one the
+# Inno docs give, and it fails here with "No such file or directory".
+"$env:USERPROFILE	ools\InnoSetup6\ISCC.exe" installer\installer.iss
                                        # -> installer\Output\SparkFlowSetup.exe
 
 # 5. Commit and tag

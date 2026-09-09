@@ -133,7 +133,10 @@ one-file. See [ARCHITECTURE.md](ARCHITECTURE.md#a-folder-build-not-one-file) for
 that matters.
 
 ```powershell
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\installer.iss
+# Inno Setup is installed USER-SCOPE on this machine - no administrator
+# rights - so it is NOT under Program Files. That path is the one the
+# Inno docs give, and it fails here with "No such file or directory".
+"$env:USERPROFILE	ools\InnoSetup6\ISCC.exe" installer\installer.iss
 ```
 
 Output is `installer\Output\SparkFlowSetup.exe`. Per-user install, no administrator
