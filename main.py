@@ -46,7 +46,7 @@ except ImportError:
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
-    QVBoxLayout, QHBoxLayout, QFormLayout,
+    QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
     QLabel, QComboBox, QPushButton,
     QGroupBox, QSystemTrayIcon, QMenu,
     QMessageBox, QLineEdit, QSizePolicy,
@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.28"
+APP_VERSION = "2.9.29"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -3168,27 +3168,52 @@ class ComplianceAlertPanel(QFrame):
             " font-weight:800; color:#FFD9D4; letter-spacing:1.4px;")
         col.addWidget(cap)
 
+        # 999 gets its own bar, above the script, because the approved rule
+        # says immediate risk must show it "prominently" - and because it is an
+        # action to take, not words to say. Sent only when the server judges
+        # the risk immediate, so the panel keeps no copy of that policy.
+        escalation = (msg.get("escalation") or "").strip()
+        if escalation:
+            bar = QFrame()
+            bar.setObjectName("escalate")
+            bar.setStyleSheet(
+                "QFrame#escalate { background:#7A0A02; border-radius:8px; }")
+            bl = QVBoxLayout(bar)
+            bl.setContentsMargins(11, 8, 11, 9)
+            bl.setSpacing(0)
+            bl.addWidget(wrapped_label(
+                escalation,
+                f"background:transparent; font-family:{FF}; font-size:12px;"
+                " font-weight:800; color:#FFFFFF; letter-spacing:0.3px;"))
+            col.addWidget(bar)
+
         line = wrapped_label(
             msg.get("line") or "",
             f"background:transparent; font-family:{FF}; font-size:13px;"
             " font-weight:700; color:#FFFFFF;")
         col.addWidget(line)
 
-        for res in msg.get("resources") or []:
-            row = QHBoxLayout()
-            row.setSpacing(8)
-            row.setAlignment(Qt.AlignmentFlag.AlignTop)
+        # One grid, not a row each: a grid sizes the name column once from the
+        # widest name, so every number starts at the same x. Rows of their own
+        # meant "Immediate risk to life" pushed its own number out of line with
+        # the three above it.
+        res_grid = QGridLayout()
+        res_grid.setHorizontalSpacing(8)
+        res_grid.setVerticalSpacing(8)
+        res_grid.setContentsMargins(0, 0, 0, 0)
+        res_grid.setColumnStretch(1, 1)
+        for r, res in enumerate(msg.get("resources") or []):
             name = QLabel(str(res.get("name", "")))
             name.setStyleSheet(
                 f"background:transparent; font-family:{FF}; font-size:12px;"
                 " font-weight:800; color:#FFFFFF;")
-            name.setMinimumWidth(96)
-            row.addWidget(name, 0, Qt.AlignmentFlag.AlignTop)
-            row.addWidget(wrapped_label(
+            res_grid.addWidget(name, r, 0, Qt.AlignmentFlag.AlignTop)
+            res_grid.addWidget(wrapped_label(
                 str(res.get("detail", "")),
                 f"background:transparent; font-family:{FF}; font-size:12px;"
-                " font-weight:600; color:#FFE4E0;"), 1)
-            col.addLayout(row)
+                " font-weight:600; color:#FFE4E0;"), r, 1)
+        if res_grid.rowCount():
+            col.addLayout(res_grid)
 
         quote = (msg.get("evidence") or "").strip()
         if quote:
@@ -3208,6 +3233,13 @@ class ComplianceAlertPanel(QFrame):
         self.setVisible(True)
         self.updateGeometry()
         self._refit()
+        # Scroll to it. The card goes in at the TOP, and an advisor part-way
+        # down a long checklist would never see it otherwise - measured at
+        # 1823px above the visible area on a short screen. Twice, because
+        # _refit defers a turn and re-lays the content out: the first call
+        # covers the case where nothing moves, the second survives it moving.
+        self._scroll.verticalScrollBar().setValue(0)
+        QTimer.singleShot(0, lambda: self._scroll.verticalScrollBar().setValue(0))
 
     def clear_crisis(self):
         """New call, clean slate."""

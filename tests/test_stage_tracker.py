@@ -677,15 +677,34 @@ def test_the_handler_ignores_a_message_with_no_stage_fields():
 
 CRISIS = {
     "type": "crisis_alert",
-    "line": "I hear you, and I'm really concerned. What you're describing is "
-            "serious, and I'm not the right support for this.",
+    "line": "I hear you, and I'm really concerned about what you've just told "
+            "me. You don't have to deal with this on your own.",
     "resources": [
         {"name": "Samaritans", "detail": "116 123 - free, 24/7, confidential"},
+        {"name": "Mind", "detail": "0300 123 3393"},
         {"name": "Crisis Text Line", "detail": "text SHOUT to 85258"},
-        {"name": "Immediate danger", "detail": "999"},
     ],
+    "immediate": False,
     "evidence": "I don't know how to go on",
 }
+
+# The same card when the server judges the risk immediate. 999 arrives in its
+# own field, not as a fourth helpline - compliance requires it shown
+# "prominently", and a row at the bottom of a list is the opposite of that.
+CRISIS_IMMEDIATE = dict(
+    CRISIS,
+    immediate=True,
+    escalation="IMMEDIATE RISK TO LIFE - stay with them and call 999 now.",
+)
+
+# Deliberately awkward: a name far wider than the rest. The panel renders
+# whatever resource list it is handed, so it must line up for any of them, and
+# a fixture where every name is a similar width would prove nothing.
+CRISIS_WIDE_NAMES = dict(
+    CRISIS,
+    resources=CRISIS["resources"] + [
+        {"name": "Immediate risk to life", "detail": "999"}],
+)
 
 
 def _visible_text(panel):
@@ -693,16 +712,159 @@ def _visible_text(panel):
                     if l.isVisibleTo(panel))
 
 
-def test_the_crisis_card_shows_the_numbers_the_advisor_must_read():
+def _long_checks(n=26):
+    return [{"id": f"c{i}",
+             "label": f"A requirement number {i} long enough to wrap onto "
+                      f"two lines of the panel",
+             "done": i % 3 == 0, "severity": "high",
+             "evidence": "some words the advisor said", "prompt": None,
+             "missing_parts": [], "parts": []} for i in range(n)]
+
+
+def test_the_crisis_card_is_scrolled_into_view():
+    """A safety card the advisor cannot see is not a safety card.
+
+    The card is added at the TOP of the panel. An advisor part-way down a long
+    checklist would never see it: measured before this fix, on a short screen
+    with a full checklist, the card landed 1823px ABOVE the visible area.
+
+    Asserted on where the card actually sits inside the viewport, not on the
+    scrollbar value - a scrollbar at 0 proves nothing if the layout moved.
+    """
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.resize(360, 700)
+    panel.show()
+    panel._cap = 400                       # a 1366x768 laptop
+    panel.update_stage("S4", _sections(4), _long_checks())
+    _app().processEvents()
+    _app().processEvents()
+
+    bar = panel._scroll.verticalScrollBar()
+    assert bar.maximum() > 0, "the checklist must actually overflow, or this " \
+                              "test proves nothing"
+    bar.setValue(bar.maximum())            # advisor is reading the bottom
+    _app().processEvents()
+
+    panel.show_crisis(CRISIS)
+    _app().processEvents()
+    _app().processEvents()
+
+    card = next(f for f in panel.findChildren(main.QFrame)
+                if f.objectName() == "crisis")
+    viewport = panel._scroll.viewport()
+    top = card.mapTo(viewport, card.rect().topLeft()).y()
+    assert 0 <= top < viewport.height(), \
+        f"the crisis card is off screen at y={top}"
+
+
+def test_the_999_bar_shows_only_on_an_immediate_alert():
+    """The panel holds no copy of the policy - it renders the bar when the
+    server sends one, and nothing when it does not. Changing when 999 appears
+    must never need a new build on every agent's PC."""
     _app()
     panel = main.ComplianceAlertPanel()
     panel.show_live()
     panel.show()
     panel.show_crisis(CRISIS)
+    _app().processEvents()
+    assert "999" not in _visible_text(panel)
+
+    panel.clear_crisis()
+    urgent = dict(CRISIS, escalation="IMMEDIATE RISK TO LIFE - call 999 now.",
+                  immediate=True)
+    panel.show_crisis(urgent)
+    _app().processEvents()
+
+    text = _visible_text(panel)
+    assert "999" in text
+    bar = [f for f in panel.findChildren(main.QFrame)
+           if f.objectName() == "escalate"]
+    assert bar and bar[0].isVisibleTo(panel), "999 needs its own bar, on screen"
+
+
+def test_the_999_bar_sits_above_the_script():
+    """It is an action to take, not words to say, so the advisor must meet it
+    before the paragraph they are about to read out."""
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.show()
+    panel.show_crisis(dict(CRISIS, escalation="IMMEDIATE RISK TO LIFE - 999",
+                           immediate=True))
+    _app().processEvents()
+
+    card = next(f for f in panel.findChildren(main.QFrame)
+                if f.objectName() == "crisis")
+    bar = next(f for f in card.findChildren(main.QFrame)
+               if f.objectName() == "escalate")
+    script = next(l for l in card.findChildren(main.QLabel)
+                  if l.text() == CRISIS["line"])
+    assert (bar.mapTo(card, bar.rect().topLeft()).y()
+            < script.mapTo(card, script.rect().topLeft()).y())
+
+
+def test_every_crisis_number_starts_at_the_same_x():
+    """Measured, not eyeballed: 24px out before this was a grid.
+
+    Each resource used to be its own QHBoxLayout, so a name wider than the 96px
+    minimum pushed only its own number right. "Immediate risk to life" is wider
+    than the rest, so on the one card that must be read at a glance, one line
+    sat visibly out of line with the others.
+    """
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.show()
+    panel.resize(360, 700)
+    panel.show_crisis(CRISIS_WIDE_NAMES)
+    _app().processEvents()
+
+    card = next(f for f in panel.findChildren(main.QFrame)
+                if f.objectName() == "crisis")
+    assert card.isVisibleTo(panel), "the card must actually be on screen"
+
+    wanted = {r["detail"] for r in CRISIS_WIDE_NAMES["resources"]}
+    lefts = {lab.text(): lab.mapTo(card, lab.rect().topLeft()).x()
+             for lab in card.findChildren(main.QLabel)
+             if lab.text() in wanted}
+
+    assert len(lefts) == len(wanted), f"missing rows: {wanted - set(lefts)}"
+    assert len(set(lefts.values())) == 1, \
+        f"numbers do not line up: {lefts}"
+
+
+def test_the_card_renders_whatever_resources_it_is_handed():
+    """999 is decided by the server, never by the panel.
+
+    The widget must not carry its own copy of the policy - if it did, changing
+    when 999 appears would need a widget release to every agent's PC.
+    """
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.show()
+    panel.show_crisis(CRISIS)
+    _app().processEvents()
+
+    text = _visible_text(panel)
+    assert "116 123" in text and "0300 123 3393" in text and "85258" in text
+    assert "999" not in text, "the server did not send it, so it must not show"
+
+
+def test_the_crisis_card_shows_the_numbers_the_advisor_must_read():
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.show()
+    panel.show_crisis(CRISIS_IMMEDIATE)
 
     text = _visible_text(panel)
     assert "CUSTOMER SAFETY" in text
-    for number in ("116 123", "85258", "999"):
+    # The three helplines come from `resources`; 999 from `escalation`. All
+    # four have to be readable off one card.
+    for number in ("116 123", "0300 123 3393", "85258", "999"):
         assert number in text, f"{number} is not on screen"
     assert "I don't know how to go on" in text, "the customer's own words"
 
