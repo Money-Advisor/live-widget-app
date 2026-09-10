@@ -49,7 +49,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
     QLabel, QComboBox, QPushButton,
     QGroupBox, QSystemTrayIcon, QMenu,
-    QMessageBox, QLineEdit, QSizePolicy,
+    QMessageBox, QLineEdit, QSizePolicy, QGraphicsOpacityEffect,
     QFrame, QCheckBox, QStackedWidget, QScrollArea,
 )
 from PyQt6.QtCore import (
@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.30"
+APP_VERSION = "2.9.31"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2706,6 +2706,359 @@ class _PanelScroll(QScrollArea):
         return QSize(0, 0)
 
 
+def build_crisis_card(msg: dict) -> QFrame:
+    """The customer-safety card. One builder, used by both columns.
+
+    Module level on purpose. It carries the compliance-approved script,
+    the 999 escalation bar and a grid that took two attempts to line up;
+    a second copy in the other panel would drift, and the drifted one
+    would be the one on screen during a disclosure.
+    """
+    card = QFrame()
+    card.setObjectName("crisis")
+    card.setStyleSheet(
+        "QFrame#crisis { background:#B3170B; border-radius:12px; }")
+    col = QVBoxLayout(card)
+    col.setContentsMargins(15, 13, 15, 14)
+    col.setSpacing(8)
+
+    cap = QLabel("CUSTOMER SAFETY")
+    cap.setStyleSheet(
+        f"background:transparent; font-family:{FF}; font-size:10px;"
+        " font-weight:800; color:#FFD9D4; letter-spacing:1.4px;")
+    col.addWidget(cap)
+
+    # 999 gets its own bar, above the script, because the approved rule
+    # says immediate risk must show it "prominently" - and because it is an
+    # action to take, not words to say. Sent only when the server judges
+    # the risk immediate, so the panel keeps no copy of that policy.
+    escalation = (msg.get("escalation") or "").strip()
+    if escalation:
+        bar = QFrame()
+        bar.setObjectName("escalate")
+        bar.setStyleSheet(
+            "QFrame#escalate { background:#7A0A02; border-radius:8px; }")
+        bl = QVBoxLayout(bar)
+        bl.setContentsMargins(11, 8, 11, 9)
+        bl.setSpacing(0)
+        bl.addWidget(wrapped_label(
+            escalation,
+            f"background:transparent; font-family:{FF}; font-size:12px;"
+            " font-weight:800; color:#FFFFFF; letter-spacing:0.3px;"))
+        col.addWidget(bar)
+
+    line = wrapped_label(
+        msg.get("line") or "",
+        f"background:transparent; font-family:{FF}; font-size:13px;"
+        " font-weight:700; color:#FFFFFF;")
+    col.addWidget(line)
+
+    # One grid, not a row each: a grid sizes the name column once from the
+    # widest name, so every number starts at the same x. Rows of their own
+    # meant "Immediate risk to life" pushed its own number out of line with
+    # the three above it.
+    res_grid = QGridLayout()
+    res_grid.setHorizontalSpacing(8)
+    res_grid.setVerticalSpacing(8)
+    res_grid.setContentsMargins(0, 0, 0, 0)
+    res_grid.setColumnStretch(1, 1)
+    for r, res in enumerate(msg.get("resources") or []):
+        name = QLabel(str(res.get("name", "")))
+        name.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:12px;"
+            " font-weight:800; color:#FFFFFF;")
+        res_grid.addWidget(name, r, 0, Qt.AlignmentFlag.AlignTop)
+        res_grid.addWidget(wrapped_label(
+            str(res.get("detail", "")),
+            f"background:transparent; font-family:{FF}; font-size:12px;"
+            " font-weight:600; color:#FFE4E0;"), r, 1)
+    if res_grid.rowCount():
+        col.addLayout(res_grid)
+
+    quote = (msg.get("evidence") or "").strip()
+    if quote:
+        col.addWidget(wrapped_label(
+            "\u201c" + quote[:140] + "\u201d",
+            f"background:transparent; font-family:{FF}; font-size:11px;"
+            " font-weight:400; color:#FFC9C2; font-style:italic;"))
+
+    return card
+
+
+class AdvisorAlertsPanel(QFrame):
+    """The left column: things that cannot be taken back once said.
+
+    Deliberately NOT part of ComplianceAlertPanel. That panel is a checklist -
+    a list of what is still to do, which the advisor works through at their
+    own pace. This is the opposite kind of thing, and mixing them weakens
+    both: a "do not say this" buried in a list of "you still need to ask
+    this" reads as one more item rather than a stop sign.
+
+    Narrower than the checklist at 300px against 340px, because a warning is
+    one line and a checklist row is not, and because two full-width columns
+    is 680px of a screen that also has Aryza and a browser on it.
+
+    Hidden entirely when empty, and it fades rather than snapping - a red
+    card appearing instantly in the corner of the eye reads as a glitch.
+    """
+
+    WIDTH = 300
+    FADE_MS = 220
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("alertsPanel")
+        self.setFixedWidth(self.WIDTH)
+        self.setStyleSheet(
+            "QFrame#alertsPanel { background:transparent; }")
+        self.setSizePolicy(QSizePolicy.Policy.Fixed,
+                           QSizePolicy.Policy.Minimum)
+
+        self._lay = QVBoxLayout(self)
+        self._lay.setContentsMargins(0, 0, 0, 0)
+        self._lay.setSpacing(10)
+        self._lay.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        # The safety card lives here now, above the warnings: it is the one
+        # thing on either column that a silent trial does not hide.
+        self._crisis_box = QVBoxLayout()
+        self._crisis_box.setContentsMargins(0, 0, 0, 0)
+        self._crisis_box.setSpacing(0)
+        self._lay.addLayout(self._crisis_box)
+
+        self._warn_box = QVBoxLayout()
+        self._warn_box.setContentsMargins(0, 0, 0, 0)
+        self._warn_box.setSpacing(0)
+        self._lay.addLayout(self._warn_box)
+
+        self._crisis_shown = False
+        self._warn_key = None          # what is on screen, to avoid rebuilding
+        self._warn_items = []          # everything we were sent
+        self._shown_warnings = 0       # ...and how many fit
+
+        # Fade, not a snap. Opacity rather than width: animating the width
+        # would reflow the whole window on every frame, and the panel sits in
+        # a layout that resizes the (frameless) window to fit.
+        self._fx = QGraphicsOpacityEffect(self)
+        self._fx.setOpacity(1.0)
+        self.setGraphicsEffect(self._fx)
+        self._fade = QPropertyAnimation(self._fx, b"opacity", self)
+        self._fade.setDuration(self.FADE_MS)
+        self._fade.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        self.setVisible(False)
+
+    # ── what is in it ────────────────────────────────────────────────────
+
+    def has_content(self):
+        return self._crisis_box.count() > 0 or self._warn_box.count() > 0
+
+    def _fit(self):
+        """No wrapped label shorter than the text it holds.
+
+        Twice, because growing a label changes the layout and the pass that
+        follows sees the widths that result. A third pass measured no change.
+        """
+        for _ in range(2):
+            lay = self.layout()
+            if lay is not None:
+                lay.invalidate()
+                lay.activate()
+            grown = False
+            for lab in self.findChildren(QLabel):
+                if not lab.wordWrap() or not lab.text().strip():
+                    continue
+                w = lab.width()
+                if w <= 0:
+                    continue
+                need = lab.heightForWidth(w)
+                if need > lab.minimumHeight():
+                    lab.setMinimumHeight(need)
+                    grown = True
+            if not grown:
+                break
+        self.adjustSize()
+
+        # Nothing may be cut off, and there is no scrollbar to fall back on.
+        # The card is never trimmed - a safety disclosure does not give way
+        # to a warning - so warnings come off the bottom until it fits.
+        room = self._room()
+        # Bounded. The loop terminates because _render_warnings floors at
+        # zero - but this runs on the UI thread during a layout, and an
+        # unbounded while here would freeze the advisor's widget rather than
+        # merely look wrong. One iteration per warning is the most it can
+        # ever need.
+        for _ in range(self.MAX_WARNINGS + 1):
+            if self.sizeHint().height() <= room or self._shown_warnings <= 0:
+                break
+            self._render_warnings(self._shown_warnings - 1)
+            lay = self.layout()
+            if lay is not None:
+                lay.invalidate()
+                lay.activate()
+            self.adjustSize()
+
+    def resizeEvent(self, ev):
+        # A label has no width until the layout has placed it, so the heights
+        # can only be right after a resize - not when the card was built.
+        super().resizeEvent(ev)
+        self._fit()
+
+    def _restyle(self):
+        """Show or hide the whole column, fading in when it first appears."""
+        want = self.has_content()
+        if want and not self.isVisible():
+            self._fx.setOpacity(0.0)
+            self.setVisible(True)
+            self._fade.stop()
+            self._fade.setStartValue(0.0)
+            self._fade.setEndValue(1.0)
+            self._fade.start()
+        elif not want and self.isVisible():
+            # No fade out. The column vanishing is always the end of a call or
+            # a stage moving on, and a lingering ghost of a safety card is
+            # worse than an abrupt one.
+            self.setVisible(False)
+        self.updateGeometry()
+
+    # ── the do-not-say warnings ──────────────────────────────────────────
+
+    MAX_WARNINGS = 4
+
+    def set_warnings(self, warnings):
+        """Replace the warnings for the section the call is in.
+
+        Capped at four. AFFORDABILITY alone carries 23, and a column of 23
+        prohibitions is a column nobody reads - the same reason the missing-
+        parts line stops at three. Critical first, then the rest.
+        """
+        items = [w for w in (warnings or [])
+                 if isinstance(w, dict) and (w.get("text") or "").strip()]
+        key = tuple(w.get("id") or w["text"] for w in items)
+        if key == self._warn_key:
+            return                      # unchanged; do not rebuild and flicker
+        self._warn_key = key
+        self._warn_items = items
+        self._render_warnings(self.MAX_WARNINGS)
+        self._restyle()
+        self._fit()
+
+    def _render_warnings(self, limit):
+        """Rebuild the warning card showing at most `limit` of them."""
+        while self._warn_box.count():
+            it = self._warn_box.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+        self._shown_warnings = max(1, int(limit))
+        if self._warn_items and self._shown_warnings:
+            card = self._warning_card(self._warn_items, self._shown_warnings)
+            self._warn_box.addWidget(card)
+            # A widget built without a parent starts hidden, and adding it to
+            # a layout does not reliably show it. It bit here exactly as it
+            # bit the safety card: the rebuilt card existed, every "is it
+            # there?" check passed, and nothing was on screen.
+            card.show()
+
+    def _room(self):
+        """How tall this column may be on the screen it is actually on.
+
+        The screen the WINDOW is on, not the primary one - an advisor on a
+        second monitor was getting the wrong ceiling once already.
+        """
+        win = self.window()
+        scr = (win.screen() if win is not None else None) \
+            or QApplication.primaryScreen()
+        avail = scr.availableGeometry().height() if scr is not None else 900
+        return max(240, avail - 40)
+
+    def clear_warnings(self):
+        self.set_warnings([])
+
+    def _warning_card(self, items, limit=None):
+        card = QFrame()
+        card.setObjectName("warnCard")
+        card.setStyleSheet(
+            "QFrame#warnCard { background:#FEF6E7; border:1px solid #E8C88A;"
+            " border-radius:12px; }")
+        col = QVBoxLayout(card)
+        col.setContentsMargins(14, 12, 14, 13)
+        col.setSpacing(9)
+
+        cap = QLabel("BEFORE YOU SPEAK")
+        cap.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:10px;"
+            " font-weight:800; color:#A2600A; letter-spacing:1.4px;")
+        col.addWidget(cap)
+
+        shown = items[:limit if limit is not None else self.MAX_WARNINGS]
+        rows = QGridLayout()
+        rows.setHorizontalSpacing(9)
+        rows.setVerticalSpacing(9)
+        rows.setContentsMargins(0, 0, 0, 0)
+        rows.setColumnStretch(1, 1)
+        for r, w in enumerate(shown):
+            mark = QLabel("\u2715")
+            mark.setStyleSheet(
+                f"background:transparent; font-family:{FF}; font-size:11px;"
+                " font-weight:800; color:#B3170B;")
+            rows.addWidget(mark, r, 0, Qt.AlignmentFlag.AlignTop)
+            rows.addWidget(wrapped_label(
+                str(w["text"]),
+                f"background:transparent; font-family:{FF}; font-size:12px;"
+                " font-weight:600; color:#4A3410; line-height:140%;"), r, 1)
+        col.addLayout(rows)
+
+        rest = len(items) - len(shown)
+        if rest > 0:
+            more = QLabel(f"+{rest} more for this section")
+            more.setStyleSheet(
+                f"background:transparent; font-family:{FF}; font-size:10.5px;"
+                " font-weight:600; color:#8A6C3A;")
+            col.addWidget(more)
+
+        why = wrapped_label(
+            "Said once, these cannot be undone later in the call.",
+            f"background:transparent; font-family:{FF}; font-size:10.5px;"
+            " font-weight:400; color:#8A6C3A; font-style:italic;")
+        col.addWidget(why)
+        _smooth_fonts(card)
+        return card
+
+    def show_crisis(self, msg: dict):
+        """The safety card, in the column that is only for the irreversible.
+
+        Shown once and never dismissed: it stays for the rest of the call. An
+        advisor who has read it has lost nothing by it remaining, and one who
+        looked away has not lost the numbers.
+        """
+        if self._crisis_shown:
+            return
+        self._crisis_shown = True
+        card = build_crisis_card(msg)
+        self._crisis_box.addWidget(card)
+        # A widget built without a parent starts hidden, and adding it to a
+        # layout does not reliably show it. This bit once, silently, and every
+        # "is it there?" assertion passed while nothing was on screen.
+        card.show()
+        _smooth_fonts(card)
+        self._restyle()
+        self._fit()
+
+    def clear_crisis(self):
+        """New call, clean slate."""
+        self._crisis_shown = False
+        while self._crisis_box.count():
+            it = self._crisis_box.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+        self._restyle()
+
+
+
 class ComplianceAlertPanel(QFrame):
     """Live compliance checklist. update_missing() must be called on the UI thread."""
 
@@ -2773,13 +3126,6 @@ class ComplianceAlertPanel(QFrame):
             " letter-spacing:0.6px;")
         head.addWidget(self._ready)
         self._lay.addLayout(head)
-
-        # ── customer safety: above the stage, above the checklist, above the
-        # alerts. Nothing on this panel outranks it, and it is deliberately the
-        # first thing under the heading rather than another banner in the pile.
-        self._crisis_box = QVBoxLayout()
-        self._crisis_box.setSpacing(0)
-        self._lay.addLayout(self._crisis_box)
 
         # ── where the call has got to (rulebook path only) ──
         self._stage = StageTracker()
@@ -2988,8 +3334,10 @@ class ComplianceAlertPanel(QFrame):
         stage tracker and the opened-out stage — an advisor doing everything right
         saw nothing at all, including their own progress.
         """
-        return (self._crisis_box.count() > 0
-                or self._items_box.count() > 0
+        # The safety card is NOT in this list any more - it lives in the
+        # alerts column now, so this panel showing or hiding has nothing to do
+        # with it.
+        return (self._items_box.count() > 0
                 or self._forbidden_box.count() > 0
                 or self._cue_box.count() > 0
                 or self._status_label.isVisible()
@@ -3172,117 +3520,6 @@ class ComplianceAlertPanel(QFrame):
                 # measurably worse with it (3 runs in 8, against a 1-in-8
                 # background rate). hide() leaves ownership exactly where it
                 # was.
-                w.hide()
-                w.deleteLater()
-
-    def show_crisis(self, msg: dict):
-        """The customer may be at risk. Say so, and give the advisor the numbers.
-
-        Shown once and never dismissed: it stays for the rest of the call. An
-        advisor who has read it has lost nothing by it remaining, and one who
-        looked away has not lost the numbers.
-
-        This is the only message on the panel that is NOT hidden during a silent
-        trial - the server does not suppress it and neither does this.
-        """
-        if getattr(self, "_crisis_shown", False):
-            return
-        self._crisis_shown = True
-
-        card = QFrame()
-        card.setObjectName("crisis")
-        card.setStyleSheet(
-            "QFrame#crisis { background:#B3170B; border-radius:12px; }")
-        col = QVBoxLayout(card)
-        col.setContentsMargins(15, 13, 15, 14)
-        col.setSpacing(8)
-
-        cap = QLabel("CUSTOMER SAFETY")
-        cap.setStyleSheet(
-            f"background:transparent; font-family:{FF}; font-size:10px;"
-            " font-weight:800; color:#FFD9D4; letter-spacing:1.4px;")
-        col.addWidget(cap)
-
-        # 999 gets its own bar, above the script, because the approved rule
-        # says immediate risk must show it "prominently" - and because it is an
-        # action to take, not words to say. Sent only when the server judges
-        # the risk immediate, so the panel keeps no copy of that policy.
-        escalation = (msg.get("escalation") or "").strip()
-        if escalation:
-            bar = QFrame()
-            bar.setObjectName("escalate")
-            bar.setStyleSheet(
-                "QFrame#escalate { background:#7A0A02; border-radius:8px; }")
-            bl = QVBoxLayout(bar)
-            bl.setContentsMargins(11, 8, 11, 9)
-            bl.setSpacing(0)
-            bl.addWidget(wrapped_label(
-                escalation,
-                f"background:transparent; font-family:{FF}; font-size:12px;"
-                " font-weight:800; color:#FFFFFF; letter-spacing:0.3px;"))
-            col.addWidget(bar)
-
-        line = wrapped_label(
-            msg.get("line") or "",
-            f"background:transparent; font-family:{FF}; font-size:13px;"
-            " font-weight:700; color:#FFFFFF;")
-        col.addWidget(line)
-
-        # One grid, not a row each: a grid sizes the name column once from the
-        # widest name, so every number starts at the same x. Rows of their own
-        # meant "Immediate risk to life" pushed its own number out of line with
-        # the three above it.
-        res_grid = QGridLayout()
-        res_grid.setHorizontalSpacing(8)
-        res_grid.setVerticalSpacing(8)
-        res_grid.setContentsMargins(0, 0, 0, 0)
-        res_grid.setColumnStretch(1, 1)
-        for r, res in enumerate(msg.get("resources") or []):
-            name = QLabel(str(res.get("name", "")))
-            name.setStyleSheet(
-                f"background:transparent; font-family:{FF}; font-size:12px;"
-                " font-weight:800; color:#FFFFFF;")
-            res_grid.addWidget(name, r, 0, Qt.AlignmentFlag.AlignTop)
-            res_grid.addWidget(wrapped_label(
-                str(res.get("detail", "")),
-                f"background:transparent; font-family:{FF}; font-size:12px;"
-                " font-weight:600; color:#FFE4E0;"), r, 1)
-        if res_grid.rowCount():
-            col.addLayout(res_grid)
-
-        quote = (msg.get("evidence") or "").strip()
-        if quote:
-            col.addWidget(wrapped_label(
-                "\u201c" + quote[:140] + "\u201d",
-                f"background:transparent; font-family:{FF}; font-size:11px;"
-                " font-weight:400; color:#FFC9C2; font-style:italic;"))
-
-        self._crisis_box.addWidget(card)
-        # Explicitly: a widget built without a parent starts hidden, and adding
-        # it to a layout does not reliably show it. Everything else on this
-        # panel is rebuilt inside an already-visible tree, so this is the one
-        # place it bites - and it bit, silently, until a test read the panel by
-        # what is VISIBLE rather than by what exists.
-        card.show()
-        _smooth_fonts(card)
-        self.setVisible(True)
-        self.updateGeometry()
-        self._refit()
-        # Scroll to it. The card goes in at the TOP, and an advisor part-way
-        # down a long checklist would never see it otherwise - measured at
-        # 1823px above the visible area on a short screen. Twice, because
-        # _refit defers a turn and re-lays the content out: the first call
-        # covers the case where nothing moves, the second survives it moving.
-        self._scroll.verticalScrollBar().setValue(0)
-        QTimer.singleShot(0, lambda: self._scroll.verticalScrollBar().setValue(0))
-
-    def clear_crisis(self):
-        """New call, clean slate."""
-        self._crisis_shown = False
-        while self._crisis_box.count():
-            it = self._crisis_box.takeAt(0)
-            w = it.widget()
-            if w is not None:
                 w.hide()
                 w.deleteLater()
 
@@ -4355,6 +4592,15 @@ class MainWindow(QMainWindow):
         # ── LIVE COMPLIANCE PANEL — own floating column, left of the card ──
         # (inside the card it fought the form for vertical space and the
         #  chips collapsed once 2+ alerts were showing)
+        # ── ALERTS COLUMN — further left again ────────────────────────
+        # Things that cannot be taken back once said: the safety card, and the
+        # do-not-say warnings for the section the call is in. Its own column
+        # because it is a different KIND of thing from a checklist - a "do not
+        # say this" buried in a list of "you still need to ask this" reads as
+        # one more item rather than a stop sign. Hidden until it has something.
+        self._alerts_panel = AdvisorAlertsPanel()
+        outer.addWidget(self._alerts_panel, 0, Qt.AlignmentFlag.AlignTop)
+
         self._compliance_panel = ComplianceAlertPanel()
         outer.addWidget(self._compliance_panel, 0, Qt.AlignmentFlag.AlignTop)
 
@@ -5447,7 +5693,8 @@ class MainWindow(QMainWindow):
         # the labels - so on those calls it waits rather than guessing.
         self._rulebook_call = False
         self._summary_wait = None
-        self._compliance_panel.clear_crisis()
+        self._alerts_panel.clear_crisis()
+        self._alerts_panel.clear_warnings()
         self._compliance_panel.clear_forbidden()
         self._compliance_panel.clear_cues()
         self._compliance_panel.set_transcription_status("recovered")  # hide any stale notice
@@ -5624,7 +5871,11 @@ class MainWindow(QMainWindow):
             # Deliberately first, and deliberately not gated on self._recording
             # or on the live-pipeline flag. Nothing about a customer at risk is
             # conditional on the compliance layer's settings.
-            self._compliance_panel.show_crisis(msg)
+            # The alerts column, not the checklist. It used to go in at the
+            # top of the one panel and push the checklist down - so an advisor
+            # scrolled past ~600px of red card to reach the vulnerability
+            # questions, which are the seven they need most at that moment.
+            self._alerts_panel.show_crisis(msg)
             return
         if mtype == "compliance_alert":
             # The server's last few fragments land after the call has stopped -
@@ -5662,6 +5913,12 @@ class MainWindow(QMainWindow):
                 self._compliance_panel.update_stage(
                     msg.get("stage"), msg.get("sections"),
                     msg.get("section_checks"))
+            # What must NOT be said in this section. Its own column, and only
+            # from a message that carries stage fields - the same reason
+            # update_stage is gated: a "good job" message carries no stage and
+            # would otherwise blank the warnings every time a check went green.
+            if has_stage:
+                self._alerts_panel.set_warnings(msg.get("warnings"))
             alert = msg.get("alert") or {}
             self._compliance_panel.set_missing_parts(alert.get("missing_parts"))
             self._compliance_panel.update_missing(items)

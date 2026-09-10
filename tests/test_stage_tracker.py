@@ -797,51 +797,136 @@ def test_growing_a_label_does_not_inflate_the_panel():
         f"the stage bar has inflated to {panel._stage.height()}px"
 
 
-def test_the_crisis_card_is_scrolled_into_view():
-    """A safety card the advisor cannot see is not a safety card.
+def _many_warnings(n=23):
+    return [{"id": f"w{i}", "severity": "critical" if i < 13 else "high",
+             "text": f"Don't do the {i}th forbidden thing on this call ever."}
+            for i in range(n)]
 
-    The card is added at the TOP of the panel. An advisor part-way down a long
-    checklist would never see it: measured before this fix, on a short screen
-    with a full checklist, the card landed 1823px ABOVE the visible area.
 
-    Asserted on where the card actually sits inside the viewport, not on the
-    scrollbar value - a scrollbar at 0 proves nothing if the layout moved.
+def _room_for_a_couple_of_warnings(panel):
+    """A screen big enough for the card and a warning or two, but not four.
+
+    Measured from the card itself rather than hardcoded. A pixel constant
+    would be wrong the moment a font or a margin changes, and the first
+    version of this used one that turned out to be SMALLER than the card
+    alone - so every warning was dropped and the test was measuring
+    suppression when it meant to measure trimming.
+    """
+    panel._room = lambda: 100000          # no budget at all, for the moment
+    for _ in range(6):
+        _app().processEvents()
+    panel._fit()
+    card_only = panel.sizeHint().height()
+    return card_only + 220
+
+
+def test_the_column_drops_warnings_rather_than_overflow_the_screen():
+    """No scrollbar means nothing may be cut off, so the number of warnings
+    is not a constant - it is whatever is left after the safety card.
+
+    Measured before this: card plus four warnings was 686px against 720px
+    available. It fitted, with 34px to spare, which is not a margin to rely
+    on - a longer quote and the bottom of the column is silently gone.
     """
     _app()
-    panel = main.ComplianceAlertPanel()
-    panel.show_live()
-    panel.resize(360, 700)
+    panel = main.AdvisorAlertsPanel()
     panel.show()
-    panel._cap = 400                       # a 1366x768 laptop
-    panel.update_stage("S4", _sections(4), _long_checks())
+    # A short screen, PINNED. Otherwise this passes or fails on whatever
+    # monitor happens to be plugged in - and on a big one the budget never
+    # bites, so the first version of this test was green with the whole
+    # mechanism disabled.
+    panel.show_crisis(CRISIS_IMMEDIATE)
+    room = _room_for_a_couple_of_warnings(panel)
+    panel._room = lambda: room
+    panel.set_warnings(_many_warnings())
+    for _ in range(6):
+        _app().processEvents()
+    panel._fit()
+
+    assert panel.sizeHint().height() <= panel._room(), \
+        f"{panel.sizeHint().height()}px in {panel._room()}px of screen"
+    assert panel._shown_warnings >= 1,         "it dropped every warning - the card alone must not fill the screen"
+    assert panel._shown_warnings <= panel.MAX_WARNINGS
+
+
+def test_the_safety_card_is_never_trimmed_for_space():
+    """A disclosure does not give way to a warning. Whatever has to go, goes
+    from the warnings."""
+    _app()
+    panel = main.AdvisorAlertsPanel()
+    panel.show()
+    panel._room = lambda: 380          # brutally short, and pinned
+    panel.show_crisis(CRISIS_IMMEDIATE)
+    panel.set_warnings(_many_warnings(40))
+    for _ in range(6):
+        _app().processEvents()
+    panel._fit()
+
+    assert panel._crisis_box.count() == 1, "the card must survive intact"
+    text = _visible_text(panel)
+    assert "116 123" in text and "999" in text,         "the numbers must still be on screen"
+
+
+def test_nothing_dropped_disappears_silently():
+    """Whatever does not fit is still counted, or an advisor has no idea
+    there were more."""
+    _app()
+    panel = main.AdvisorAlertsPanel()
+    panel.show()
+    panel.show_crisis(CRISIS_IMMEDIATE)
+    room = _room_for_a_couple_of_warnings(panel)
+    panel._room = lambda: room
+    panel.set_warnings(_many_warnings(23))
+    for _ in range(6):
+        _app().processEvents()
+    panel._fit()
+
+    hidden = 23 - panel._shown_warnings
+    assert f"+{hidden} more" in _visible_text(panel),         f"{hidden} warnings dropped and the panel does not say so"
+
+
+def test_the_alerts_column_never_scrolls():
+    """Replaces "the card is scrolled into view".
+
+    That test existed because the card went in at the top of the CHECKLIST,
+    and an advisor part-way down a long list would never see it - measured at
+    1823px above the visible area. In its own column there is nothing above
+    it and nothing to scroll past, which is a better fix than scrolling to it.
+
+    So the promise is now stronger and this asserts it: the column has no
+    scroll area at all, and nothing in it is clipped.
+    """
+    _app()
+    panel = main.AdvisorAlertsPanel()
+    panel.show()
+    panel.show_crisis(CRISIS_IMMEDIATE)
+    panel.set_warnings([
+        {"id": "a", "severity": "critical",
+         "text": "Don't say a guideline, cap or allowance figure out loud."},
+        {"id": "b", "severity": "critical",
+         "text": "Don't supply a figure yourself - let them give it."},
+    ])
     _app().processEvents()
     _app().processEvents()
 
-    bar = panel._scroll.verticalScrollBar()
-    assert bar.maximum() > 0, "the checklist must actually overflow, or this " \
-                              "test proves nothing"
-    bar.setValue(bar.maximum())            # advisor is reading the bottom
-    _app().processEvents()
+    from PyQt6.QtWidgets import QScrollArea, QAbstractScrollArea
+    assert not panel.findChildren(QScrollArea), \
+        "the alerts column must never need scrolling"
+    assert not panel.findChildren(QAbstractScrollArea)
 
-    panel.show_crisis(CRISIS)
-    _app().processEvents()
-    _app().processEvents()
-
-    card = next(f for f in panel.findChildren(main.QFrame)
-                if f.objectName() == "crisis")
-    viewport = panel._scroll.viewport()
-    top = card.mapTo(viewport, card.rect().topLeft()).y()
-    assert 0 <= top < viewport.height(), \
-        f"the crisis card is off screen at y={top}"
-
+    short = [(l.text()[:40], l.width(), l.height(),
+              l.heightForWidth(l.width()))
+             for l in panel.findChildren(main.QLabel)
+             if l.wordWrap() and l.text().strip() and l.width() > 0
+             and l.heightForWidth(l.width()) > l.height() + 1]
+    assert not short, f"text clipped in the alerts column: {short}"
 
 def test_the_999_bar_shows_only_on_an_immediate_alert():
     """The panel holds no copy of the policy - it renders the bar when the
     server sends one, and nothing when it does not. Changing when 999 appears
     must never need a new build on every agent's PC."""
     _app()
-    panel = main.ComplianceAlertPanel()
-    panel.show_live()
+    panel = main.AdvisorAlertsPanel()
     panel.show()
     panel.show_crisis(CRISIS)
     _app().processEvents()
@@ -864,8 +949,7 @@ def test_the_999_bar_sits_above_the_script():
     """It is an action to take, not words to say, so the advisor must meet it
     before the paragraph they are about to read out."""
     _app()
-    panel = main.ComplianceAlertPanel()
-    panel.show_live()
+    panel = main.AdvisorAlertsPanel()
     panel.show()
     panel.show_crisis(dict(CRISIS, escalation="IMMEDIATE RISK TO LIFE - 999",
                            immediate=True))
@@ -890,10 +974,8 @@ def test_every_crisis_number_starts_at_the_same_x():
     sat visibly out of line with the others.
     """
     _app()
-    panel = main.ComplianceAlertPanel()
-    panel.show_live()
+    panel = main.AdvisorAlertsPanel()
     panel.show()
-    panel.resize(360, 700)
     panel.show_crisis(CRISIS_WIDE_NAMES)
     _app().processEvents()
 
@@ -918,8 +1000,7 @@ def test_the_card_renders_whatever_resources_it_is_handed():
     when 999 appears would need a widget release to every agent's PC.
     """
     _app()
-    panel = main.ComplianceAlertPanel()
-    panel.show_live()
+    panel = main.AdvisorAlertsPanel()
     panel.show()
     panel.show_crisis(CRISIS)
     _app().processEvents()
@@ -931,8 +1012,7 @@ def test_the_card_renders_whatever_resources_it_is_handed():
 
 def test_the_crisis_card_shows_the_numbers_the_advisor_must_read():
     _app()
-    panel = main.ComplianceAlertPanel()
-    panel.show_live()
+    panel = main.AdvisorAlertsPanel()
     panel.show()
     panel.show_crisis(CRISIS_IMMEDIATE)
 
@@ -945,25 +1025,28 @@ def test_the_crisis_card_shows_the_numbers_the_advisor_must_read():
     assert "I don't know how to go on" in text, "the customer's own words"
 
 
-def test_the_crisis_card_sits_above_the_checklist():
-    """An advisor scanning the panel must meet this before anything else."""
+def test_the_safety_card_is_not_in_the_checklist_at_all():
+    """It used to go in at the top of the checklist panel and push everything
+    down. It is a different KIND of thing - irreversible, not outstanding -
+    and it now has its own column, so the checklist does not move when a
+    disclosure happens.
+    """
     _app()
-    panel = main.ComplianceAlertPanel()
-    panel.show_live()
-    panel.show()
-    panel.update_stage("IE", _sections(4), _long_stage())
-    panel.show_crisis(CRISIS)
-    QApplication.processEvents()
+    checklist = main.ComplianceAlertPanel()
+    assert not hasattr(checklist, "show_crisis"), \
+        "two homes for the card is two things to drift"
+    assert not hasattr(checklist, "_crisis_box")
 
-    card = panel._crisis_box.itemAt(0).widget()
-    assert card.y() < panel._stage.y(), "the safety card must be above the stage"
-    assert card.y() < panel._accordion.y()
-
+    alerts = main.AdvisorAlertsPanel()
+    alerts.show()
+    alerts.show_crisis(CRISIS)
+    _app().processEvents()
+    assert alerts._crisis_box.count() == 1
 
 def test_it_is_shown_once_however_many_times_it_arrives():
     _app()
-    panel = main.ComplianceAlertPanel()
-    panel.show_live()
+    panel = main.AdvisorAlertsPanel()
+    panel.show()
     for _ in range(4):
         panel.show_crisis(CRISIS)
     assert panel._crisis_box.count() == 1
@@ -971,8 +1054,8 @@ def test_it_is_shown_once_however_many_times_it_arrives():
 
 def test_a_new_call_starts_without_it():
     _app()
-    panel = main.ComplianceAlertPanel()
-    panel.show_live()
+    panel = main.AdvisorAlertsPanel()
+    panel.show()
     panel.show_crisis(CRISIS)
     assert panel._crisis_box.count() == 1
 
@@ -982,16 +1065,22 @@ def test_a_new_call_starts_without_it():
     assert panel._crisis_box.count() == 1, "and it can be raised again next call"
 
 
-def test_the_panel_stays_up_for_a_crisis_with_nothing_else_on_it():
-    """update_missing([]) sends an otherwise-empty panel back to idle.
-
-    It must not take the safety card with it.
+def test_the_column_appears_for_the_card_alone_and_hides_when_empty():
+    """It is not a permanent column. The widget is 340px wide because it sits
+    beside Aryza and a browser, and a second column that is always there
+    takes screen an advisor has not got - so it exists only when it has
+    something to say, and goes away again when it does not.
     """
     _app()
-    panel = main.ComplianceAlertPanel()
-    panel.show_live()
+    panel = main.AdvisorAlertsPanel()
+    assert not panel.isVisible(), "nothing to say yet"
+
     panel.show_crisis(CRISIS)
-    panel.update_missing([])
-    assert panel._crisis_box.count() == 1
-    assert not panel._idle.isVisibleTo(panel), \
-        "a panel carrying a safety warning is not idle"
+    assert panel.isVisible(), "a safety card on its own must bring it up"
+
+    panel.clear_crisis()
+    assert not panel.isVisible(), "and it goes away when emptied"
+
+    panel.set_warnings([{"id": "a", "severity": "high", "text": "Don't."}])
+    assert panel.isVisible(), "a warning on its own must bring it up too"
+

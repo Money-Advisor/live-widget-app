@@ -6,7 +6,7 @@
 
 ## Current state
 
-**Version 2.9.30**, in production on agents' machines across Drafters, SFM Advisors
+**Version 2.9.31**, in production on agents' machines across Drafters, SFM Advisors
 and Lead Generation.
 
 | | |
@@ -32,7 +32,7 @@ the live compliance panel:
 - **2.9.12** reports its own build on the control connection, which is what makes the dashboard's widget-version column and "update needed" badge possible.
 - **2.9.13** made the manual Log Out sticky too. It had only been wired to expired and revoked sessions, so an agent could minimise it away and carry on while nothing recorded.
 - **2.9.14** stopped the customer channel losing time, which had left the agent sounding late relative to the customer.
-- **2.9.15 - 2.9.30, the live compliance panel.** Shipped together and only worth reading as one change. The panel is on screen for the whole of a call and between calls: a stage bar showing where the call has got to, the current stage opened out with every requirement ticked or outstanding, and the advisor's own words underneath each tick. A check made of several parts opens on a dropdown to show which parts are proved and which are still to ask.
+- **2.9.15 - 2.9.31, the live compliance panel.** Shipped together and only worth reading as one change. The panel is on screen for the whole of a call and between calls: a stage bar showing where the call has got to, the current stage opened out with every requirement ticked or outstanding, and the advisor's own words underneath each tick. A check made of several parts opens on a dropdown to show which parts are proved and which are still to ask.
   - **2.9.17** kept the panel on screen instead of hiding it whenever nothing was wrong, which read as the feature being broken.
   - **2.9.19** fixed rows that rendered blank, and an alert that named the wrong stage.
   - **2.9.20** added the per-check dropdown.
@@ -49,6 +49,9 @@ the live compliance panel:
   - **2.9.30** stops a long instruction being cut off. The bullet rows are a QHBoxLayout holding a fixed-width dot and a wrapped label, and that layout under-reports its height by a line - so five prompts lost their last line, `onb.fca_statement` among them, and an advisor reading a CRITICAL instruction was losing the half that says what to do. A wrapped label is now given its own `heightForWidth` as a floor at the one moment its real width is known. Panel height moved 309px to 341px, which is the missing lines appearing; measure it if you touch this, because pairing heightForWidth with `setMinimumWidth(1)` once turned 533px into 1406px.
   - Beware measuring this offscreen. The headless platform has no fonts, so every glyph is a tofu box far wider than the real character, and it reported 31 prompts clipped by up to five lines. With Plus Jakarta Sans it is five, each losing exactly one. Measure with the real font, showing the panel at -3000,-3000 so it does not appear on anyone's screen.
 
+  - **2.9.31** splits the panel in two. A second column to the LEFT holds what cannot be taken back once said - the customer-safety card, and the do-not-say warnings for the section the call is in - while the checklist keeps its own column for what is still recoverable. A question not yet asked can be asked in a minute; a sentence already said cannot be unsaid, and the two do not belong in one list.
+  - Two things this fixes. The safety card stops pushing the checklist down - it was going in at the top of the one column, so an advisor scrolled past ~600px of red card to reach the vulnerability questions they need at that exact moment. And **23 breach triggers come out of the checklist**: AFFORDABILITY was showing 92 alerts of which 23 were "do not do this" rendered as work outstanding, 13 of them critical and so never clearing.
+  - The column does not exist when it has nothing to say, and it never scrolls. It cannot: it renders only what fits the screen it is on, dropping warnings from the bottom - never the safety card - and saying how many it dropped. Measured on a 1366x720 machine: card plus four warnings is 686px against 680px of room, so it shows three.
 ## Priorities
 
 **1. Code-sign the installer.** SmartScreen warns on every first run today, which is
