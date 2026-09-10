@@ -721,6 +721,82 @@ def _long_checks(n=26):
              "missing_parts": [], "parts": []} for i in range(n)]
 
 
+def _wrapped_short(panel):
+    """Wrapped labels on screen given less height than their text needs."""
+    inner = panel._scroll.widget()
+    out = []
+    for lab in inner.findChildren(main.QLabel):
+        if not lab.wordWrap() or not lab.text().strip():
+            continue
+        if not lab.isVisibleTo(panel) or lab.width() <= 0:
+            continue
+        if lab.heightForWidth(lab.width()) > lab.height() + 1:
+            out.append((lab.text()[:44], lab.width(), lab.height(),
+                        lab.heightForWidth(lab.width())))
+    return out
+
+
+def test_a_long_prompt_is_not_cut_off():
+    """The advisor loses the END of the instruction, which is the half that
+    says what to do.
+
+    Qt's fault, not the rulebook's: the bullet row is a QHBoxLayout holding a
+    fixed-width dot and a wrapped label, and that layout under-reports its
+    height by a line. Measured with the real font, five prompts lost their
+    last line - onb.fca_statement among them, so a CRITICAL instruction was
+    being truncated.
+
+    Asserted on every wrapped label, not just the prompt: the same layout
+    shape is used for gaps and evidence, so anything short is the same bug.
+    """
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.resize(360, 900)
+    panel.show()
+    long_prompt = ("Read the whole regulated statement, then confirm the "
+                   "customer understood it and note their answer on the file "
+                   "before moving on to the next section.")
+    panel.update_stage("VULNERABILITY", _sections(1), [
+        {"id": "x.long", "label": "A requirement with a long instruction",
+         "done": False, "severity": "critical", "evidence": None,
+         "prompt": long_prompt, "missing_parts": [], "parts": []}])
+    _app().processEvents()
+    _app().processEvents()
+
+    short = _wrapped_short(panel)
+    assert not short, f"text cut off: {short}"
+
+
+def test_growing_a_label_does_not_inflate_the_panel():
+    """The guard on the fix above.
+
+    Pairing heightForWidth with setMinimumWidth(1) once made the layout ask
+    "how tall at 1px wide", take the enormous answer as the panel's minimum,
+    and turn a 533px panel into 1406px with a 338px stage bar. Minimum HEIGHT
+    is safe; this is here so nobody reintroduces the other one.
+    """
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.resize(360, 900)
+    panel.show()
+    panel._cap = 920
+    checks = [{"id": f"c{i}", "label": f"Requirement {i}", "done": False,
+               "severity": "high", "evidence": None,
+               "prompt": "Ask the question and record what they tell you, "
+                         "then confirm it back to them before moving on.",
+               "missing_parts": [], "parts": []} for i in range(6)]
+    panel.update_stage("VULNERABILITY", _sections(1), checks)
+    for _ in range(6):
+        _app().processEvents()
+
+    assert not _wrapped_short(panel)
+    assert panel.height() <= panel._cap, "the panel must respect its cap"
+    assert panel._stage.height() < 120, \
+        f"the stage bar has inflated to {panel._stage.height()}px"
+
+
 def test_the_crisis_card_is_scrolled_into_view():
     """A safety card the advisor cannot see is not a safety card.
 

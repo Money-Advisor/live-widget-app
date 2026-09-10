@@ -6,7 +6,7 @@
 
 ## Current state
 
-**Version 2.9.29**, in production on agents' machines across Drafters, SFM Advisors
+**Version 2.9.30**, in production on agents' machines across Drafters, SFM Advisors
 and Lead Generation.
 
 | | |
@@ -32,7 +32,7 @@ the live compliance panel:
 - **2.9.12** reports its own build on the control connection, which is what makes the dashboard's widget-version column and "update needed" badge possible.
 - **2.9.13** made the manual Log Out sticky too. It had only been wired to expired and revoked sessions, so an agent could minimise it away and carry on while nothing recorded.
 - **2.9.14** stopped the customer channel losing time, which had left the agent sounding late relative to the customer.
-- **2.9.15 - 2.9.29, the live compliance panel.** Shipped together and only worth reading as one change. The panel is on screen for the whole of a call and between calls: a stage bar showing where the call has got to, the current stage opened out with every requirement ticked or outstanding, and the advisor's own words underneath each tick. A check made of several parts opens on a dropdown to show which parts are proved and which are still to ask.
+- **2.9.15 - 2.9.30, the live compliance panel.** Shipped together and only worth reading as one change. The panel is on screen for the whole of a call and between calls: a stage bar showing where the call has got to, the current stage opened out with every requirement ticked or outstanding, and the advisor's own words underneath each tick. A check made of several parts opens on a dropdown to show which parts are proved and which are still to ask.
   - **2.9.17** kept the panel on screen instead of hiding it whenever nothing was wrong, which read as the feature being broken.
   - **2.9.19** fixed rows that rendered blank, and an alert that named the wrong stage.
   - **2.9.20** added the per-check dropdown.
@@ -46,6 +46,8 @@ the live compliance panel:
   - **2.9.28** added the customer-safety card. When the server judges that a caller may be at risk of self-harm, a red card appears above everything else on the panel with the wording to use and the numbers to read out. It is the only message the panel shows during a silent trial, and it does not depend on scoring being switched on.
   - **2.9.29** carries the customer-facing script compliance approved on 9 Sep, and fixes two things about the card that would have cost somebody. The script is displayed **verbatim** - it is not ours to reword, and the test suite holds an independent copy so an edit fails the build rather than reaching a call. **999 now appears only when the server judges the risk immediate**, in a bar of its own above the script rather than as a fourth helpline, because it is an action to take and not words to say. The panel holds no copy of that policy: it renders the bar when the server sends one, so changing the rule never needs a build on every agent's PC.
   - Two layout defects went with it. The resource rows are one QGridLayout rather than a row each, so every number starts at the same x - they were **24px out of line**. And the card, which is added at the top of the panel, is now scrolled into view: an advisor part-way down a long checklist never saw it at all, measured at **1823px above the visible area** on a short screen.
+  - **2.9.30** stops a long instruction being cut off. The bullet rows are a QHBoxLayout holding a fixed-width dot and a wrapped label, and that layout under-reports its height by a line - so five prompts lost their last line, `onb.fca_statement` among them, and an advisor reading a CRITICAL instruction was losing the half that says what to do. A wrapped label is now given its own `heightForWidth` as a floor at the one moment its real width is known. Panel height moved 309px to 341px, which is the missing lines appearing; measure it if you touch this, because pairing heightForWidth with `setMinimumWidth(1)` once turned 533px into 1406px.
+  - Beware measuring this offscreen. The headless platform has no fonts, so every glyph is a tofu box far wider than the real character, and it reported 31 prompts clipped by up to five lines. With Plus Jakarta Sans it is five, each losing exactly one. Measure with the real font, showing the panel at -3000,-3000 so it does not appear on anyone's screen.
 
 ## Priorities
 

@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.29"
+APP_VERSION = "2.9.30"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -3023,6 +3023,38 @@ class ComplianceAlertPanel(QFrame):
         return (anim is not None
                 and anim.state() == QPropertyAnimation.State.Running)
 
+    def _grow_wrapped(self, inner):
+        """No wrapped label shorter than the text it holds.
+
+        A QHBoxLayout containing a fixed-width bullet and a wrapped label
+        under-reports its height by a line: asked at the row's width it
+        answered 45 for a label that then got 228px and needed 60. The label's
+        OWN heightForWidth is right; only the box layout's is wrong, so the
+        label is given that as a floor and the layout has nothing left to get
+        wrong.
+
+        Measured with the real font on all 83 prompts: five lost their last
+        line before this, none after, and the panel's own height did not move.
+        Minimum HEIGHT only - never minimum width, which is what turned a
+        533px panel into 1406px the first time this was attempted.
+        """
+        grown = False
+        for lab in inner.findChildren(QLabel):
+            if not lab.wordWrap():
+                continue
+            w = lab.width()
+            if w <= 0 or not lab.text().strip():
+                continue
+            need = lab.heightForWidth(w)
+            if need > lab.minimumHeight():
+                lab.setMinimumHeight(need)
+                grown = True
+        if grown:
+            lay = inner.layout()
+            if lay is not None:
+                lay.invalidate()
+                lay.activate()
+
     def _target_height(self):
         """How tall the contents want to be, capped at what the screen allows.
 
@@ -3051,6 +3083,9 @@ class ComplianceAlertPanel(QFrame):
             width = max(1, self.width() or 340)
         if inner.width() != width:
             inner.resize(width, inner.height())
+        # Every label's real width is known exactly here and nowhere earlier,
+        # so this is where a wrapped one can be told how tall it needs to be.
+        self._grow_wrapped(inner)
         lay = inner.layout()
         wanted = 0
         if lay is not None:
