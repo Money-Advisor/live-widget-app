@@ -3561,7 +3561,11 @@ class ComplianceAlertPanel(QFrame):
         # feature look like a broken one. It now always says something.
         self._idle = QWidget()
         idle = QVBoxLayout(self._idle)
-        idle.setContentsMargins(8, 16, 8, 14)
+        # The bottom is deliberately deeper than the top. The shift
+        # tiles are the last thing on the page and they sit on a
+        # tinted panel of their own, so a matching margin reads as
+        # them being crammed against the card's edge.
+        idle.setContentsMargins(8, 16, 8, 24)
         idle.setSpacing(11)
         idle.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 

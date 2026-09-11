@@ -403,3 +403,35 @@ def test_a_wheel_flick_with_nowhere_to_go_is_refused_even_during_a_call():
         anim.stop()
     p.hide()
     p.deleteLater()
+
+
+def test_the_shift_tiles_are_not_crammed_against_the_bottom_edge():
+    """They are the last thing on the idle page and they sit on a tinted
+    panel of their own, so the card's edge right underneath them reads as
+    the screen being cut off rather than finished.
+
+    Geometry, not text, so the offscreen platform's missing fonts cannot
+    make this lie: margins are the same width whatever typeface is loaded.
+    """
+    from PyQt6.QtWidgets import QFrame
+    p = m.ComplianceAlertPanel()
+    p.move(-3000, -3000)
+    p.show()
+    for _ in range(6):
+        app.processEvents()
+    p.show_idle()
+    for _ in range(8):
+        app.processEvents()
+
+    tiles = [t for t in p.findChildren(QFrame)
+             if t.objectName() == "tile" and t.isVisibleTo(p)]
+    assert len(tiles) == 3, "CALLS, AVERAGE and FLAGS"
+    lowest = max(t.mapTo(p, t.rect().bottomLeft()).y() for t in tiles)
+    assert p.height() - lowest >= 30, (
+        f"only {p.height() - lowest}px under the shift tiles")
+
+    anim = getattr(p, "_grow", None)
+    if anim is not None:
+        anim.stop()
+    p.hide()
+    p.deleteLater()
