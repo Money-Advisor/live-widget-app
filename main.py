@@ -3538,17 +3538,16 @@ class ComplianceAlertPanel(QFrame):
         # feature look like a broken one. It now always says something.
         self._idle = QWidget()
         idle = QVBoxLayout(self._idle)
-        idle.setContentsMargins(8, 22, 8, 16)
+        idle.setContentsMargins(8, 16, 8, 14)
         idle.setSpacing(11)
         idle.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
-        # A drawn ring, not a glyph: the mockup uses an SVG clock, and a unicode
-        # symbol is a gamble on whichever font an agent PC happens to fall back to.
-        _dot = QLabel("")
-        _dot.setFixedSize(48, 48)
-        _dot.setStyleSheet(
-            "background:#F3F0FF; border:2px solid #C9C2F5; border-radius:24px;")
-        idle.addWidget(_dot, 0, Qt.AlignmentFlag.AlignHCenter)
+        # There was a 48px ring here, standing in for an SVG clock from the
+        # mockup that was never drawn. Empty, static, never referenced again -
+        # so it read as a spinner that had stopped rather than as decoration,
+        # and cost 59px of a panel that was already fighting for room between
+        # calls. Deleted rather than filled: the screen says "Waiting for a
+        # call" in words, which is the whole of what the ring was implying.
 
         _wait = QLabel("Waiting for a call")
         _wait.setAlignment(Qt.AlignmentFlag.AlignCenter)

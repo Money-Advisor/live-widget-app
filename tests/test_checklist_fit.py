@@ -255,3 +255,41 @@ def test_the_idle_screen_can_never_show_a_scrollbar():
         anim.stop()
     p.hide()
     p.deleteLater()
+
+
+def test_the_idle_screen_is_one_compact_block():
+    """No decoration that carries nothing.
+
+    There was a 48px ring above "Waiting for a call" - empty, static, never
+    referenced again, standing in for an icon from the mockup that was never
+    drawn. It read as a spinner that had stopped, and it cost a fifth of the
+    panel's height between calls for that. What is left is the four things
+    the screen is actually for.
+    """
+    p = m.ComplianceAlertPanel()
+    p.move(-3000, -3000)
+    p.show()
+    for _ in range(6):
+        app.processEvents()
+    p.show_idle()
+    for _ in range(6):
+        app.processEvents()
+
+    said = [l.text() for l in p.findChildren(QLabel)
+            if l.isVisibleTo(p) and l.text().strip()]
+    assert "Waiting for a call" in said
+    assert "THIS SHIFT" in said
+    assert {"CALLS", "AVERAGE", "FLAGS"} <= set(said)
+
+    # Nothing on it is a bare fixed-size decoration. A label with no text and
+    # a hard size is exactly what the ring was.
+    empty = [l for l in p.findChildren(QLabel)
+             if l.isVisibleTo(p) and not l.text().strip()
+             and l.minimumWidth() > 20 and l.minimumHeight() > 20]
+    assert empty == [], [l.styleSheet() for l in empty]
+
+    anim = getattr(p, "_grow", None)
+    if anim is not None:
+        anim.stop()
+    p.hide()
+    p.deleteLater()
