@@ -435,3 +435,48 @@ def test_the_shift_tiles_are_not_crammed_against_the_bottom_edge():
         anim.stop()
     p.hide()
     p.deleteLater()
+
+
+def test_the_checklist_does_not_waste_away_during_a_stage():
+    """It used to. A pass wound the row caps down whenever the content was
+    briefly taller than the panel's ceiling, and nothing ever put a row
+    back until the stage turned over - so a few minutes in, Onboarding was
+    one outstanding row, two "N more" lines and half an empty card.
+
+    The things that make it briefly taller are ordinary and constant: a
+    check goes green and gains the advisor's quote, a dropdown opens, a
+    prompt wraps. Each one took a row away for good.
+
+    It was removed rather than made two-way, because it was not worth
+    having: measured, going from nine rows to one shrinks the accordion by
+    193px and the PANEL by 15px. The panel's height comes from the header,
+    the stage tracker and the due card, none of which a row cap touches.
+    """
+    p = m.ComplianceAlertPanel()
+    p.move(-3000, -3000)
+    p.show()
+    for _ in range(4):
+        app.processEvents()
+    p.show_live()
+
+    seen = []
+    for done in (0, 1, 3, 5, 8):
+        p._accordion.update_section("Onboarding", many(9 - done, done))
+        for _ in range(4):
+            app.processEvents()
+        seen.append((p._accordion._todo_limit, p._accordion._done_limit))
+
+    assert len(set(seen)) == 1, f"the caps drifted as the stage went on: {seen}"
+    assert seen[0] == (m.SectionAccordion.MAX_TODO_ROWS,
+                       m.SectionAccordion.MAX_DONE_ROWS)
+
+    anim = getattr(p, "_grow", None)
+    if anim is not None:
+        anim.stop()
+    p.hide()
+    p.deleteLater()
+
+
+def test_nothing_winds_the_row_caps_up_and_down_per_render():
+    """The mechanism itself is gone, not just disabled."""
+    assert not hasattr(m.ComplianceAlertPanel, "_fit_rows")

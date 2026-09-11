@@ -2196,12 +2196,10 @@ class SectionAccordion(QWidget):
 
     contents_changed = pyqtSignal()
 
-    # How many outstanding rows this render draws. Wound down by the panel
-    # until the column fits, and reset whenever the stage turns over.
+    # What this render draws. Equal to the cap now that nothing winds them
+    # down; kept as separate names because the rendering reads better for
+    # it and a future, better-targeted trim would set exactly these.
     _todo_limit = 7
-    # Completed rows drawn this render. Wound down after the outstanding
-    # list has already reached its floor - what is still to do matters more
-    # than what is behind you, so it gives way last.
     _done_limit = 3
     _last_label = None
 
@@ -2586,10 +2584,15 @@ class SectionAccordion(QWidget):
         self.updateGeometry()
         self.contents_changed.emit()
 
-    # The ceiling. The number actually drawn is `_todo_limit`, which the
-    # panel winds down until the column fits the screen it is on - see
-    # ComplianceAlertPanel._fit_rows. Nine is simply "more than any screen
-    # we have seen can hold", so the trim always starts from plenty.
+    # How many outstanding rows to draw before summarising the rest.
+    #
+    # A fixed number, deliberately. There was a pass here that wound this up
+    # and down per render until the panel fitted its screen, and it was
+    # removed: measured, going from nine rows to one shrinks the accordion
+    # by 193px and the PANEL by 15px, because the panel's height comes from
+    # the header, the stage tracker and the due card - none of which a row
+    # cap can touch. It stripped the checklist to almost nothing and bought
+    # fifteen pixels for it.
     MAX_TODO_ROWS = 7
 
     # How many completed rows to keep on screen. The rest are a count.
@@ -3551,9 +3554,6 @@ class ComplianceAlertPanel(QFrame):
         # ── the current stage, opened out (rulebook path only) ──
         self._accordion = SectionAccordion()
         self._accordion.contents_changed.connect(self._refit)
-        # Guards _fit_rows against re-entering itself: it rebuilds the
-        # accordion, which emits contents_changed, which calls _refit.
-        self._trimming = False
         self._lay.addWidget(self._accordion)
 
         # ── idle: what the advisor sees between calls ──────────────────────
@@ -3888,58 +3888,7 @@ class ComplianceAlertPanel(QFrame):
         cap = getattr(self, "_cap", 0)
         return min(wanted, cap) if cap else wanted
 
-    def _fit_rows(self):
-        """Draw one fewer outstanding row until the column fits its ceiling.
-
-        The panel is allowed `_cap` pixels. Beyond that a scrollbar appears,
-        and an advisor mid-call does not scroll - so those rows were never
-        really available, they were just off-screen. A count says the same
-        thing in one line and is honest about it.
-
-        Never below one: the row marked due is what the panel is for.
-        """
-        cap = getattr(self, "_cap", 0)
-        acc = self._accordion
-        if not cap or self._trimming:
-            return
-        self._trimming = True
-        try:
-            # One iteration per row is the most this can need, and it is
-            # bounded rather than a while loop because it runs on the UI
-            # thread during a layout.
-            inner = self._scroll.widget()
-            if inner is None:
-                return
-            for _ in range(acc.MAX_TODO_ROWS + acc.MAX_DONE_ROWS + 2):
-                # Force the pass. sizeHint is cached, and after a rebuild it
-                # still answers for the rows that were there before - so
-                # without this the loop measures the layout it was trying to
-                # replace and decides it has nothing to do.
-                for w in (acc, inner):
-                    lay = w.layout()
-                    if lay is not None:
-                        lay.invalidate()
-                        lay.activate()
-                    w.updateGeometry()
-                wants = inner.sizeHint().height()
-                if wants <= cap:
-                    return
-                # Outstanding work gives way last. Trim what is already done
-                # first - it is reassurance, and the header tally still
-                # carries the true number - and only then start summarising
-                # the list of what is left.
-                if acc._done_limit > 0:
-                    acc._done_limit -= 1
-                elif acc._todo_limit > 1:
-                    acc._todo_limit -= 1
-                else:
-                    return                    # nothing left that may be cut
-                acc.update_section(acc._label, acc._checks)
-        finally:
-            self._trimming = False
-
     def _retarget(self, animate=True):
-        self._fit_rows()
         """Move the panel to the height its contents now need.
 
         Animated, because the checklist changes shape constantly - a check goes
