@@ -2761,6 +2761,10 @@ class _PanelScroll(QScrollArea):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # Set False while the idle page is up. Hiding the bar was never
+        # enough - the wheel still scrolled, and the header slid off the top
+        # of a card that had nothing below it to reach.
+        self._scrollable = True
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -2794,6 +2798,25 @@ class _PanelScroll(QScrollArea):
         # Deliberately small: the panel must be allowed to scroll rather than
         # force the window taller than the screen.
         return QSize(0, 0)
+
+    def set_scrollable(self, allowed):
+        """Turn the wheel off entirely, and go back to the top."""
+        self._scrollable = bool(allowed)
+        if not allowed:
+            self.verticalScrollBar().setValue(0)
+
+    def wheelEvent(self, ev):
+        """Ignore the wheel unless there is somewhere to go.
+
+        Qt scrolls a QScrollArea whose range is a couple of pixels - which is
+        layout rounding, not content - and it does not stop at a range of
+        zero either, it just hands the event on. Both end up moving a panel
+        that had nothing to show, so both are refused here.
+        """
+        if not self._scrollable or self.verticalScrollBar().maximum() <= 0:
+            ev.ignore()
+            return
+        super().wheelEvent(ev)
 
 
 def build_crisis_card(msg: dict, compact: bool = False) -> QFrame:
@@ -3691,6 +3714,7 @@ class ComplianceAlertPanel(QFrame):
         """
         self._scroll.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.set_scrollable(False)
         self._idle.setVisible(True)
         self._ready.setVisible(True)
         self._count.setVisible(False)
@@ -3718,6 +3742,7 @@ class ComplianceAlertPanel(QFrame):
         """
         self._scroll.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._scroll.set_scrollable(True)
         self._idle.setVisible(False)
         self._ready.setVisible(False)
         self._count.setVisible(True)

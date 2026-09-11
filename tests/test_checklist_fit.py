@@ -293,3 +293,113 @@ def test_the_idle_screen_is_one_compact_block():
         anim.stop()
     p.hide()
     p.deleteLater()
+
+
+# -- the wheel ------------------------------------------------------------
+
+def _spin(scroll, clicks=-5):
+    """One flick of the mouse wheel over the panel."""
+    from PyQt6.QtCore import Qt, QPoint, QPointF
+    from PyQt6.QtGui import QWheelEvent
+    ev = QWheelEvent(QPointF(50, 50), QPointF(50, 50),
+                     QPoint(0, clicks * 120), QPoint(0, clicks * 120),
+                     Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                     Qt.ScrollPhase.NoScrollPhase, False)
+    app.sendEvent(scroll.viewport(), ev)
+    for _ in range(3):
+        app.processEvents()
+
+
+def _panel_with_a_scroll_range():
+    """A panel whose contents genuinely do not fit, so the wheel has
+    somewhere to go. Without forcing this the test proves nothing: the
+    range is zero anyway and every wheel event is a no-op."""
+    p = m.ComplianceAlertPanel()
+    p.move(-3000, -3000)
+    p.show()
+    for _ in range(4):
+        app.processEvents()
+    p.show_live()
+    p._accordion.update_section("Available Options", many(30, 0))
+    p._scroll.setMaximumHeight(120)          # brutally short, on purpose
+    for _ in range(6):
+        app.processEvents()
+    return p
+
+
+def test_the_wheel_does_nothing_on_the_idle_screen():
+    """Hiding the bar never stopped the wheel. Hovering the idle panel and
+    scrolling slid the COMPLIANCE header off the top of a card that had
+    nothing underneath it to reach - which reads as the panel breaking."""
+    p = _panel_with_a_scroll_range()
+    assert p._scroll.verticalScrollBar().maximum() > 0, "no range to test"
+    p.show_idle()
+    for _ in range(4):
+        app.processEvents()
+    _spin(p._scroll)
+    assert p._scroll.verticalScrollBar().value() == 0
+    anim = getattr(p, "_grow", None)
+    if anim is not None:
+        anim.stop()
+    p.hide()
+    p.deleteLater()
+
+
+def test_going_idle_scrolls_back_to_the_top():
+    """A call that was scrolled must not leave the READY screen halfway
+    down itself."""
+    p = _panel_with_a_scroll_range()
+    p._scroll.verticalScrollBar().setValue(
+        p._scroll.verticalScrollBar().maximum())
+    assert p._scroll.verticalScrollBar().value() > 0
+    p.show_idle()
+    for _ in range(4):
+        app.processEvents()
+    assert p._scroll.verticalScrollBar().value() == 0
+    anim = getattr(p, "_grow", None)
+    if anim is not None:
+        anim.stop()
+    p.hide()
+    p.deleteLater()
+
+
+def test_the_wheel_still_works_during_a_call_that_overflows():
+    """The guard must not take scrolling away where it is the honest answer
+    to a stage that genuinely does not fit."""
+    p = _panel_with_a_scroll_range()
+    assert p._scroll._scrollable is True
+    before = p._scroll.verticalScrollBar().value()
+    _spin(p._scroll, clicks=-5)
+    assert p._scroll.verticalScrollBar().value() > before
+    anim = getattr(p, "_grow", None)
+    if anim is not None:
+        anim.stop()
+    p.hide()
+    p.deleteLater()
+
+
+def test_a_wheel_flick_with_nowhere_to_go_is_refused_even_during_a_call():
+    """Qt scrolls a range of a couple of pixels - layout rounding, not
+    content - and does not stop at zero either."""
+    p = m.ComplianceAlertPanel()
+    p.move(-3000, -3000)
+    p.show()
+    for _ in range(4):
+        app.processEvents()
+    p.show_live()
+    p._accordion.update_section("Situation Summary", many(2, 0))
+    # Let the panel take its content's height, which is the condition that
+    # actually holds in the app. A bare panel that has never retargeted sits
+    # at whatever height it was born with and has a range for that reason
+    # alone - which is the test's setup showing, not the app's behaviour.
+    p._retarget(animate=False)
+    for _ in range(6):
+        app.processEvents()
+    assert p._scroll.verticalScrollBar().maximum() == 0, "no range to refuse"
+    _spin(p._scroll)
+    assert p._scroll.verticalScrollBar().value() == 0
+    anim = getattr(p, "_grow", None)
+    if anim is not None:
+        anim.stop()
+    p.hide()
+    p.deleteLater()
