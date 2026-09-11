@@ -3681,7 +3681,17 @@ class ComplianceAlertPanel(QFrame):
         self.show_idle()
 
     def show_idle(self):
-        """Between calls: READY, and what this shift has looked like so far."""
+        """Between calls: READY, and what this shift has looked like so far.
+
+        Never scrolls. The idle page is a fixed handful of rows - a status
+        chip, one sentence, three shift figures - so a scrollbar here can
+        only ever be the leftover of a height the panel has not finished
+        shrinking out of. It was reported as still being there after the
+        live checklist was fixed, which is exactly that case: nothing to
+        scroll, and a bar over it anyway.
+        """
+        self._scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._idle.setVisible(True)
         self._ready.setVisible(True)
         self._count.setVisible(False)
@@ -3701,7 +3711,14 @@ class ComplianceAlertPanel(QFrame):
         QTimer.singleShot(0, self._sync_window)
 
     def show_live(self):
-        """A call has started: swap the idle block for the live checklist."""
+        """A call has started: swap the idle block for the live checklist.
+
+        Hands the scrollbar back: show_idle turns it off outright, and
+        without this it would stay off for the whole call - where, rarely, it
+        is the honest answer to a stage that genuinely does not fit.
+        """
+        self._scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._idle.setVisible(False)
         self._ready.setVisible(False)
         self._count.setVisible(True)

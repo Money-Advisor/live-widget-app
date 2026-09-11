@@ -231,3 +231,27 @@ def test_the_scrollbar_is_off_while_the_panel_is_moving():
         anim.stop()
     p.hide()
     p.deleteLater()
+
+
+def test_the_idle_screen_can_never_show_a_scrollbar():
+    """Reported as still there after the live checklist was fixed. The idle
+    page is a status chip, one sentence and three figures - there is nothing
+    to scroll, so a bar over it is always wrong."""
+    from PyQt6.QtCore import Qt
+    p = m.ComplianceAlertPanel()
+    p.move(-3000, -3000)
+    p.show()
+    for _ in range(4):
+        app.processEvents()
+    p.show_idle()
+    assert p._scroll.verticalScrollBarPolicy() == \
+        Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    # ...and a call hands it back, because a long stage may genuinely need it
+    p.show_live()
+    assert p._scroll.verticalScrollBarPolicy() == \
+        Qt.ScrollBarPolicy.ScrollBarAsNeeded
+    anim = getattr(p, "_grow", None)
+    if anim is not None:
+        anim.stop()
+    p.hide()
+    p.deleteLater()
