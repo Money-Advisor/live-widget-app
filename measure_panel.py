@@ -129,8 +129,63 @@ keeps_numbers = all(n in seen for n in ("116 123", "85258", "0300 123 3393"))
 print(f"safety card condensed      : {condensed}")
 print(f"  ...and kept every number : {keeps_numbers}")
 
+# ---------------------------------------------------------------- checklist
+# The other column, and the one Bilal saw a scrollbar on. Worst case: the
+# longest stage, every check done, each with the advisor's own words, and
+# one opened out.
+import rulebook as _rb                                            # noqa: E402
+worst = max(rb.sections, key=lambda s_: len(s_.checks))
+CHECKS = [{"id": c.id, "label": c.label, "severity": c.severity,
+           "done": i > 1,
+           "evidence": ("so what I have got there is about two hundred and "
+                        "ten pounds a month, is that right") if i > 1 else None,
+           "prompt": None if i > 1 else c.prompt,
+           "missing_parts": [] if i > 1 else [e for e in c.elements[:3]],
+           "parts": [{"text": e, "done": i > 1, "na": False}
+                     for e in c.elements]}
+          for i, c in enumerate(worst.checks)]
+
+checklist = m.ComplianceAlertPanel()
+checklist.move(-3000, -3000)
+checklist.show()
+for _ in range(6):
+    app.processEvents()
+checklist.show_live()
+checklist.update_stage(worst.key, [{"key": s_.key, "label": s_.label,
+                                    "done": 0, "total": len(s_.checks),
+                                    "current": s_.key == worst.key}
+                                   for s_ in rb.sections], CHECKS)
+# The panel GROWS into its height over GROW_MS, and mid-animation it is
+# legitimately shorter than its contents. Measuring during that reports a
+# scrollbar that is about to go away on its own, so let it land first -
+# real elapsed time, not a fixed number of event-loop turns.
+import time                                                       # noqa: E402
+deadline = time.monotonic() + 2.0
+while time.monotonic() < deadline:
+    app.processEvents()
+    time.sleep(0.01)
+
+print()
+print(f"CHECKLIST  worst stage: {worst.key} ({len(worst.checks)} checks)")
+print(f"  size                     : {checklist.width()} x {checklist.height()}")
+bars = [b for b in checklist.findChildren(QScrollArea)
+        if b.verticalScrollBar().isVisible()]
+print(f"  visible scrollbars       : {len(bars)}")
+cl_bad = []
+for lab in checklist.findChildren(m.QLabel):
+    if not lab.isVisibleTo(checklist) or not lab.text().strip():
+        continue
+    need = (lab.heightForWidth(lab.width()) if lab.wordWrap()
+            else lab.sizeHint().height())
+    if need > lab.height() + 1:
+        cl_bad.append((lab.text()[:44], lab.height(), need))
+print(f"  clipped labels           : {len(cl_bad)}")
+for b in cl_bad[:4]:
+    print("     ", b)
+checklist.hide()
+
 panel.hide()
 ok = (not bad and not sc and not over and fits and not brackets
-      and condensed and keeps_numbers)
+      and condensed and keeps_numbers and not bars and not cl_bad)
 print("\n" + ("PIXEL CHECK PASSED" if ok else "PROBLEMS ABOVE"))
 sys.exit(0 if ok else 1)

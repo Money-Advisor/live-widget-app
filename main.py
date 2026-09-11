@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.32"
+APP_VERSION = "2.9.33"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2196,6 +2196,15 @@ class SectionAccordion(QWidget):
 
     contents_changed = pyqtSignal()
 
+    # How many outstanding rows this render draws. Wound down by the panel
+    # until the column fits, and reset whenever the stage turns over.
+    _todo_limit = 7
+    # Completed rows drawn this render. Wound down after the outstanding
+    # list has already reached its floor - what is still to do matters more
+    # than what is behind you, so it gives way last.
+    _done_limit = 3
+    _last_label = None
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setVisible(False)
@@ -2319,25 +2328,48 @@ class SectionAccordion(QWidget):
 
         for part in chk.get("parts") or []:
             ok = bool(part.get("done"))
+            # The customer's own answer made this one impossible to ask - no
+            # partner means nothing about a partner applies. It is not a job
+            # the advisor still has, and drawing it like one is what made a
+            # "no" look as though it had been ignored.
+            na = bool(part.get("na")) and not ok
             row = QHBoxLayout()
             row.setSpacing(8)
             row.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-            mark = QLabel("\u2713" if ok else "")
+            mark = QLabel("\u2713" if ok else ("\u2013" if na else ""))
             mark.setFixedSize(13, 13)
             mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            mark.setStyleSheet(
-                f"background:#16A34A; color:#FFFFFF; border-radius:6px;"
-                f" font-family:{FF}; font-size:9px; font-weight:800;" if ok else
-                "background:transparent; border:1.5px solid #CFC7F0;"
-                " border-radius:6px;")
+            if ok:
+                mark.setStyleSheet(
+                    f"background:#16A34A; color:#FFFFFF; border-radius:6px;"
+                    f" font-family:{FF}; font-size:9px; font-weight:800;")
+            elif na:
+                mark.setStyleSheet(
+                    f"background:transparent; color:#A9A9BE;"
+                    f" font-family:{FF}; font-size:11px; font-weight:800;")
+            else:
+                mark.setStyleSheet(
+                    "background:transparent; border:1.5px solid #CFC7F0;"
+                    " border-radius:6px;")
             row.addWidget(mark, 0, Qt.AlignmentFlag.AlignTop)
 
-            row.addWidget(wrapped_label(
+            lab = wrapped_label(
                 str(part.get("text", "")),
                 f"background:transparent; font-family:{FF}; font-size:11px;"
                 f" font-weight:{'600' if ok else '500'};"
-                f" color:{'#4B5563' if ok else '#8A8AA8'};"), 1)
+                f" color:{'#4B5563' if ok else ('#A9A9BE' if na else '#8A8AA8')};"
+                + (" text-decoration:line-through;" if na else ""))
+            row.addWidget(lab, 1)
+            if na:
+                tag = QLabel("n/a")
+                tag.setStyleSheet(
+                    f"background:#F1F1F7; color:#8A8AA8; border-radius:5px;"
+                    f" padding:1px 5px; font-family:{FF}; font-size:9px;"
+                    " font-weight:700;")
+                tag.setToolTip("The customer's answer ruled this one out - "
+                               "it is not something you still have to ask.")
+                row.addWidget(tag, 0, Qt.AlignmentFlag.AlignTop)
             col.addLayout(row)
 
         pad.addWidget(box, 1)
@@ -2364,6 +2396,13 @@ class SectionAccordion(QWidget):
         cid = chk.get("id")
         is_open = cid in self._open
         proved = sum(1 for p in parts if p.get("done"))
+        # Retired parts leave the denominator. Four of five ruled out by a
+        # "no" used to read 1/5 - a check the advisor could never finish, and
+        # a running count that punished them for the customer's answer.
+        parts = [p for p in parts if not p.get("na") or p.get("done")]
+        proved = sum(1 for p in parts if p.get("done"))
+        if not parts:
+            return None
         arrow = "\u25be" if is_open else "\u25b8"      # down / right triangle
 
         btn = QPushButton(f"{proved}/{len(parts)}  {arrow}")
@@ -2509,12 +2548,21 @@ class SectionAccordion(QWidget):
         # - otherwise a click would do nothing for up to a couple of seconds.
         self._label, self._checks = label, checks
 
+        # A stage change is a fresh budget: the new stage may be short enough
+        # to show everything, and inheriting the last one's trim would hide
+        # rows for no reason.
+        if label != getattr(self, "_last_label", None):
+            self._last_label = label
+            self._todo_limit = self.MAX_TODO_ROWS
+            self._done_limit = self.MAX_DONE_ROWS
+
         # The server sends this roughly twice a second, and the overwhelming
         # majority of those messages say exactly what the last one said. Every
         # one of them was tearing down ten row widgets and building ten more,
         # which is what the advisor saw as the panel flickering and breaking up.
         # Nothing below runs unless something actually changed.
-        sig = self._signature(label, checks, self._open)
+        sig = (self._signature(label, checks, self._open)
+               + (self._todo_limit, self._done_limit))
         if sig == self._sig:
             # Same contents, so nothing to rebuild - but visibility is not part
             # of the contents, and something else may have hidden us.
@@ -2538,6 +2586,18 @@ class SectionAccordion(QWidget):
         self.updateGeometry()
         self.contents_changed.emit()
 
+    # The ceiling. The number actually drawn is `_todo_limit`, which the
+    # panel winds down until the column fits the screen it is on - see
+    # ComplianceAlertPanel._fit_rows. Nine is simply "more than any screen
+    # we have seen can hold", so the trim always starts from plenty.
+    MAX_TODO_ROWS = 7
+
+    # How many completed rows to keep on screen. The rest are a count.
+    # Four is what fits under a full outstanding list on a 720px screen with
+    # the safety column beside it - measured, not guessed. See
+    # measure_panel.py.
+    MAX_DONE_ROWS = 3
+
     def _rebuild(self, label, checks, done, todo):
         self._clear()
         # Outstanding work first - the advisor is looking for what to do next,
@@ -2545,16 +2605,46 @@ class SectionAccordion(QWidget):
         # Exactly ONE is marked due; the rest are quiet grey rows under a
         # caption, because ten red cards each with their own guidance is
         # unreadable at 340px.
-        for i, chk in enumerate(todo):
+        # Capped, like the done list. Thirty outstanding rows is 1332px of a
+        # 600px panel, which is what put a scrollbar on it - and an advisor
+        # mid-call does not scroll, so those rows were not "available", they
+        # were invisible. A count is honest about the same thing and takes
+        # one line. The header tally carries the real total either way, and
+        # the list is worked top-down: what matters is the next few.
+        limit = max(1, self._todo_limit)
+        todo_shown = todo[:limit]
+        todo_shown += [c for c in todo[limit:] if c.get("id") in self._open]
+        for i, chk in enumerate(todo_shown):
             if i == 1:
                 self._rows.addWidget(self._caption("ALSO STILL TO DO"))
             self._rows.addWidget(self._check_row(
                 chk, self.ROW_DUE if i == 0 else self.ROW_TODO))
             if chk.get("id") in self._open:
                 self._rows.addWidget(self._parts_block(chk))
+        left = len(todo) - len(todo_shown)
+        if left > 0:
+            self._rows.addWidget(self._caption(
+                f"·  {left} more still to do in this stage"))
         if done:
             self._rows.addWidget(self._caption(f"DONE  \u00b7  {len(done)}"))
-        for chk in done:
+        # Capped. Thirty completed rows, each carrying a quote, is what put a
+        # scrollbar on the panel - and no advisor scrolls a checklist while a
+        # customer is talking. The header tally already says how many are
+        # done; these say which. Anything the advisor has opened stays open,
+        # because they opened it on purpose.
+        #
+        # The last few in the stage's own order, NOT the most recently
+        # ticked: the payload carries no completion time, and a caption that
+        # implied one would be quietly untrue.
+        n = max(0, self._done_limit)
+        keep = {c.get("id") for c in done[-n:]} if n else set()
+        keep |= {c.get("id") for c in done if c.get("id") in self._open}
+        shown = [c for c in done if c.get("id") in keep]
+        hidden = len(done) - len(shown)
+        if hidden > 0:
+            self._rows.addWidget(self._caption(
+                f"\u00b7  {hidden} more already done"))
+        for chk in shown:
             self._rows.addWidget(self._check_row(chk, self.ROW_DONE))
             if chk.get("id") in self._open:
                 self._rows.addWidget(self._parts_block(chk))
@@ -2862,6 +2952,13 @@ class AdvisorAlertsPanel(QFrame):
         # run inside one another and the layout ends up holding a
         # different set of cards from the one either pass believes in.
         self._busy = False
+        # Armed by _restyle when the column first appears, spent by
+        # _reveal once _fit has settled. Fading while the layout is
+        # still moving is what made the panel look broken for a second.
+        self._needs_fade = False
+        self._reveal_timer = QTimer(self)
+        self._reveal_timer.setSingleShot(True)
+        self._reveal_timer.timeout.connect(self._reveal)
         self._crisis_msg = None        # kept, so it can be rebuilt shorter
         self._crisis_compact = False
         self._action_key = None        # what is on screen, to avoid rebuilding
@@ -2889,6 +2986,19 @@ class AdvisorAlertsPanel(QFrame):
         return (self._crisis_box.count() > 0 or self._action_box.count() > 0
                 or self._warn_box.count() > 0)
 
+    def _reveal(self):
+        """Fade in, now that nothing is moving any more."""
+        try:
+            if not self._needs_fade or not self.isVisible():
+                return
+        except RuntimeError:
+            return                    # the panel went away while we waited
+        self._needs_fade = False
+        self._fade.stop()
+        self._fade.setStartValue(0.0)
+        self._fade.setEndValue(1.0)
+        self._fade.start()
+
     def _fit(self):
         """No wrapped label shorter than the text it holds, and no card
         below the bottom of the screen.
@@ -2905,6 +3015,16 @@ class AdvisorAlertsPanel(QFrame):
             self._fit_now()
         finally:
             self._busy = False
+        # One turn of the event loop later, so the window has taken its new
+        # size before the first frame of the fade is drawn.
+        #
+        # A timer OWNED by this panel, not a free-standing singleShot. The
+        # free one keeps firing after the panel's C++ side has been
+        # destroyed, and touching a deleted QGraphicsEffect from it takes
+        # the process down rather than raising - which is exactly what it
+        # did: the whole widget suite died partway through, on a test that
+        # passed perfectly well on its own. Owned, it dies with the panel.
+        self._reveal_timer.start(0)
 
     def _fit_now(self):
         """The real work. Twice, because growing a label changes the layout
@@ -2986,12 +3106,14 @@ class AdvisorAlertsPanel(QFrame):
         """Show or hide the whole column, fading in when it first appears."""
         want = self.has_content()
         if want and not self.isVisible():
+            # Visible, but at zero opacity: a hidden widget is not laid out,
+            # so it cannot be measured, and measuring is what _fit does next.
+            # The fade is armed rather than started - see _reveal, called at
+            # the end of _fit once the geometry has stopped moving.
             self._fx.setOpacity(0.0)
             self.setVisible(True)
             self._fade.stop()
-            self._fade.setStartValue(0.0)
-            self._fade.setEndValue(1.0)
-            self._fade.start()
+            self._needs_fade = True
         elif not want and self.isVisible():
             # No fade out. The column vanishing is always the end of a call or
             # a stage moving on, and a lingering ghost of a safety card is
@@ -3303,6 +3425,32 @@ class AdvisorAlertsPanel(QFrame):
                 w.deleteLater()
         self._restyle()
 
+    def resolve_crisis(self):
+        """Take the card down: signposted, and the text sent or not wanted.
+
+        Separate from clear_crisis on purpose. That one is a new call wiping
+        the slate; this is the card finishing its job mid-call, and the two
+        want to stay distinguishable when somebody is reading this later.
+
+        `_crisis_shown` deliberately stays True. It is the latch that stops
+        the same disclosure raising the card a second time, and a customer
+        does not become un-at-risk because the advisor read the numbers out -
+        re-raising it every sweep for the rest of the call would be worse
+        than either keeping it or dropping it.
+        """
+        if self._crisis_msg is None and self._crisis_box.count() == 0:
+            return                               # nothing on screen to take down
+        self._crisis_msg = None
+        self._crisis_compact = False
+        while self._crisis_box.count():
+            it = self._crisis_box.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+        self._restyle()
+        self._fit()
+
 
 
 class ComplianceAlertPanel(QFrame):
@@ -3380,6 +3528,9 @@ class ComplianceAlertPanel(QFrame):
         # ── the current stage, opened out (rulebook path only) ──
         self._accordion = SectionAccordion()
         self._accordion.contents_changed.connect(self._refit)
+        # Guards _fit_rows against re-entering itself: it rebuilds the
+        # accordion, which emits contents_changed, which calls _refit.
+        self._trimming = False
         self._lay.addWidget(self._accordion)
 
         # ── idle: what the advisor sees between calls ──────────────────────
@@ -3692,7 +3843,58 @@ class ComplianceAlertPanel(QFrame):
         cap = getattr(self, "_cap", 0)
         return min(wanted, cap) if cap else wanted
 
+    def _fit_rows(self):
+        """Draw one fewer outstanding row until the column fits its ceiling.
+
+        The panel is allowed `_cap` pixels. Beyond that a scrollbar appears,
+        and an advisor mid-call does not scroll - so those rows were never
+        really available, they were just off-screen. A count says the same
+        thing in one line and is honest about it.
+
+        Never below one: the row marked due is what the panel is for.
+        """
+        cap = getattr(self, "_cap", 0)
+        acc = self._accordion
+        if not cap or self._trimming:
+            return
+        self._trimming = True
+        try:
+            # One iteration per row is the most this can need, and it is
+            # bounded rather than a while loop because it runs on the UI
+            # thread during a layout.
+            inner = self._scroll.widget()
+            if inner is None:
+                return
+            for _ in range(acc.MAX_TODO_ROWS + acc.MAX_DONE_ROWS + 2):
+                # Force the pass. sizeHint is cached, and after a rebuild it
+                # still answers for the rows that were there before - so
+                # without this the loop measures the layout it was trying to
+                # replace and decides it has nothing to do.
+                for w in (acc, inner):
+                    lay = w.layout()
+                    if lay is not None:
+                        lay.invalidate()
+                        lay.activate()
+                    w.updateGeometry()
+                wants = inner.sizeHint().height()
+                if wants <= cap:
+                    return
+                # Outstanding work gives way last. Trim what is already done
+                # first - it is reassurance, and the header tally still
+                # carries the true number - and only then start summarising
+                # the list of what is left.
+                if acc._done_limit > 0:
+                    acc._done_limit -= 1
+                elif acc._todo_limit > 1:
+                    acc._todo_limit -= 1
+                else:
+                    return                    # nothing left that may be cut
+                acc.update_section(acc._label, acc._checks)
+        finally:
+            self._trimming = False
+
     def _retarget(self, animate=True):
+        self._fit_rows()
         """Move the panel to the height its contents now need.
 
         Animated, because the checklist changes shape constantly - a check goes
@@ -3708,6 +3910,14 @@ class ComplianceAlertPanel(QFrame):
         if not animate or current == target or not self.isVisible():
             self._set_panel_height(target)
             return
+        # No scrollbar while the panel is growing. Mid-animation the viewport
+        # is briefly shorter than the content it is about to fit, so a bar
+        # appears for a few frames and vanishes again - on a panel that
+        # changes shape every time a check goes green, that flicker is
+        # constant, and it is a good part of what reads as the widget
+        # blipping. It comes back at rest, where it means something.
+        self._scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         anim = QPropertyAnimation(self, b"panelHeight", self)
         anim.setDuration(self.GROW_MS)
         anim.setEasingCurve(QEasingCurve.Type.OutCubic)
@@ -3719,6 +3929,10 @@ class ComplianceAlertPanel(QFrame):
 
     def _settle(self, target):
         """Land exactly, then re-fit the window once."""
+        # Only now, with the panel at its final height, does a scrollbar mean
+        # "there is more than fits" rather than "this is still moving".
+        self._scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         if not self._growing():
             self._set_panel_height(target)
         QTimer.singleShot(0, self._sync_window)
@@ -6064,6 +6278,13 @@ class MainWindow(QMainWindow):
         self._timer_lbl.setText("")
         self._compliance_panel.update_missing([])
         self._compliance_panel.show_idle()   # back to READY between calls
+        # The left column belongs to the call that has just ended. It used to
+        # be cleared only when the NEXT call connected, so a safety card sat
+        # on screen through the wrap-up, through "New Call", and into the gap
+        # before the next customer - which is exactly what Bilal saw.
+        self._alerts_panel.clear_crisis()
+        self._alerts_panel.clear_warnings()
+        self._alerts_panel.clear_trigger_actions()
         self._tray_rec_act.setText("⏺  Start Recording")
         self._tray.setIcon(ICON_IDLE)
         self._tray.setToolTip("Spark Flow – idle")
@@ -6171,6 +6392,12 @@ class MainWindow(QMainWindow):
                 # a correction the advisor is halfway through reading.
                 self._alerts_panel.set_trigger_actions(
                     msg.get("trigger_actions"))
+                # Signposted, and the text either sent or never wanted. The
+                # card was built to stay all call so an advisor who looked
+                # away still had the numbers; compliance watched it in use
+                # and asked for it to go once its job is done.
+                if msg.get("crisis_resolved"):
+                    self._alerts_panel.resolve_crisis()
             alert = msg.get("alert") or {}
             self._compliance_panel.set_missing_parts(alert.get("missing_parts"))
             self._compliance_panel.update_missing(items)

@@ -345,3 +345,32 @@ def test_the_safety_card_sits_above_everything(panel):
     settle(panel)
     assert panel._crisis_box.itemAt(0).widget().y() < \
         panel._action_box.itemAt(0).widget().y()
+
+
+# -- the second of distortion when the card lands -------------------------
+
+def test_the_column_does_not_fade_in_while_it_is_still_moving(panel):
+    """It used to become visible, start the fade, and only THEN measure,
+    trim and condense - so the fade ran over a layout that was still
+    changing shape, under a frameless window resizing beneath it. That is
+    the second of mess compliance saw when the safety card appeared.
+
+    Now: visible at zero opacity (a hidden widget cannot be measured), fit
+    in the dark, fade once the geometry has stopped.
+    """
+    panel.show_crisis(crisis.payload("I can't go on", True))
+    # _restyle arms the fade; it must not have started it.
+    assert panel._fade.state() != panel._fade.State.Running or \
+        panel._fx.opacity() > 0.0
+    settle(panel)
+    for _ in range(8):
+        app.processEvents()
+    assert panel.isVisible()
+
+
+def test_the_fade_timer_belongs_to_the_panel(panel):
+    """A free-standing singleShot keeps firing after the panel's C++ side is
+    gone, and touching a deleted graphics effect from it takes the process
+    down rather than raising - which is exactly what it did."""
+    assert panel._reveal_timer.parent() is panel
+    assert panel._reveal_timer.isSingleShot()
