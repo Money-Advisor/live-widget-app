@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.31"
+APP_VERSION = "2.9.32"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2706,13 +2706,20 @@ class _PanelScroll(QScrollArea):
         return QSize(0, 0)
 
 
-def build_crisis_card(msg: dict) -> QFrame:
+def build_crisis_card(msg: dict, compact: bool = False) -> QFrame:
     """The customer-safety card. One builder, used by both columns.
 
     Module level on purpose. It carries the compliance-approved script,
     the 999 escalation bar and a grid that took two attempts to line up;
     a second copy in the other panel would drift, and the drifted one
     would be the one on screen during a disclosure.
+
+    `compact` drops the five-sentence script and nothing else - the 999 bar,
+    the heading and all three helplines stay exactly as they are. It is used
+    only when a Q17 correction is also on screen and a short screen cannot
+    hold both, which is a later moment in the call than the disclosure: the
+    script has been read by then, and what the advisor still needs off this
+    card is the numbers. Never on a first appearance.
     """
     card = QFrame()
     card.setObjectName("crisis")
@@ -2748,7 +2755,8 @@ def build_crisis_card(msg: dict) -> QFrame:
         col.addWidget(bar)
 
     line = wrapped_label(
-        msg.get("line") or "",
+        ("Support signposted. These numbers stay here for the rest of the "
+         "call." if compact else (msg.get("line") or "")),
         f"background:transparent; font-family:{FF}; font-size:13px;"
         " font-weight:700; color:#FFFFFF;")
     col.addWidget(line)
@@ -2826,12 +2834,31 @@ class AdvisorAlertsPanel(QFrame):
         self._crisis_box.setSpacing(0)
         self._lay.addLayout(self._crisis_box)
 
+        # Corrections sit above the reminders. An advisor who has just
+        # invented a figure does not need to be told, underneath, not to
+        # invent figures.
+        self._action_box = QVBoxLayout()
+        self._action_box.setContentsMargins(0, 0, 0, 0)
+        self._action_box.setSpacing(8)
+        self._lay.addLayout(self._action_box)
+
         self._warn_box = QVBoxLayout()
         self._warn_box.setContentsMargins(0, 0, 0, 0)
         self._warn_box.setSpacing(0)
         self._lay.addLayout(self._warn_box)
 
         self._crisis_shown = False
+        # True while cards are being rebuilt, and while the fit pass is
+        # running. Adding a widget resizes the panel, resizeEvent calls
+        # _fit, and _fit trims by rebuilding - so without this the two
+        # run inside one another and the layout ends up holding a
+        # different set of cards from the one either pass believes in.
+        self._busy = False
+        self._crisis_msg = None        # kept, so it can be rebuilt shorter
+        self._crisis_compact = False
+        self._action_key = None        # what is on screen, to avoid rebuilding
+        self._action_items = []        # every correction we were sent
+        self._shown_actions = 0        # ...and how many fit
         self._warn_key = None          # what is on screen, to avoid rebuilding
         self._warn_items = []          # everything we were sent
         self._shown_warnings = 0       # ...and how many fit
@@ -2851,14 +2878,30 @@ class AdvisorAlertsPanel(QFrame):
     # ── what is in it ────────────────────────────────────────────────────
 
     def has_content(self):
-        return self._crisis_box.count() > 0 or self._warn_box.count() > 0
+        return (self._crisis_box.count() > 0 or self._action_box.count() > 0
+                or self._warn_box.count() > 0)
 
     def _fit(self):
-        """No wrapped label shorter than the text it holds.
+        """No wrapped label shorter than the text it holds, and no card
+        below the bottom of the screen.
 
-        Twice, because growing a label changes the layout and the pass that
-        follows sees the widths that result. A third pass measured no change.
+        Reached from resizeEvent as well as from each rebuild, and every
+        addWidget causes a resize - so this refuses to run inside a rebuild
+        rather than trimming a layout that is halfway through being built.
+        Nothing is lost by returning: each rebuild calls _fit() when done.
         """
+        if self._busy:
+            return
+        self._busy = True
+        try:
+            self._fit_now()
+        finally:
+            self._busy = False
+
+    def _fit_now(self):
+        """The real work. Twice, because growing a label changes the layout
+        and the pass that follows sees the widths that result. A third pass
+        measured no change."""
         for _ in range(2):
             lay = self.layout()
             if lay is not None:
@@ -2880,23 +2923,50 @@ class AdvisorAlertsPanel(QFrame):
         self.adjustSize()
 
         # Nothing may be cut off, and there is no scrollbar to fall back on.
-        # The card is never trimmed - a safety disclosure does not give way
-        # to a warning - so warnings come off the bottom until it fits.
+        # Neither the safety card nor a correction is ever trimmed - one is a
+        # disclosure and the other is a repair the advisor is mid-way through
+        # - so the standing reminders come off the bottom until it fits. They
+        # are the only part of this column that will still be true in a
+        # minute's time.
         room = self._room()
         # Bounded. The loop terminates because _render_warnings floors at
         # zero - but this runs on the UI thread during a layout, and an
         # unbounded while here would freeze the advisor's widget rather than
         # merely look wrong. One iteration per warning is the most it can
         # ever need.
+        # Bounded, both loops. They terminate on their own because each
+        # render floors - but this runs on the UI thread during a layout, so
+        # an unbounded while here would freeze the advisor's widget rather
+        # than merely look wrong. One iteration per card is the most either
+        # can need.
         for _ in range(self.MAX_WARNINGS + 1):
             if self.sizeHint().height() <= room or self._shown_warnings <= 0:
                 break
             self._render_warnings(self._shown_warnings - 1)
-            lay = self.layout()
-            if lay is not None:
-                lay.invalidate()
-                lay.activate()
-            self.adjustSize()
+            self._relayout()
+        # Only once the reminders are gone. A correction is about something
+        # already said and cannot wait; a reminder is about something that
+        # has not happened yet and can.
+        for _ in range(self.MAX_ACTIONS + 1):
+            if self.sizeHint().height() <= room or self._shown_actions <= 1:
+                break
+            self._render_actions(self._shown_actions - 1)
+            self._relayout()
+        # Last, and only to make room for a repair the advisor is mid-way
+        # through. Every number and the 999 bar survive it; the approved
+        # script is what goes, and by this point in the call it has been
+        # read out. With no correction on screen the card is never touched.
+        if (self.sizeHint().height() > room and self._shown_actions > 0
+                and not self._crisis_compact):
+            self._render_crisis(True)
+            self._relayout()
+
+    def _relayout(self):
+        lay = self.layout()
+        if lay is not None:
+            lay.invalidate()
+            lay.activate()
+        self.adjustSize()
 
     def resizeEvent(self, ev):
         # A label has no width until the layout has placed it, so the heights
@@ -2939,7 +3009,11 @@ class AdvisorAlertsPanel(QFrame):
             return                      # unchanged; do not rebuild and flicker
         self._warn_key = key
         self._warn_items = items
-        self._render_warnings(self.MAX_WARNINGS)
+        was, self._busy = self._busy, True
+        try:
+            self._render_warnings(self.MAX_WARNINGS)
+        finally:
+            self._busy = was
         self._restyle()
         self._fit()
 
@@ -2951,7 +3025,10 @@ class AdvisorAlertsPanel(QFrame):
             if w is not None:
                 w.hide()
                 w.deleteLater()
-        self._shown_warnings = max(1, int(limit))
+        # Floors at zero, not one. With corrections above them there
+        # are columns that only fit once the reminders are gone, and a
+        # floor of one made those impossible to fit at all.
+        self._shown_warnings = max(0, int(limit))
         if self._warn_items and self._shown_warnings:
             card = self._warning_card(self._warn_items, self._shown_warnings)
             self._warn_box.addWidget(card)
@@ -2975,6 +3052,162 @@ class AdvisorAlertsPanel(QFrame):
 
     def clear_warnings(self):
         self.set_warnings([])
+
+    # Two at once is the ceiling. A third correction on screen means the
+    # advisor is being asked to repair three conversations at the same time
+    # as having the fourth, and the honest answer is to show the worst two
+    # and say how many are waiting.
+    MAX_ACTIONS = 2
+
+    def set_trigger_actions(self, rows):
+        """Corrections for triggers that have already fired.
+
+        Never removed once shown. Compliance are explicit that repairing the
+        conversation does not reverse the finding, and an advisor who reads
+        half a script and looks up to find it gone is worse off than one who
+        never saw it.
+        """
+        items = [r for r in (rows or [])
+                 if isinstance(r, dict) and (r.get("message") or "").strip()]
+        key = tuple(r.get("id") or r["message"] for r in items)
+        if key == self._action_key:
+            return                      # unchanged; do not rebuild and flicker
+        self._action_key = key
+        self._action_items = items
+        was, self._busy = self._busy, True
+        try:
+            self._render_actions(self.MAX_ACTIONS)
+        finally:
+            self._busy = was
+        self._restyle()
+        self._fit()
+
+    def _render_crisis(self, compact):
+        """Rebuild the safety card at full length or condensed."""
+        if self._crisis_msg is None or compact == self._crisis_compact:
+            return
+        while self._crisis_box.count():
+            it = self._crisis_box.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+        self._crisis_compact = compact
+        card = build_crisis_card(self._crisis_msg, compact)
+        self._crisis_box.addWidget(card)
+        # A widget built without a parent starts hidden, and adding it to a
+        # layout does not reliably show it. This bit here once already.
+        card.show()
+        _smooth_fonts(card)
+
+    def _render_actions(self, limit):
+        """Rebuild the correction cards showing at most `limit` of them."""
+        while self._action_box.count():
+            it = self._action_box.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+        # Never none. An advisor mid-repair losing the script off the screen
+        # is worse than being shown only the worst of two.
+        self._shown_actions = max(1, int(limit)) if self._action_items else 0
+        for row in self._action_items[:self._shown_actions]:
+            card = self._action_card(row)
+            self._action_box.addWidget(card)
+            # A widget built without a parent starts hidden, and adding it to
+            # a layout does not reliably show it. It bit the safety card and
+            # it bit the warnings: everything exists, nothing is on screen.
+            card.show()
+        rest = len(self._action_items) - self._shown_actions
+        if rest > 0:
+            more = QLabel(f"+{rest} more to put right")
+            more.setStyleSheet(
+                f"background:transparent; font-family:{FF}; font-size:10.5px;"
+                " font-weight:700; color:#8A1008;")
+            self._action_box.addWidget(more)
+            more.show()
+
+    def clear_trigger_actions(self):
+        """New call, clean slate. Not a way to dismiss one mid-call."""
+        self._action_key = None
+        self._action_items = []
+        self._shown_actions = 0
+        while self._action_box.count():
+            it = self._action_box.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+
+    def _action_card(self, row):
+        """One correction: what went wrong, and the words that repair it."""
+        critical = row.get("severity") == "critical"
+        edge = "#D93025" if critical else "#E8A33D"
+        wash = "#FDECEA" if critical else "#FEF6E7"
+        ink = "#7A130A" if critical else "#6B4708"
+        quiet = "#9A4238" if critical else "#8A6C3A"
+
+        card = QFrame()
+        card.setObjectName("actionCard")
+        card.setStyleSheet(
+            f"QFrame#actionCard {{ background:{wash};"
+            f" border:1px solid {edge}; border-left:3px solid {edge};"
+            " border-radius:12px; }")
+        col = QVBoxLayout(card)
+        col.setContentsMargins(14, 12, 14, 13)
+        col.setSpacing(8)
+
+        cap = QLabel("PUT THIS RIGHT NOW" if critical else "PUT THIS RIGHT")
+        cap.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:10px;"
+            f" font-weight:800; color:{edge}; letter-spacing:1.4px;")
+        col.addWidget(cap)
+
+        col.addWidget(wrapped_label(
+            str(row.get("message") or ""),
+            f"background:transparent; font-family:{FF}; font-size:12px;"
+            f" font-weight:600; color:{ink}; line-height:142%;"))
+
+        script = (row.get("script") or "").strip()
+        if script:
+            # Its own block, and the only quoted text on the panel. The
+            # advisor is about to read this out with the customer listening,
+            # so it has to be findable without hunting for where it starts.
+            say = QFrame()
+            say.setObjectName("sayThis")
+            say.setStyleSheet(
+                "QFrame#sayThis { background:#FFFFFF;"
+                f" border:1px solid {edge}; border-radius:9px; }}")
+            inner = QVBoxLayout(say)
+            inner.setContentsMargins(11, 9, 11, 10)
+            inner.setSpacing(5)
+            lab = QLabel("SAY THIS")
+            lab.setStyleSheet(
+                f"background:transparent; font-family:{FF}; font-size:9.5px;"
+                f" font-weight:800; color:{quiet}; letter-spacing:1.3px;")
+            inner.addWidget(lab)
+            inner.addWidget(wrapped_label(
+                script,
+                f"background:transparent; font-family:{FF}; font-size:12.5px;"
+                " font-weight:600; color:#1A1A1A; line-height:146%;"))
+            col.addWidget(say)
+        elif row.get("coaching_only"):
+            # Compliance: the disclosure "cannot genuinely be taken back once
+            # the customer has heard it". Saying so plainly is kinder than an
+            # empty space where every other card has a script.
+            col.addWidget(wrapped_label(
+                "There is nothing to say to undo this. Carry on, and do not "
+                "repeat it — it is recorded for coaching.",
+                f"background:transparent; font-family:{FF}; font-size:11.5px;"
+                f" font-weight:500; color:{quiet}; line-height:140%;"
+                " font-style:italic;"))
+        else:
+            col.addWidget(wrapped_label(
+                str(row.get("action") or ""),
+                f"background:transparent; font-family:{FF}; font-size:11.5px;"
+                f" font-weight:500; color:{quiet}; line-height:140%;"))
+        _smooth_fonts(card)
+        return card
 
     def _warning_card(self, items, limit=None):
         card = QFrame()
@@ -3036,8 +3269,11 @@ class AdvisorAlertsPanel(QFrame):
         if self._crisis_shown:
             return
         self._crisis_shown = True
+        self._crisis_msg = dict(msg)
+        was, self._busy = self._busy, True
         card = build_crisis_card(msg)
         self._crisis_box.addWidget(card)
+        self._busy = was
         # A widget built without a parent starts hidden, and adding it to a
         # layout does not reliably show it. This bit once, silently, and every
         # "is it there?" assertion passed while nothing was on screen.
@@ -3047,7 +3283,9 @@ class AdvisorAlertsPanel(QFrame):
         self._fit()
 
     def clear_crisis(self):
-        """New call, clean slate."""
+        """New call, clean slate - including back to the full script."""
+        self._crisis_msg = None
+        self._crisis_compact = False
         self._crisis_shown = False
         while self._crisis_box.count():
             it = self._crisis_box.takeAt(0)
@@ -5695,6 +5933,7 @@ class MainWindow(QMainWindow):
         self._summary_wait = None
         self._alerts_panel.clear_crisis()
         self._alerts_panel.clear_warnings()
+        self._alerts_panel.clear_trigger_actions()
         self._compliance_panel.clear_forbidden()
         self._compliance_panel.clear_cues()
         self._compliance_panel.set_transcription_status("recovered")  # hide any stale notice
@@ -5919,6 +6158,11 @@ class MainWindow(QMainWindow):
             # would otherwise blank the warnings every time a check went green.
             if has_stage:
                 self._alerts_panel.set_warnings(msg.get("warnings"))
+                # Corrections for mistakes already made. Same gate: a "good
+                # job" message carries no stage and would otherwise clear
+                # a correction the advisor is halfway through reading.
+                self._alerts_panel.set_trigger_actions(
+                    msg.get("trigger_actions"))
             alert = msg.get("alert") or {}
             self._compliance_panel.set_missing_parts(alert.get("missing_parts"))
             self._compliance_panel.update_missing(items)
