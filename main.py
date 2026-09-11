@@ -2720,7 +2720,16 @@ def build_crisis_card(msg: dict, compact: bool = False) -> QFrame:
     hold both, which is a later moment in the call than the disclosure: the
     script has been read by then, and what the advisor still needs off this
     card is the numbers. Never on a first appearance.
+
+    The sentence that stands in its place is APPROVED WORDING too - Bilal
+    signed it off on 2026-09-11, having been shown exactly what the card
+    keeps and what it drops. Like the script itself it is not ours to
+    reword: tests/test_advisor_alerts_panel.py holds its own copy and
+    compares the two, so an edit here fails the suite rather than reaching
+    a call.
     """
+    CONDENSED_LINE = ("Support signposted. These numbers stay here for the "
+                      "rest of the call.")
     card = QFrame()
     card.setObjectName("crisis")
     card.setStyleSheet(
@@ -2755,8 +2764,7 @@ def build_crisis_card(msg: dict, compact: bool = False) -> QFrame:
         col.addWidget(bar)
 
     line = wrapped_label(
-        ("Support signposted. These numbers stay here for the rest of the "
-         "call." if compact else (msg.get("line") or "")),
+        CONDENSED_LINE if compact else (msg.get("line") or ""),
         f"background:transparent; font-family:{FF}; font-size:13px;"
         " font-weight:700; color:#FFFFFF;")
     col.addWidget(line)

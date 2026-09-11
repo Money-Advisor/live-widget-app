@@ -243,6 +243,21 @@ def test_condensing_keeps_every_number_and_the_999_bar(panel):
     assert "Support signposted" in short
 
 
+# Compliance's wording, held independently of the code that renders it -
+# the same guard the approved script itself gets. Bilal signed this off on
+# 2026-09-11 after being shown exactly what the card keeps and what it
+# drops, so it is no more ours to reword than the script is.
+APPROVED_CONDENSED = ("Support signposted. These numbers stay here for the "
+                      "rest of the call.")
+
+
+def test_the_condensed_line_is_the_wording_compliance_approved(panel):
+    panel.show_crisis(crisis.payload("I can't go on", True))
+    panel._render_crisis(True)
+    settle(panel)
+    assert APPROVED_CONDENSED in " ".join(l.text() for l in labels(panel))
+
+
 def test_condensing_actually_makes_it_shorter(panel):
     """Otherwise it is a rewrite that buys nothing."""
     panel.show_crisis(crisis.payload("I can't go on", True))
