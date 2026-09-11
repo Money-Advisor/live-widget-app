@@ -74,7 +74,7 @@ always starts signed out.
 
 | | |
 | --- | --- |
-| Version | **2.9.31** |
+| Version | **2.9.32** |
 | Platform | Windows only — `pyaudiowpatch` is required for WASAPI loopback |
 | Distribution | `SparkFlowSetup.exe`, built with PyInstaller and Inno Setup, published as a GitHub release |
 | Build type | A **folder** build, not one-file (see [ARCHITECTURE.md](ARCHITECTURE.md#a-folder-build-not-one-file)) |
@@ -93,7 +93,7 @@ about making failures visible; 2.9.15 onward is the live compliance panel:
 - **2.9.12** reports its own build to the server, so the dashboard can show who is out of date. Anything older shows blank, which is itself the signal.
 - **2.9.13** made the manual Log Out sticky too — it was only wired to expired and revoked sessions.
 - **2.9.14** stopped the customer channel losing time, which had left the agent sounding late relative to the customer.
-- **2.9.15 - 2.9.31, the live compliance panel.** Shipped together and only worth reading as one change. The panel is on screen for the whole of a call and between calls: a stage bar showing where the call has got to, the current stage opened out with every requirement ticked or outstanding, and the advisor's own words underneath each tick. A check made of several parts opens on a dropdown to show which parts are proved and which are still to ask.
+- **2.9.15 - 2.9.32, the live compliance panel.** Shipped together and only worth reading as one change. The panel is on screen for the whole of a call and between calls: a stage bar showing where the call has got to, the current stage opened out with every requirement ticked or outstanding, and the advisor's own words underneath each tick. A check made of several parts opens on a dropdown to show which parts are proved and which are still to ask.
   - **2.9.17** kept the panel on screen instead of hiding it whenever nothing was wrong, which read as the feature being broken.
   - **2.9.19** fixed rows that rendered blank, and an alert that named the wrong stage.
   - **2.9.20** added the per-check dropdown.
@@ -114,6 +114,29 @@ about making failures visible; 2.9.15 onward is the live compliance panel:
   - Two things this fixes. The safety card stops pushing the checklist down - it was going in at the top of the one column, so an advisor scrolled past ~600px of red card to reach the vulnerability questions they need at that exact moment. And **23 breach triggers come out of the checklist**: AFFORDABILITY was showing 92 alerts of which 23 were "do not do this" rendered as work outstanding, 13 of them critical and so never clearing.
   - The column does not exist when it has nothing to say, and it never scrolls. It cannot: it renders only what fits the screen it is on, dropping warnings from the bottom - never the safety card - and saying how many it dropped. Measured on a 1366x720 machine: card plus four warnings is 686px against 680px of room, so it shows three.
 ## Owners and contacts
+
+  - **2.9.32** gives that left column a third kind of card. The first two say
+    what is coming - a customer at risk, and the standing "before you speak"
+    reminders. Neither helps once the advisor has already said it, and until
+    now a fired Q17 trigger changed nothing on screen at all: it went into the
+    audit and the advisor found out at their next one-to-one. A CORRECTION
+    card says what went wrong and carries compliance's own words to repair it
+    with the customer still on the line, in its own quoted block because that
+    is what the advisor is about to do with it. It sits above the reminders -
+    somebody who has just invented a figure does not need to be told,
+    underneath, not to invent figures. Two of the 23 offer no script, because
+    a guideline figure said out loud cannot be taken back, and the card says
+    so rather than leaving a blank. Three wait until a solution starts
+    playing, so the advisor has the whole of I&E to fix it themselves.
+
+    Three cards do not fit one 300px column on a short screen, and there is no
+    scrollbar, so the column is a budget spent in a fixed order: the reminders
+    go first and go completely, corrections trim to one but never to none, and
+    the safety card condenses - losing the script it has already delivered,
+    keeping the heading, the 999 bar and all three helplines. Measured with
+    the real font at `measure_panel.py`, which is the only honest place to
+    measure it: the test suite runs offscreen, where there are no fonts and
+    every glyph is a tofu box wider than the real character.
 
 | Area | Person |
 | --- | --- |
