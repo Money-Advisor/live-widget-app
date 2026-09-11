@@ -3565,7 +3565,7 @@ class ComplianceAlertPanel(QFrame):
         # tiles are the last thing on the page and they sit on a
         # tinted panel of their own, so a matching margin reads as
         # them being crammed against the card's edge.
-        idle.setContentsMargins(8, 16, 8, 24)
+        idle.setContentsMargins(8, 16, 8, 34)
         idle.setSpacing(11)
         idle.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 

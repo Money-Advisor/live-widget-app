@@ -427,7 +427,7 @@ def test_the_shift_tiles_are_not_crammed_against_the_bottom_edge():
              if t.objectName() == "tile" and t.isVisibleTo(p)]
     assert len(tiles) == 3, "CALLS, AVERAGE and FLAGS"
     lowest = max(t.mapTo(p, t.rect().bottomLeft()).y() for t in tiles)
-    assert p.height() - lowest >= 30, (
+    assert p.height() - lowest >= 45, (
         f"only {p.height() - lowest}px under the shift tiles")
 
     anim = getattr(p, "_grow", None)
