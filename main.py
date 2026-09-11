@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.33"
+APP_VERSION = "2.9.34"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2523,10 +2523,17 @@ class SectionAccordion(QWidget):
         Deliberately not the raw message: it carries timings and counters that
         differ every time and would defeat the whole point.
         """
+        # `urgent` and each part's `na` are in here deliberately. Both change
+        # what is drawn without changing anything else about the check, and
+        # the panel skips the rebuild entirely when the signature matches -
+        # so leaving either out means a customer's "no" retires four parts,
+        # or a disclosure makes eight questions due, and the screen carries
+        # on showing what it showed before.
         return (label, frozenset(open_ids), tuple(
             (c.get("id"), bool(c.get("done")), c.get("evidence"), c.get("prompt"),
+             bool(c.get("urgent")),
              tuple(c.get("missing_parts") or ()),
-             tuple((p.get("text"), bool(p.get("done")))
+             tuple((p.get("text"), bool(p.get("done")), bool(p.get("na")))
                    for p in (c.get("parts") or ())))
             for c in checks))
 
@@ -2615,16 +2622,50 @@ class SectionAccordion(QWidget):
         # one line. The header tally carries the real total either way, and
         # the list is worked top-down: what matters is the next few.
         limit = max(1, self._todo_limit)
-        todo_shown = todo[:limit]
-        todo_shown += [c for c in todo[limit:] if c.get("id") in self._open]
-        for i, chk in enumerate(todo_shown):
-            if i == 1:
+        # Urgent rows are outside the cap. They are on screen because a
+        # customer just disclosed something, and summarising one of those
+        # away as "+1 more" would be the panel deciding for the advisor
+        # which safeguarding question to skip.
+        urgent = [c for c in todo if c.get("urgent")]
+        ordinary = [c for c in todo if not c.get("urgent")]
+        todo_shown = urgent + ordinary[:limit]
+        todo_shown += [c for c in ordinary[limit:] if c.get("id") in self._open]
+        # A vulnerability disclosed mid-call makes its follow-ups due NOW,
+        # wherever the stage bar has got to - so they arrive in another
+        # stage's list. Captioned, because a Vulnerability question landing
+        # in the middle of Fact Find without explanation reads as the panel
+        # losing its place. They go first: this is the conversation the
+        # advisor is having.
+        # One ordered list, drawn in that order. Urgent first: this is the
+        # conversation the advisor is having right now. Keeping the order in
+        # a single expression is deliberate - it used to be implied by two
+        # separate loops, and then no single change could get it wrong,
+        # which sounds safe and means untestable.
+        urgent = [c for c in todo_shown if c.get("urgent")]
+        rest = [c for c in todo_shown if not c.get("urgent")]
+        ordered = urgent + rest
+
+        captioned = False
+        for i, chk in enumerate(ordered):
+            is_urgent = bool(chk.get("urgent"))
+            if i == 0 and is_urgent:
+                self._rows.addWidget(self._caption(
+                    (chk.get("urgent_reason") or "ASK THESE NOW").upper()))
+            elif not captioned and (i == 1 or (i == 0 and not is_urgent)):
+                if not is_urgent:
+                    self._rows.addWidget(self._caption("ALSO STILL TO DO"))
+                    captioned = True
+            elif not captioned and not is_urgent and i > 0:
                 self._rows.addWidget(self._caption("ALSO STILL TO DO"))
-            self._rows.addWidget(self._check_row(
-                chk, self.ROW_DUE if i == 0 else self.ROW_TODO))
+                captioned = True
+            # Exactly one row is marked due: the urgent one if there is any,
+            # otherwise the first outstanding. Ten red cards is unreadable.
+            style = (self.ROW_DUE if (is_urgent or i == 0) else self.ROW_TODO)
+            self._rows.addWidget(self._check_row(chk, style))
             if chk.get("id") in self._open:
                 self._rows.addWidget(self._parts_block(chk))
-        left = len(todo) - len(todo_shown)
+        left = len(ordinary) - len([c for c in todo_shown
+                                    if not c.get("urgent")])
         if left > 0:
             self._rows.addWidget(self._caption(
                 f"·  {left} more still to do in this stage"))

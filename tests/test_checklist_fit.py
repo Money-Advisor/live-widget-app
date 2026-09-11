@@ -480,3 +480,100 @@ def test_the_checklist_does_not_waste_away_during_a_stage():
 def test_nothing_winds_the_row_caps_up_and_down_per_render():
     """The mechanism itself is gone, not just disabled."""
     assert not hasattr(m.ComplianceAlertPanel, "_fit_rows")
+
+
+# -- vulnerability follow-ups shown early ---------------------------------
+
+def urgent_check(cid, label):
+    c = check(cid, label)
+    c["urgent"] = True
+    c["urgent_reason"] = "A vulnerability has been disclosed - ask these now"
+    c["section_label"] = "Vulnerability"
+    return c
+
+
+def test_disclosure_follow_ups_are_captioned_not_just_dropped_in(acc):
+    """A Vulnerability question appearing in the middle of Fact Find with
+    no explanation reads as the checklist losing its place."""
+    acc.update_section("Fact Find",
+                       [urgent_check("v1", "Q1 - Repayment impact")]
+                       + many(5, 0))
+    for _ in range(4):
+        app.processEvents()
+    joined = " ".join(texts(acc)).lower()
+    assert "vulnerability has been disclosed" in joined
+
+
+def test_they_come_before_the_ordinary_outstanding_work(acc):
+    """This is the conversation the advisor is having right now."""
+    acc.update_section("Fact Find",
+                       many(5, 0)
+                       + [urgent_check("v1", "Q1 - Repayment impact")])
+    for _ in range(4):
+        app.processEvents()
+    shown = texts(acc)
+    assert shown.index("Q1 - Repayment impact") < \
+        shown.index("Outstanding thing number 0")
+
+
+def test_an_urgent_row_is_never_summarised_away_by_the_cap(acc):
+    """The cap exists to stop the panel overflowing. Using it to hide a
+    safeguarding question a customer just prompted would be the panel
+    deciding which one the advisor gets to skip."""
+    urgents = [urgent_check(f"v{i}", f"Q{i} - vulnerability follow-up")
+               for i in range(8)]
+    acc.update_section("Fact Find", urgents + many(20, 0))
+    for _ in range(4):
+        app.processEvents()
+    shown = " ".join(texts(acc))
+    for u in urgents:
+        assert u["label"] in shown, u["label"]
+
+
+def test_the_count_of_what_is_hidden_ignores_the_urgent_ones(acc):
+    """They were never in the running to be hidden, so counting them would
+    overstate what is left."""
+    acc.update_section("Fact Find",
+                       [urgent_check("v1", "Q1 - Repayment impact")]
+                       + many(20, 0))
+    for _ in range(4):
+        app.processEvents()
+    line = next(t for t in texts(acc) if "still to do in this stage" in t)
+    shown_ordinary = len([t for t in texts(acc)
+                          if t.startswith("Outstanding thing")])
+    assert str(20 - shown_ordinary) in line
+
+
+def test_a_disclosure_arriving_actually_redraws_the_panel(acc):
+    """The panel skips the rebuild when its signature matches. Urgency
+    changes nothing else about a check, so if it is not in the signature
+    eight questions become due and the screen carries on as before."""
+    plain = many(3, 0)
+    acc.update_section("Fact Find", plain)
+    for _ in range(4):
+        app.processEvents()
+    before = " ".join(texts(acc))
+    now_urgent = [dict(c, urgent=True,
+                       urgent_reason="A vulnerability has been disclosed - "
+                                     "ask these now",
+                       section_label="Vulnerability") for c in plain]
+    acc.update_section("Fact Find", now_urgent)
+    for _ in range(4):
+        app.processEvents()
+    assert " ".join(texts(acc)) != before
+
+
+def test_a_part_being_retired_also_redraws(acc):
+    """Same trap, and it would have quietly undone the n/a fix: a
+    customer's "no" changes only each part's `na` flag."""
+    plain = check("x", "Something", parts=["one", "two", "three"])
+    acc.update_section("Fact Find", [plain])
+    for _ in range(4):
+        app.processEvents()
+    before = tally(acc)
+    retired = check("x", "Something", parts=["one", "two", "three"], na_from=1)
+    acc.update_section("Fact Find", [retired])
+    for _ in range(4):
+        app.processEvents()
+    assert tally(acc) != before, "the panel never redrew"
+    assert tally(acc) == ["0/1"]
