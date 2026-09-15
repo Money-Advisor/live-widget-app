@@ -204,11 +204,14 @@ def test_a_new_stage_starts_from_a_full_budget(acc):
 
 # -- the scrollbar ---------------------------------------------------------
 
-def test_the_scrollbar_is_off_while_the_panel_is_moving():
-    """Mid-animation the viewport is briefly shorter than the content it is
-    about to fit, so a bar appears for a few frames and goes again. On a
-    panel that changes shape every time a check goes green, that flicker is
-    constant - and it is a good part of what reads as the widget blipping."""
+def test_the_scrollbar_is_off_in_every_state_including_mid_animation():
+    """The bar is gone for good, not just while the panel is moving.
+
+    It used to come back the moment the panel settled, and that is what
+    Bilal kept reporting - four separate call sites handed it back. The
+    panel now refuses the setting outright, so this asserts the state the
+    old test asserted the opposite of: still off after it settles.
+    """
     from PyQt6.QtCore import Qt
     p = m.ComplianceAlertPanel()
     p.move(-3000, -3000)
@@ -221,7 +224,15 @@ def test_the_scrollbar_is_off_while_the_panel_is_moving():
         Qt.ScrollBarPolicy.ScrollBarAlwaysOff
     p._settle(p._target_height())
     assert p._scroll.verticalScrollBarPolicy() == \
-        Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    # ...and asking for it back does nothing, which is the point: a fifth
+    # call site cannot reintroduce it.
+    p._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    assert p._scroll.verticalScrollBarPolicy() == \
+        Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    # Losing the bar must not lose the scrolling - a long stage still has to
+    # be reachable with the wheel.
+    assert p._scroll._scrollable is True
     # Stop the height animation before letting go of the panel. _retarget
     # starts it and _settle does not stop it, so without this it keeps
     # ticking against an object being torn down - which took the whole
@@ -246,10 +257,16 @@ def test_the_idle_screen_can_never_show_a_scrollbar():
     p.show_idle()
     assert p._scroll.verticalScrollBarPolicy() == \
         Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-    # ...and a call hands it back, because a long stage may genuinely need it
+    # Idle has nothing below the fold, so the wheel is off too and the
+    # "more below" fade must not be showing.
+    assert p._scroll._scrollable is False
+    assert not p._scroll._fade.isVisible()
+    # ...and a call hands the WHEEL back, because a long stage genuinely needs
+    # it. The bar itself never comes back in any state.
     p.show_live()
     assert p._scroll.verticalScrollBarPolicy() == \
-        Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert p._scroll._scrollable is True
     anim = getattr(p, "_grow", None)
     if anim is not None:
         anim.stop()
@@ -577,3 +594,102 @@ def test_a_part_being_retired_also_redraws(acc):
         app.processEvents()
     assert tally(acc) != before, "the panel never redrew"
     assert tally(acc) == ["0/1"]
+
+
+def test_the_window_changes_width_in_one_step_not_two():
+    """Bilal, 2026-09-15: the moment the red safety card opened its column,
+    the checklist beside it came out chopped and "fixed itself after a while".
+
+    That is move() then resize() - two separate geometry changes. Qt lays the
+    children out against the first one before the second arrives, so for one
+    frame the checklist is laid out at the old width; the queued layout pass
+    is the "after a while". One setGeometry cannot produce that frame.
+
+    Driven through a stand-in window that records what it was asked to do,
+    because the fault is the NUMBER of calls, not the final size - and the
+    final size is identical either way, which is why this went unnoticed.
+    """
+    from PyQt6.QtCore import QRect
+
+    class FakeLayout:
+        def __init__(self):
+            self.activated = 0
+
+        def activate(self):
+            self.activated += 1
+
+    class FakeWindow:
+        """Wide enough to need shrinking, so the width branch is taken."""
+
+        def __init__(self):
+            self.calls = []
+            self._lay = FakeLayout()
+            self._geo = QRect(500, 100, 900, 600)
+
+        def isVisible(self):
+            return True
+
+        def screen(self):
+            return None
+
+        def layout(self):
+            return self._lay
+
+        def x(self):
+            return self._geo.x()
+
+        def y(self):
+            return self._geo.y()
+
+        def width(self):
+            return self._geo.width()
+
+        def height(self):
+            return self._geo.height()
+
+        def sizeHint(self):
+            from PyQt6.QtCore import QSize
+            return QSize(640, 600)
+
+        def minimumWidth(self):
+            return 0
+
+        def minimumHeight(self):
+            return 0
+
+        def move(self, *a):
+            self.calls.append("move")
+
+        def resize(self, *a):
+            self.calls.append("resize")
+
+        def setGeometry(self, x, y, w, h):
+            self.calls.append("setGeometry")
+            self._geo = QRect(x, y, w, h)
+
+    p = m.ComplianceAlertPanel()
+    p.move(-3000, -3000)
+    p.show()
+    for _ in range(4):
+        app.processEvents()
+    fake = FakeWindow()
+    p.window = lambda: fake
+    p._sync_window()
+
+    assert "setGeometry" in fake.calls, "the width branch never ran"
+    assert "move" not in fake.calls and "resize" not in fake.calls, (
+        "width and position must land together, not as two changes: "
+        f"{fake.calls}")
+    # ...and the children are laid out at the new width in the same pass,
+    # rather than one paint later.
+    assert fake._lay.activated >= 1
+    # the window still ends up the right size - the fix is the how, not the what
+    assert fake.width() == 640
+    # and it grew leftward, keeping the call card where the advisor left it
+    assert fake.x() == 500 + (900 - 640)
+
+    anim = getattr(p, "_grow", None)
+    if anim is not None:
+        anim.stop()
+    p.hide()
+    p.deleteLater()

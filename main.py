@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.34"
+APP_VERSION = "2.9.35"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2803,6 +2803,9 @@ class _PanelScroll(QScrollArea):
     to be until it would run off the screen - and only then does it scroll.
     """
 
+    # The height of the "there is more below" fade.
+    FADE_H = 22
+
     def __init__(self, parent=None):
         super().__init__(parent)
         # Set False while the idle page is up. Hiding the bar was never
@@ -2812,19 +2815,25 @@ class _PanelScroll(QScrollArea):
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.viewport().setAutoFillBackground(False)
         self.setStyleSheet(
-            "QScrollArea { background:transparent; border:none; }"
-            "QScrollBar:vertical { background:transparent; width:7px;"
-            " margin:8px 1px 8px 0; }"
-            "QScrollBar::handle:vertical { background:#DCDCE8; border-radius:4px;"
-            " min-height:28px; }"
-            "QScrollBar::handle:vertical:hover { background:#B9B2E8; }"
-            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical"
-            " { height:0; }"
-            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical"
-            " { background:transparent; }")
+            "QScrollArea { background:transparent; border:none; }")
+        # The bar is gone, so the only thing left to say "there is more below"
+        # is the content itself. A soft fade over the bottom few pixels does
+        # it without taking any width, and it hides the instant the advisor
+        # reaches the end.
+        self._fade = QFrame(self.viewport())
+        self._fade.setFixedHeight(self.FADE_H)
+        self._fade.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._fade.setStyleSheet(
+            "QFrame { border:none; background:qlineargradient("
+            "x1:0, y1:0, x2:0, y2:1,"
+            " stop:0 rgba(255,255,255,0), stop:1 rgba(255,255,255,235)); }")
+        self._fade.hide()
+        self.verticalScrollBar().valueChanged.connect(self._sync_fade)
+        self.verticalScrollBar().rangeChanged.connect(
+            lambda *_: self._sync_fade())
 
     def sizeHint(self):
         # The panel drives the height through its `panelHeight` property, which
@@ -2843,11 +2852,44 @@ class _PanelScroll(QScrollArea):
         # force the window taller than the screen.
         return QSize(0, 0)
 
+    def setVerticalScrollBarPolicy(self, policy):
+        """The vertical bar stays off. Always.
+
+        Four call sites used to set this back to AsNeeded for the checklist,
+        and the bar reappearing is the single thing Bilal has reported most
+        often. Refusing it here means it cannot come back by someone adding a
+        fifth call site - the wheel still works, and the fade says there is
+        more below.
+        """
+        super().setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+    def _sync_fade(self):
+        """Show the bottom fade only while there is genuinely more to reach."""
+        fade = getattr(self, "_fade", None)
+        if fade is None:
+            return
+        bar = self.verticalScrollBar()
+        more = self._scrollable and bar.value() < bar.maximum()
+        if not more:
+            fade.hide()
+            return
+        vp = self.viewport()
+        fade.setGeometry(0, vp.height() - self.FADE_H,
+                         vp.width(), self.FADE_H)
+        fade.raise_()
+        fade.show()
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._sync_fade()
+
     def set_scrollable(self, allowed):
         """Turn the wheel off entirely, and go back to the top."""
         self._scrollable = bool(allowed)
         if not allowed:
             self.verticalScrollBar().setValue(0)
+        self._sync_fade()
 
     def wheelEvent(self, ev):
         """Ignore the wheel unless there is somewhere to go.
@@ -4205,8 +4247,20 @@ class ComplianceAlertPanel(QFrame):
         old_w = win.width()
         new_w = max(win.sizeHint().width(), win.minimumWidth())
         if new_w != old_w:
-            win.move(win.x() - (new_w - old_w), win.y())
-            win.resize(new_w, win.height())
+            # ONE geometry call, not move() then resize(). Two calls are two
+            # separate changes, and Qt lays the children out against the first
+            # one before the second arrives - so the moment the safety card
+            # opened the alerts column, the checklist beside it was laid out
+            # at the old width for a frame and its questions came out chopped.
+            # It corrected itself on the next layout pass, which is exactly
+            # the "it fixed itself after a while" Bilal reported.
+            win.setGeometry(win.x() - (new_w - old_w), win.y(),
+                            new_w, win.height())
+            # ...and lay the children out at the new width NOW, rather than
+            # letting the queued pass do it one paint later.
+            lay = win.layout()
+            if lay is not None:
+                lay.activate()
 
         # Height too. This was width-only, so the window stayed as tall as the
         # call card and the panel beside it was squeezed into whatever was left -
@@ -4215,14 +4269,19 @@ class ComplianceAlertPanel(QFrame):
         new_h = max(win.sizeHint().height(), win.minimumHeight())
         new_h = min(new_h, avail)
         if new_h != win.height():
-            win.resize(win.width(), new_h)
             # Keep it on screen: growing downward off the bottom edge hides the
             # Stop Recording button, which is the one control that must never
-            # be out of reach.
+            # be out of reach. Worked out BEFORE the geometry is set so the
+            # move and the resize land together, for the same reason as the
+            # width above.
+            new_y = win.y()
             bottom = scr.availableGeometry().bottom() if scr is not None else None
-            if bottom is not None and win.y() + new_h > bottom:
-                win.move(win.x(), max(scr.availableGeometry().top(),
-                                      bottom - new_h))
+            if bottom is not None and new_y + new_h > bottom:
+                new_y = max(scr.availableGeometry().top(), bottom - new_h)
+            win.setGeometry(win.x(), new_y, win.width(), new_h)
+            lay = win.layout()
+            if lay is not None:
+                lay.activate()
 
         pin = getattr(win, "set_compliance_on_top", None)
         if callable(pin):
