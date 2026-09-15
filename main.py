@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.38"
+APP_VERSION = "2.9.39"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2843,8 +2843,12 @@ class _PanelScroll(QScrollArea):
     # are the same object to look at - see the stylesheet below.
     HANDLE_H = 34
     # Top and bottom margin in the QScrollBar:vertical rule below. The handle
-    # slides in what is left, so the two have to agree.
-    BAR_MARGIN = 8
+    # slides in what is left, so the two have to agree - _pin_handle takes the
+    # track length from here.
+    BAR_MARGIN = 12
+    # The bar's width, which is also the handle's. The corner radius is half
+    # of it, so the handle is a capsule at any width.
+    BAR_W = 6
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2874,11 +2878,23 @@ class _PanelScroll(QScrollArea):
         # much more there is below - and compliance chose consistency.
         self.setStyleSheet(
             "QScrollArea { background:transparent; border:none; }"
-            "QScrollBar:vertical { background:transparent; width:6px;"
-            " margin:8px 1px 8px 0; border:none; }"
-            f"QScrollBar::handle:vertical {{ background:#D6D4E4;"
-            f" border-radius:3px; min-height:{self.HANDLE_H}px; }}"
-            "QScrollBar::handle:vertical:hover { background:#A99CF0; }"
+            # Inset from the edge, not flush against it. At margin-right 0 the
+            # bar ran into the card's 18px rounded corner and its ends looked
+            # sheared off - which is the "distorted" part. 5px of clearance and
+            # a deeper top/bottom margin give it room to read as a capsule.
+            f"QScrollBar:vertical {{ background:transparent; width:{self.BAR_W}px;"
+            f" margin:{self.BAR_MARGIN}px 5px {self.BAR_MARGIN}px 0;"
+            f" border:none; }}"
+            # Translucent rather than a flat grey: it sits over white here and
+            # over the very faint lilac of an open disclosure there, and one
+            # opaque colour cannot suit both.
+            f"QScrollBar::handle:vertical {{ background:rgba(26,24,46,0.20);"
+            f" border-radius:{self.BAR_W // 2}px;"
+            f" min-height:{self.HANDLE_H}px; }}"
+            "QScrollBar::handle:vertical:hover"
+            " { background:rgba(107,78,255,0.55); }"
+            "QScrollBar::handle:vertical:pressed"
+            " { background:rgba(107,78,255,0.75); }"
             "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical"
             " { height:0; width:0; border:none; background:transparent; }"
             "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical"
@@ -3886,6 +3902,13 @@ class ComplianceAlertPanel(QFrame):
         live checklist was fixed, which is exactly that case: nothing to
         scroll, and a bar over it anyway.
         """
+        # Let go of any height pinned during the call. It is held while the
+        # advisor has a disclosure open so the window cannot move under them,
+        # and nothing was releasing it when the call ended - so the panel sat
+        # at its call height over an idle page of four rows, and the layout
+        # spread the slack across them. That is what turned the small READY
+        # pill into a green block down the side of the panel.
+        self._pinned_height = None
         self._scroll.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll.set_scrollable(False)
@@ -3914,6 +3937,12 @@ class ComplianceAlertPanel(QFrame):
         without this it would stay off for the whole call - where, rarely, it
         is the honest answer to a stage that genuinely does not fit.
         """
+        # NOT the place to release a pinned height, however much it reads like
+        # the start of a call. update_stage calls this on every server message
+        # - about twice a second - so clearing the pin here un-pins the panel
+        # mid-call and the window starts growing under an open disclosure
+        # again. show_idle owns the release, and a new call always comes
+        # through idle first.
         self._scroll.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._scroll.set_scrollable(True)

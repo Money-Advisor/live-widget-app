@@ -1001,3 +1001,77 @@ def test_pinning_the_handle_does_not_break_scrolling():
     assert bar.singleStep() > 0
     s.hide()
     s.deleteLater()
+
+
+# -- the pin must not survive the call it was taken in ---------------------
+
+def test_going_idle_releases_the_height_pinned_during_the_call():
+    """Reported: after a call the READY chip was a green block down the side
+    of the panel.
+
+    The pin holds the panel still while the advisor has a disclosure open, so
+    the window cannot move under their hand. Nothing released it when the
+    call ended, so the panel sat at its call height over an idle page of four
+    rows and the layout spread the slack across them - stretching a small
+    pill into a block. The panel must go back to its own content height
+    between calls.
+    """
+    p, checks = _panel_with_parts()
+    p._accordion._toggle("c0")
+    settle(p)
+    assert p._pinned_height, "opening a check must pin the height"
+    tall = p._scroll.height()
+
+    p.show_idle()
+    settle(p)
+    assert p._pinned_height is None, "going idle must release the pin"
+    assert p._scroll.height() < tall, (
+        f"the idle page is still at the call's height: {p._scroll.height()}")
+    _stop(p)
+
+
+def test_a_new_call_does_not_inherit_the_last_calls_pin():
+    """Same fault, the other way round: the next call measures itself.
+
+    The release belongs to show_idle and NOT to show_live, which reads like
+    the start of a call and is not - update_stage calls it on every server
+    message, so clearing the pin there un-pins the panel mid-call and the
+    window grows under an open disclosure again. Both of those are asserted
+    here, because putting it in the wrong one passed the idle test.
+    """
+    p, checks = _panel_with_parts()
+    p._accordion._toggle("c0")
+    settle(p)
+    assert p._pinned_height
+
+    # a server tick mid-call must NOT release it
+    p.show_live()
+    assert p._pinned_height, "show_live must not release the pin"
+
+    # ...the call ending must
+    p.show_idle()
+    settle(p)
+    assert p._pinned_height is None
+    p.show_live()
+    assert p._pinned_height is None, "the new call starts unpinned"
+    _stop(p)
+
+
+def test_the_idle_page_is_no_taller_than_what_it_holds():
+    """The thing the advisor actually saw. A panel taller than its rows is
+    what stretched the pill, so measure the gap rather than the pill.
+    """
+    p = m.ComplianceAlertPanel()
+    p.move(-3000, -3000)
+    p.show()
+    for _ in range(6):
+        app.processEvents()
+    p.show_idle()
+    settle(p)
+    inner = p._scroll.widget()
+    assert inner is not None
+    slack = p._scroll.height() - inner.sizeHint().height()
+    assert slack <= 4, (
+        f"the idle panel is {slack}px taller than its contents, so the "
+        f"layout has spare space to stretch things into")
+    _stop(p)
