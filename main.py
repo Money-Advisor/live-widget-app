@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.36"
+APP_VERSION = "2.9.37"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2838,9 +2838,6 @@ class _PanelScroll(QScrollArea):
     to be until it would run off the screen - and only then does it scroll.
     """
 
-    # The height of the "there is more below" fade.
-    FADE_H = 22
-
     def __init__(self, parent=None):
         super().__init__(parent)
         # Set False while the idle page is up. Hiding the bar was never
@@ -2850,25 +2847,27 @@ class _PanelScroll(QScrollArea):
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.viewport().setAutoFillBackground(False)
+        # A slim bar, and only when there is something to scroll. It was taken
+        # away entirely for a while; compliance asked for it back, styled like
+        # the one on the summary card - narrow, rounded, no arrow buttons and
+        # no track, so it reads as a position marker rather than a control.
+        #
+        # The handle length is Qt's, not ours: it is the share of the content
+        # that fits, so a long stage gives a short handle. min-height only
+        # stops it becoming a dot on a very long list.
         self.setStyleSheet(
-            "QScrollArea { background:transparent; border:none; }")
-        # The bar is gone, so the only thing left to say "there is more below"
-        # is the content itself. A soft fade over the bottom few pixels does
-        # it without taking any width, and it hides the instant the advisor
-        # reaches the end.
-        self._fade = QFrame(self.viewport())
-        self._fade.setFixedHeight(self.FADE_H)
-        self._fade.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self._fade.setStyleSheet(
-            "QFrame { border:none; background:qlineargradient("
-            "x1:0, y1:0, x2:0, y2:1,"
-            " stop:0 rgba(255,255,255,0), stop:1 rgba(255,255,255,235)); }")
-        self._fade.hide()
-        self.verticalScrollBar().valueChanged.connect(self._sync_fade)
-        self.verticalScrollBar().rangeChanged.connect(
-            lambda *_: self._sync_fade())
+            "QScrollArea { background:transparent; border:none; }"
+            "QScrollBar:vertical { background:transparent; width:6px;"
+            " margin:8px 1px 8px 0; border:none; }"
+            "QScrollBar::handle:vertical { background:#D6D4E4;"
+            " border-radius:3px; min-height:26px; }"
+            "QScrollBar::handle:vertical:hover { background:#A99CF0; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical"
+            " { height:0; width:0; border:none; background:transparent; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical"
+            " { background:transparent; }")
 
     def sizeHint(self):
         # The panel drives the height through its `panelHeight` property, which
@@ -2887,44 +2886,20 @@ class _PanelScroll(QScrollArea):
         # force the window taller than the screen.
         return QSize(0, 0)
 
-    def setVerticalScrollBarPolicy(self, policy):
-        """The vertical bar stays off. Always.
-
-        Four call sites used to set this back to AsNeeded for the checklist,
-        and the bar reappearing is the single thing Bilal has reported most
-        often. Refusing it here means it cannot come back by someone adding a
-        fifth call site - the wheel still works, and the fade says there is
-        more below.
-        """
-        super().setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
-    def _sync_fade(self):
-        """Show the bottom fade only while there is genuinely more to reach."""
-        fade = getattr(self, "_fade", None)
-        if fade is None:
-            return
-        bar = self.verticalScrollBar()
-        more = self._scrollable and bar.value() < bar.maximum()
-        if not more:
-            fade.hide()
-            return
-        vp = self.viewport()
-        fade.setGeometry(0, vp.height() - self.FADE_H,
-                         vp.width(), self.FADE_H)
-        fade.raise_()
-        fade.show()
-
-    def resizeEvent(self, ev):
-        super().resizeEvent(ev)
-        self._sync_fade()
-
     def set_scrollable(self, allowed):
-        """Turn the wheel off entirely, and go back to the top."""
+        """Turn the wheel AND the bar off entirely, and go back to the top.
+
+        The idle page is a status chip, one sentence and three figures. There
+        is nothing below the fold, so a bar over it is always wrong and the
+        wheel has nowhere to go - hiding the bar alone was never enough,
+        because the header still slid off the top.
+        """
         self._scrollable = bool(allowed)
+        super().setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded if allowed
+            else Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         if not allowed:
             self.verticalScrollBar().setValue(0)
-        self._sync_fade()
 
     def wheelEvent(self, ev):
         """Ignore the wheel unless there is somewhere to go.
@@ -4127,12 +4102,11 @@ class ComplianceAlertPanel(QFrame):
         if row is None:
             return
         try:
-            # A margin, so the row lands clear of the fade at the bottom
-            # edge rather than half under it.
-            self._scroll.ensureWidgetVisible(row, 0, self._scroll.FADE_H + 8)
+            # A margin below it, so the opened row lands clear of the bottom
+            # edge rather than flush against it.
+            self._scroll.ensureWidgetVisible(row, 0, 30)
         except RuntimeError:
             pass          # the row was rebuilt out from under us; harmless
-        self._scroll._sync_fade()
 
     def _deferred_retarget(self):
         self._retarget_queued = False

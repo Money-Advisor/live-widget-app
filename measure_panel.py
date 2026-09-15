@@ -170,7 +170,13 @@ print(f"CHECKLIST  worst stage: {worst.key} ({len(worst.checks)} checks)")
 print(f"  size                     : {checklist.width()} x {checklist.height()}")
 bars = [b for b in checklist.findChildren(QScrollArea)
         if b.verticalScrollBar().isVisible()]
-print(f"  visible scrollbars       : {len(bars)}")
+# A bar on the longest stage is now CORRECT. Thirty checks with their
+# evidence do not fit a 600px panel, and compliance chose a visible bar over
+# a hidden one on 2026-09-15 - so this reports it rather than failing on it.
+# What would still be a fault is a bar on a stage that fits, which is what
+# the idle-screen test guards.
+print(f"  visible scrollbars       : {len(bars)}  "
+      f"({'expected on the longest stage' if bars else 'none'})")
 cl_bad = []
 for lab in checklist.findChildren(m.QLabel):
     if not lab.isVisibleTo(checklist) or not lab.text().strip():
@@ -186,6 +192,6 @@ checklist.hide()
 
 panel.hide()
 ok = (not bad and not sc and not over and fits and not brackets
-      and condensed and keeps_numbers and not bars and not cl_bad)
+      and condensed and keeps_numbers and not cl_bad)
 print("\n" + ("PIXEL CHECK PASSED" if ok else "PROBLEMS ABOVE"))
 sys.exit(0 if ok else 1)

@@ -204,13 +204,14 @@ def test_a_new_stage_starts_from_a_full_budget(acc):
 
 # -- the scrollbar ---------------------------------------------------------
 
-def test_the_scrollbar_is_off_in_every_state_including_mid_animation():
-    """The bar is gone for good, not just while the panel is moving.
+def test_the_scrollbar_is_off_while_the_panel_is_moving_and_back_at_rest():
+    """Mid-animation the viewport is briefly shorter than the content it is
+    about to fit, so a bar appears for a few frames and goes again. On a
+    panel that changes shape every time a check goes green that flicker is
+    constant, and it is a good part of what reads as the widget blipping.
 
-    It used to come back the moment the panel settled, and that is what
-    Bilal kept reporting - four separate call sites handed it back. The
-    panel now refuses the setting outright, so this asserts the state the
-    old test asserted the opposite of: still off after it settles.
+    At rest it comes back, because it means something there - compliance
+    asked for it on 2026-09-15 after a spell with no bar at all.
     """
     from PyQt6.QtCore import Qt
     p = m.ComplianceAlertPanel()
@@ -224,15 +225,31 @@ def test_the_scrollbar_is_off_in_every_state_including_mid_animation():
         Qt.ScrollBarPolicy.ScrollBarAlwaysOff
     p._settle(p._target_height())
     assert p._scroll.verticalScrollBarPolicy() == \
-        Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-    # ...and asking for it back does nothing, which is the point: a fifth
-    # call site cannot reintroduce it.
-    p._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-    assert p._scroll.verticalScrollBarPolicy() == \
-        Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-    # Losing the bar must not lose the scrolling - a long stage still has to
-    # be reachable with the wheel.
+        Qt.ScrollBarPolicy.ScrollBarAsNeeded
     assert p._scroll._scrollable is True
+
+
+def test_the_panel_bar_is_styled_like_the_summary_cards():
+    """Compliance picked the summary card's bar and asked for the same one on
+    the checklist: narrow, rounded, no arrow buttons, no track.
+
+    Both are the same widget class, so this is really a guard that the style
+    is not quietly dropped or widened - it is the difference between a
+    position marker and a control sitting on a 340px panel.
+    """
+    p = m.ComplianceAlertPanel()
+    css = p._scroll.styleSheet()
+    assert "width:6px" in css.replace(" ", "")
+    assert "border-radius:3px" in css.replace(" ", "")
+    # arrows off, track invisible
+    assert "add-line:vertical" in css and "height:0" in css.replace(" ", "")
+    assert "add-page:vertical" in css
+    # and the summary card's list is the very same class, so it matches
+    s = m.SummaryScreen()
+    assert type(s._list) is type(p._scroll)
+    assert s._list.styleSheet() == css
+    p.deleteLater()
+    s.deleteLater()
     # Stop the height animation before letting go of the panel. _retarget
     # starts it and _settle does not stop it, so without this it keeps
     # ticking against an object being torn down - which took the whole
@@ -247,7 +264,11 @@ def test_the_scrollbar_is_off_in_every_state_including_mid_animation():
 def test_the_idle_screen_can_never_show_a_scrollbar():
     """Reported as still there after the live checklist was fixed. The idle
     page is a status chip, one sentence and three figures - there is nothing
-    to scroll, so a bar over it is always wrong."""
+    to scroll, so a bar over it is always wrong.
+
+    The live checklist is a different case and keeps its bar: compliance
+    asked for it back on 2026-09-15, styled like the summary card's.
+    """
     from PyQt6.QtCore import Qt
     p = m.ComplianceAlertPanel()
     p.move(-3000, -3000)
@@ -257,15 +278,12 @@ def test_the_idle_screen_can_never_show_a_scrollbar():
     p.show_idle()
     assert p._scroll.verticalScrollBarPolicy() == \
         Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-    # Idle has nothing below the fold, so the wheel is off too and the
-    # "more below" fade must not be showing.
+    # Idle has nothing below the fold, so the wheel is off too.
     assert p._scroll._scrollable is False
-    assert not p._scroll._fade.isVisible()
-    # ...and a call hands the WHEEL back, because a long stage genuinely needs
-    # it. The bar itself never comes back in any state.
+    # ...and a call hands BOTH back, because a long stage genuinely needs them.
     p.show_live()
     assert p._scroll.verticalScrollBarPolicy() == \
-        Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        Qt.ScrollBarPolicy.ScrollBarAsNeeded
     assert p._scroll._scrollable is True
     anim = getattr(p, "_grow", None)
     if anim is not None:
@@ -700,25 +718,35 @@ def test_the_window_changes_width_in_one_step_not_two():
 STAGE = [{"key": "INTRODUCTION", "label": "Onboarding"}]
 
 
-def settle(p, ms=1200):
-    """Spin until the growth animation has finished and the height holds.
+def settle(p, spins=60):
+    """Land the panel on its target height, deterministically.
 
-    A fixed number of processEvents() calls is not enough and gives a
-    MID-ANIMATION reading, which is how the first version of these tests
-    managed to compare two arbitrary points on the same curve and pass.
+    Two ways to get this wrong, and this file has now had both.
+
+    A fixed handful of processEvents() calls reads the height MID-ANIMATION,
+    so two arbitrary points on the same easing curve compare equal often
+    enough to pass - that is how the first version of these tests went green
+    against a panel that was still visibly stretching.
+
+    Looping on wall-clock time until the height stopped changing fixed that
+    and broke something worse: spinning the event loop for a second at a time
+    also runs every other test file's leftover timers and half-torn-down
+    widgets, and the whole suite stopped dead. Alone this file passed in 9s;
+    with the rest it never finished.
+
+    So: pump a BOUNDED number of turns, which is enough for the queued
+    retarget to fire, then finish the animation directly. The assertions here
+    are about the target the panel chooses, not about the easing.
     """
-    import time
-    end = time.time() + ms / 1000
-    last, stable = None, 0
-    while time.time() < end:
+    for _ in range(spins):
         app.processEvents()
-        h = p._scroll.height()
-        stable = stable + 1 if h == last else 0
-        last = h
-        if stable > 40:
-            break
-        time.sleep(0.005)
-    return last
+    anim = getattr(p, "_grow", None)
+    if anim is not None:
+        anim.stop()
+    p._retarget(animate=False)
+    for _ in range(5):
+        app.processEvents()
+    return p._scroll.height()
 
 
 def _panel_with_parts():
