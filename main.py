@@ -2194,7 +2194,14 @@ class SectionAccordion(QWidget):
     messages leave the panel exactly as it was.
     """
 
-    contents_changed = pyqtSignal()
+    # True  - the rows changed because new data arrived, so the panel may
+    #         re-measure and glide to a new height.
+    # False - the ADVISOR opened or closed a disclosure. The window must not
+    #         move under their hand; the panel scrolls to what they opened
+    #         instead. Growing was added because opening a check scrolled it
+    #         out of sight; revealing it keeps that fixed without the window
+    #         changing size mid-call, which is what Bilal reported.
+    contents_changed = pyqtSignal(bool)
 
     # What this render draws. Equal to the cap now that nothing winds them
     # down; kept as separate names because the rendering reads better for
@@ -2247,8 +2254,16 @@ class SectionAccordion(QWidget):
         self._open = set()
         self._label, self._checks = "", []
         self._sig = None
+        # Set only for the rebuild the advisor themselves caused.
+        self._user_toggle = False
+        self._just_opened = None
+        # The check row for each id in the CURRENT render, so the panel can
+        # scroll to what was just opened. Rebuilt every render; a stale
+        # widget here would be one Qt has already destroyed.
+        self._row_by_id = {}
 
     def _clear(self):
+        self._row_by_id = {}
         while self._rows.count():
             it = self._rows.takeAt(0)
             w = it.widget()
@@ -2377,9 +2392,15 @@ class SectionAccordion(QWidget):
         """Open or close one check. Rebuilds so the arrow and the list agree."""
         if check_id in self._open:
             self._open.discard(check_id)
+            self._just_opened = None
         else:
             self._open.add(check_id)
-        self.update_section(self._label, self._checks)
+            self._just_opened = check_id
+        self._user_toggle = True
+        try:
+            self.update_section(self._label, self._checks)
+        finally:
+            self._user_toggle = False
 
     def _caret(self, chk, row_widget=None):
         """The dropdown control: how many parts are proved, and an arrow.
@@ -2589,7 +2610,7 @@ class SectionAccordion(QWidget):
             self.setUpdatesEnabled(True)
         self.setVisible(True)
         self.updateGeometry()
-        self.contents_changed.emit()
+        self.contents_changed.emit(not self._user_toggle)
 
     # How many outstanding rows to draw before summarising the rest.
     #
@@ -2661,7 +2682,9 @@ class SectionAccordion(QWidget):
             # Exactly one row is marked due: the urgent one if there is any,
             # otherwise the first outstanding. Ten red cards is unreadable.
             style = (self.ROW_DUE if (is_urgent or i == 0) else self.ROW_TODO)
-            self._rows.addWidget(self._check_row(chk, style))
+            _row = self._check_row(chk, style)
+            self._row_by_id[chk.get("id")] = _row
+            self._rows.addWidget(_row)
             if chk.get("id") in self._open:
                 self._rows.addWidget(self._parts_block(chk))
         left = len(ordinary) - len([c for c in todo_shown
@@ -2689,7 +2712,9 @@ class SectionAccordion(QWidget):
             self._rows.addWidget(self._caption(
                 f"\u00b7  {hidden} more already done"))
         for chk in shown:
-            self._rows.addWidget(self._check_row(chk, self.ROW_DONE))
+            _row = self._check_row(chk, self.ROW_DONE)
+            self._row_by_id[chk.get("id")] = _row
+            self._rows.addWidget(_row)
             if chk.get("id") in self._open:
                 self._rows.addWidget(self._parts_block(chk))
 
@@ -3595,6 +3620,12 @@ class ComplianceAlertPanel(QFrame):
         self._cap = 0            # set from the real screen by _sync_window
         self._grow = None
         self._retarget_queued = False
+        # Owned by the panel, not a free-standing QTimer.singleShot. One of
+        # those fired after this panel's C++ side had gone and took the whole
+        # process down with it; a child timer dies with its parent.
+        self._reveal_timer = QTimer(self)
+        self._reveal_timer.setSingleShot(True)
+        self._reveal_timer.timeout.connect(self._reveal_opened)
         shell.addWidget(self._scroll)
         inner = QWidget()
         inner.setObjectName("panelInner")
@@ -4014,8 +4045,15 @@ class ComplianceAlertPanel(QFrame):
             self._set_panel_height(target)
         QTimer.singleShot(0, self._sync_window)
 
-    def _refit(self):
+    def _refit(self, may_resize=True):
         """The contents changed shape: re-measure and glide to the new height.
+
+        `may_resize` is False when the ADVISOR opened or closed a disclosure.
+        The window then stays exactly where it is and the panel scrolls to
+        what they opened. Growing on a toggle was solving a real problem -
+        opening a check used to scroll its parts out of sight - but it moved
+        the whole window, Stop Recording included, while somebody was reading.
+        Revealing the row fixes the first without causing the second.
 
         On the NEXT event-loop turn, not now. Rows added a moment ago have not
         been given a width yet, and almost every row here is a word-wrapped
@@ -4027,10 +4065,40 @@ class ComplianceAlertPanel(QFrame):
         there was nothing to do, and the panel snapped to 451px on the following
         tick. Which is exactly the jump this was meant to remove.
         """
+        if not may_resize:
+            # Next turn, for the same reason _retarget defers: the rows that
+            # just appeared have not been given a width yet, so the one we
+            # want to show has no position to scroll to.
+            self._reveal_timer.start(0)
+            return
         if self._retarget_queued:
             return
         self._retarget_queued = True
         QTimer.singleShot(0, self._deferred_retarget)
+
+    def _reveal_opened(self):
+        """Scroll the check the advisor just opened into view.
+
+        Nothing if they CLOSED one - the rows above it have not moved, so
+        yanking the view around would be the panel taking over.
+        """
+        acc = getattr(self, "_accordion", None)
+        if acc is None:
+            return
+        cid = getattr(acc, "_just_opened", None)
+        acc._just_opened = None
+        if not cid:
+            return
+        row = (acc._row_by_id or {}).get(cid)
+        if row is None:
+            return
+        try:
+            # A margin, so the row lands clear of the fade at the bottom
+            # edge rather than half under it.
+            self._scroll.ensureWidgetVisible(row, 0, self._scroll.FADE_H + 8)
+        except RuntimeError:
+            pass          # the row was rebuilt out from under us; harmless
+        self._scroll._sync_fade()
 
     def _deferred_retarget(self):
         self._retarget_queued = False

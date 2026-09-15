@@ -693,3 +693,103 @@ def test_the_window_changes_width_in_one_step_not_two():
         anim.stop()
     p.hide()
     p.deleteLater()
+
+
+# -- opening a disclosure must not move the window -------------------------
+
+def _panel_with_parts():
+    p = m.ComplianceAlertPanel()
+    p.move(-3000, -3000)
+    p.show()
+    for _ in range(4):
+        app.processEvents()
+    p.show_live()
+    checks = [check(f"c{i}", f"Requirement number {i}",
+                    parts=[f"part {i}.{j}" for j in range(4)])
+              for i in range(6)]
+    p.update_stage("Onboarding", [{"key": "INTRODUCTION",
+                                   "label": "Onboarding"}], checks)
+    for _ in range(8):
+        app.processEvents()
+    return p, checks
+
+
+def _stop(p):
+    anim = getattr(p, "_grow", None)
+    if anim is not None:
+        anim.stop()
+    p.hide()
+    p.deleteLater()
+
+
+def test_opening_a_check_does_not_resize_the_panel():
+    """Bilal, 2026-09-15: the widget grew every time he opened a sub-list, so
+    Stop Recording moved while he was reading. The parts open INSIDE the
+    height the panel already has.
+    """
+    p, checks = _panel_with_parts()
+    before = p._scroll.height()
+    assert before > 0
+    p._accordion._toggle("c0")
+    for _ in range(8):
+        app.processEvents()
+    assert p._scroll.height() == before, (
+        f"the panel resized on a toggle: {before} -> {p._scroll.height()}")
+    _stop(p)
+
+
+def test_new_data_may_still_resize_the_panel():
+    """The guard that stops the fix being written too wide. A new stage with
+    a different number of rows is not the advisor's hand on the panel, and
+    gliding to fit it is the behaviour that was always wanted.
+    """
+    p, checks = _panel_with_parts()
+    sig = []
+    p._accordion.contents_changed.connect(lambda ok: sig.append(ok))
+    p._accordion._toggle("c0")
+    for _ in range(4):
+        app.processEvents()
+    assert sig == [False], f"a toggle must not license a resize: {sig}"
+    sig.clear()
+    p.update_stage("Fact Find", [{"key": "FACT_FIND", "label": "Fact Find"}],
+                   [check("f0", "A different requirement")])
+    for _ in range(4):
+        app.processEvents()
+    assert sig == [True], f"new data must license a resize: {sig}"
+    _stop(p)
+
+
+def test_the_check_the_advisor_opened_is_scrolled_into_view():
+    """Growing was solving a real problem - the parts opened below the fold
+    and only appeared if the advisor thought to scroll. Removing the growth
+    without this would put that back.
+    """
+    p, checks = _panel_with_parts()
+    last = checks[-1]["id"]
+    p._accordion._toggle(last)
+    for _ in range(8):
+        app.processEvents()
+    # the accordion hands the id over exactly once, and the panel takes it
+    assert p._accordion._just_opened is None, (
+        "the panel never collected the opened check")
+    row = p._accordion._row_by_id.get(last)
+    assert row is not None, "the opened row is not in the render"
+    # it is inside the viewport, not below it
+    top = row.mapTo(p._scroll.viewport(), row.rect().topLeft()).y()
+    assert top < p._scroll.viewport().height(), (
+        f"the opened check is below the fold at y={top}")
+    _stop(p)
+
+
+def test_closing_a_check_does_not_yank_the_view():
+    """Nothing above it moved, so taking the view somewhere would be the
+    panel deciding for the advisor."""
+    p, checks = _panel_with_parts()
+    p._accordion._toggle("c0")
+    for _ in range(6):
+        app.processEvents()
+    p._accordion._toggle("c0")          # close it again
+    for _ in range(6):
+        app.processEvents()
+    assert p._accordion._just_opened is None
+    _stop(p)
