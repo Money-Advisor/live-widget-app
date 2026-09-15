@@ -906,3 +906,98 @@ def test_an_id_opened_in_an_earlier_stage_does_not_pin_the_rest_of_the_call():
     assert p._accordion.has_open() is False
     assert p._pinned_height is None
     _stop(p)
+
+
+# -- the scroll handle is the same length everywhere -----------------------
+
+def _handle_px(scroll):
+    """The handle rectangle the style actually draws.
+
+    Not the stylesheet: reading that only proves what we ASKED Qt for, and
+    the first attempt at this asked with `max-height`, which Qt ignores on a
+    scrollbar subcontrol. Twenty rows still drew a 143px handle and the
+    stylesheet looked correct the whole time.
+    """
+    from PyQt6.QtWidgets import QStyle, QStyleOptionSlider
+    bar = scroll.verticalScrollBar()
+    opt = QStyleOptionSlider()
+    opt.initFrom(bar)
+    opt.orientation = bar.orientation()
+    opt.minimum, opt.maximum = bar.minimum(), bar.maximum()
+    opt.sliderPosition = bar.value()
+    opt.sliderValue = bar.value()
+    opt.pageStep = bar.pageStep()
+    opt.singleStep = bar.singleStep()
+    return bar.style().subControlRect(
+        QStyle.ComplexControl.CC_ScrollBar, opt,
+        QStyle.SubControl.SC_ScrollBarSlider, bar).height()
+
+
+def _scroller(rows, height=300):
+    from PyQt6.QtWidgets import QVBoxLayout, QWidget
+    s = m._PanelScroll()
+    s.resize(340, height)
+    inner = QWidget()
+    lay = QVBoxLayout(inner)
+    lay.setContentsMargins(0, 0, 0, 0)
+    for i in range(rows):
+        lab = QLabel(f"Requirement number {i}")
+        lab.setFixedHeight(24)
+        lay.addWidget(lab)
+    s.setWidget(inner)
+    s.move(-3000, -3000)
+    s.show()
+    for _ in range(30):
+        app.processEvents()
+    return s
+
+
+def test_the_scroll_handle_is_the_same_length_whatever_it_holds():
+    """Bilal: the checklist's bar is much longer than the summary card's.
+
+    It was, and correctly so - Qt sizes the handle as the share of content
+    that fits, and the summary card holds 113 finished checks where a stage
+    holds nine. Same stylesheet, two completely different-looking controls.
+    Pinned now, so every scroller in the widget matches.
+    """
+    want = m._PanelScroll.HANDLE_H
+    seen = []
+    for rows in (20, 120, 400):
+        s = _scroller(rows)
+        assert s.verticalScrollBar().maximum() > 0, (
+            f"{rows} rows did not overflow, so there is no handle to measure")
+        seen.append(_handle_px(s))
+        s.hide()
+        s.deleteLater()
+    assert seen == [want, want, want], (
+        f"handle lengths differ by content: {seen}, wanted {want}")
+
+
+def test_a_taller_panel_still_gets_the_same_handle():
+    """The pin is recomputed from the track, so a different panel height must
+    not change the handle - the summary card is 300px and a stage can be 600.
+    """
+    want = m._PanelScroll.HANDLE_H
+    a = _scroller(200, height=300)
+    b = _scroller(200, height=600)
+    assert _handle_px(a) == want
+    assert _handle_px(b) == want
+    for s in (a, b):
+        s.hide()
+        s.deleteLater()
+
+
+def test_pinning_the_handle_does_not_break_scrolling():
+    """pageStep is the lever, and pageStep is also how far a track click
+    jumps - so check the thing that matters is untouched: the full content is
+    still reachable, and the wheel still moves in singleSteps.
+    """
+    s = _scroller(200)
+    bar = s.verticalScrollBar()
+    top = bar.value()
+    bar.setValue(bar.maximum())
+    assert bar.value() == bar.maximum(), "the bottom must still be reachable"
+    assert bar.maximum() > top
+    assert bar.singleStep() > 0
+    s.hide()
+    s.deleteLater()

@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.37"
+APP_VERSION = "2.9.38"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2838,6 +2838,14 @@ class _PanelScroll(QScrollArea):
     to be until it would run off the screen - and only then does it scroll.
     """
 
+    # The scroll handle's length, in pixels, everywhere in the widget. Fixed
+    # rather than proportional so the checklist's bar and the summary card's
+    # are the same object to look at - see the stylesheet below.
+    HANDLE_H = 34
+    # Top and bottom margin in the QScrollBar:vertical rule below. The handle
+    # slides in what is left, so the two have to agree.
+    BAR_MARGIN = 8
+
     def __init__(self, parent=None):
         super().__init__(parent)
         # Set False while the idle page is up. Hiding the bar was never
@@ -2854,20 +2862,75 @@ class _PanelScroll(QScrollArea):
         # the one on the summary card - narrow, rounded, no arrow buttons and
         # no track, so it reads as a position marker rather than a control.
         #
-        # The handle length is Qt's, not ours: it is the share of the content
-        # that fits, so a long stage gives a short handle. min-height only
-        # stops it becoming a dot on a very long list.
+        # THE HANDLE IS A FIXED LENGTH. Left to itself Qt sizes it as the
+        # share of the content that fits, so the summary card's 113 finished
+        # checks got a stub and a nine-row stage got a bar down most of the
+        # panel - two very different-looking controls out of one stylesheet,
+        # which is what Bilal reported. See _pin_handle for how: `max-height`
+        # here does NOT do it, measured - Qt honours min-height on the handle
+        # and ignores max-height, so 20 rows still drew a 143px handle.
+        #
+        # It costs the one thing a proportional handle tells you - roughly how
+        # much more there is below - and compliance chose consistency.
         self.setStyleSheet(
             "QScrollArea { background:transparent; border:none; }"
             "QScrollBar:vertical { background:transparent; width:6px;"
             " margin:8px 1px 8px 0; border:none; }"
-            "QScrollBar::handle:vertical { background:#D6D4E4;"
-            " border-radius:3px; min-height:26px; }"
+            f"QScrollBar::handle:vertical {{ background:#D6D4E4;"
+            f" border-radius:3px; min-height:{self.HANDLE_H}px; }}"
             "QScrollBar::handle:vertical:hover { background:#A99CF0; }"
             "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical"
             " { height:0; width:0; border:none; background:transparent; }"
             "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical"
             " { background:transparent; }")
+        # Re-pin AFTER the event-loop turn, not during it. QScrollArea sets
+        # pageStep to the viewport height as part of its own bookkeeping, and
+        # that happens after rangeChanged and after resizeEvent - so pinning
+        # inline was immediately overwritten and the handle stayed
+        # proportional. Owned by this widget, never a free-standing
+        # singleShot: one of those outlived its panel and took the process
+        # down with it.
+        self._pin_timer = QTimer(self)
+        self._pin_timer.setSingleShot(True)
+        self._pin_timer.timeout.connect(self._pin_handle)
+        self.verticalScrollBar().rangeChanged.connect(
+            lambda *_: self._pin_timer.start(0))
+
+    def _pin_handle(self):
+        """Hold the scroll handle at HANDLE_H pixels, whatever the content.
+
+        Qt derives the handle's length from pageStep:
+
+            handle = track * pageStep / (range + pageStep)
+
+        so pageStep is the only honest lever - `max-height` in the stylesheet
+        is ignored for this subcontrol, which is why the first attempt at this
+        changed nothing. Rearranged for the length we want:
+
+            pageStep = HANDLE_H * range / (track - HANDLE_H)
+
+        pageStep also decides how far a click on the empty track jumps. On a
+        6px-wide indicator nobody clicks the track, and the wheel uses
+        singleStep, so that is the whole cost.
+        """
+        bar = self.verticalScrollBar()
+        rng = bar.maximum() - bar.minimum()
+        if rng <= 0:
+            return                       # nothing to scroll; no handle to size
+        # The groove, not the widget: the stylesheet margins above and below
+        # are not part of the track the handle slides in.
+        track = bar.height() - self.BAR_MARGIN * 2
+        if track <= self.HANDLE_H:
+            return                       # too short to hold a fixed handle
+        want = max(1, round(self.HANDLE_H * rng / (track - self.HANDLE_H)))
+        if bar.pageStep() != want:
+            bar.setPageStep(want)
+
+    def resizeEvent(self, ev):
+        # The track length changed, so the pageStep that produced HANDLE_H no
+        # longer does.
+        super().resizeEvent(ev)
+        self._pin_timer.start(0)
 
     def sizeHint(self):
         # The panel drives the height through its `panelHeight` property, which
