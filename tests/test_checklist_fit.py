@@ -697,6 +697,30 @@ def test_the_window_changes_width_in_one_step_not_two():
 
 # -- opening a disclosure must not move the window -------------------------
 
+STAGE = [{"key": "INTRODUCTION", "label": "Onboarding"}]
+
+
+def settle(p, ms=1200):
+    """Spin until the growth animation has finished and the height holds.
+
+    A fixed number of processEvents() calls is not enough and gives a
+    MID-ANIMATION reading, which is how the first version of these tests
+    managed to compare two arbitrary points on the same curve and pass.
+    """
+    import time
+    end = time.time() + ms / 1000
+    last, stable = None, 0
+    while time.time() < end:
+        app.processEvents()
+        h = p._scroll.height()
+        stable = stable + 1 if h == last else 0
+        last = h
+        if stable > 40:
+            break
+        time.sleep(0.005)
+    return last
+
+
 def _panel_with_parts():
     p = m.ComplianceAlertPanel()
     p.move(-3000, -3000)
@@ -707,10 +731,8 @@ def _panel_with_parts():
     checks = [check(f"c{i}", f"Requirement number {i}",
                     parts=[f"part {i}.{j}" for j in range(4)])
               for i in range(6)]
-    p.update_stage("Onboarding", [{"key": "INTRODUCTION",
-                                   "label": "Onboarding"}], checks)
-    for _ in range(8):
-        app.processEvents()
+    p.update_stage("Onboarding", STAGE, checks)
+    settle(p)
     return p, checks
 
 
@@ -731,8 +753,7 @@ def test_opening_a_check_does_not_resize_the_panel():
     before = p._scroll.height()
     assert before > 0
     p._accordion._toggle("c0")
-    for _ in range(8):
-        app.processEvents()
+    settle(p)
     assert p._scroll.height() == before, (
         f"the panel resized on a toggle: {before} -> {p._scroll.height()}")
     _stop(p)
@@ -767,8 +788,7 @@ def test_the_check_the_advisor_opened_is_scrolled_into_view():
     p, checks = _panel_with_parts()
     last = checks[-1]["id"]
     p._accordion._toggle(last)
-    for _ in range(8):
-        app.processEvents()
+    settle(p)
     # the accordion hands the id over exactly once, and the panel takes it
     assert p._accordion._just_opened is None, (
         "the panel never collected the opened check")
@@ -786,10 +806,75 @@ def test_closing_a_check_does_not_yank_the_view():
     panel deciding for the advisor."""
     p, checks = _panel_with_parts()
     p._accordion._toggle("c0")
-    for _ in range(6):
-        app.processEvents()
+    settle(p)
     p._accordion._toggle("c0")          # close it again
-    for _ in range(6):
-        app.processEvents()
+    settle(p)
     assert p._accordion._just_opened is None
+    _stop(p)
+
+
+def test_the_panel_stays_put_through_the_servers_next_tick():
+    """The one the first attempt missed, and the reason it shipped broken.
+
+    Suppressing the animated retarget on a toggle is not enough. The server
+    resends the checklist about twice a second, and every one of those runs
+    show_live -> _sync_window -> _retarget(animate=False), which re-measured
+    the contents and grew the window about half a second AFTER the toggle.
+    A test that only toggled could never see it.
+    """
+    p, checks = _panel_with_parts()
+    p._accordion._toggle("c0")
+    after_toggle = settle(p)
+
+    # ...now the server says exactly what it said before, four times over
+    for _ in range(4):
+        p.update_stage("Onboarding", STAGE, checks)
+        p._sync_window()
+        settle(p, 250)
+    assert p._scroll.height() == after_toggle, (
+        f"the server tick resized it: {after_toggle} -> {p._scroll.height()}")
+    _stop(p)
+
+
+def test_a_check_going_green_does_not_jump_an_open_list():
+    """Genuinely new data, but resizing under an open disclosure looks
+    exactly like the bug it is not."""
+    p, checks = _panel_with_parts()
+    p._accordion._toggle("c0")
+    held = settle(p)
+    greened = [dict(c) for c in checks]
+    greened[3]["done"] = True
+    p.update_stage("Onboarding", STAGE, greened)
+    settle(p)
+    assert p._scroll.height() == held
+    _stop(p)
+
+
+def test_closing_everything_lets_the_panel_fit_itself_again():
+    """The pin is not permanent - it is released the moment the advisor has
+    nothing open, or the panel would be stuck at one height all call."""
+    p, checks = _panel_with_parts()
+    natural = p._scroll.height()
+    p._accordion._toggle("c0")
+    settle(p)
+    assert p._pinned_height, "opening must pin the height"
+    p._accordion._toggle("c0")          # close it again
+    settle(p)
+    assert p._pinned_height is None, "closing must release the pin"
+    assert p._scroll.height() == natural
+    _stop(p)
+
+
+def test_an_id_opened_in_an_earlier_stage_does_not_pin_the_rest_of_the_call():
+    """_open keeps ids across a stage change, so "is anything open" has to
+    mean "in THIS render" or the panel freezes at one height for good."""
+    p, checks = _panel_with_parts()
+    p._accordion._toggle("c0")
+    settle(p)
+    p.update_stage("Fact Find", [{"key": "FACT_FIND", "label": "Fact Find"}],
+                   [check("f0", "A different requirement")])
+    settle(p)
+    assert "c0" in p._accordion._open, "the set genuinely still holds it"
+    assert p._accordion.has_open() is False
+    assert p._pinned_height is None
     _stop(p)

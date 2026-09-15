@@ -523,12 +523,13 @@ def test_a_real_change_does_rebuild():
     assert before != after, "a check going green must redraw the list"
 
 
-def test_opening_a_check_glides_rather_than_jumping():
-    """The height is animated, so the panel grows in one motion.
+def test_opening_a_check_no_longer_grows_the_panel():
+    """This asserted the opposite until 2026-09-15.
 
-    The animation is also the thing most easily broken by accident: an earlier
-    version started it and then had _sync_window snap straight to the end value
-    a millisecond later, and every transition measured as a single step.
+    Growing on a toggle moved the whole window - Stop Recording included -
+    under an advisor who was reading it, which Bilal reported twice. The parts
+    now open inside the height the panel already has, and the panel scrolls
+    down to them instead.
     """
     _app()
     panel = main.ComplianceAlertPanel()
@@ -546,12 +547,42 @@ def test_opening_a_check_glides_rather_than_jumping():
     QApplication.processEvents()
     panel._deferred_retarget()              # what the queued timer would do
 
+    assert panel._pinned_height, "opening a check must pin the height"
+    assert panel._target_height() <= start, (
+        "a toggle must not raise the height the panel is heading for")
+    anim = getattr(panel, "_grow", None)
+    if anim is not None:
+        anim.stop()
+
+
+def test_a_genuinely_taller_stage_still_glides_rather_than_jumping():
+    """The half of the old test that is still true, and still worth guarding.
+
+    The animation is the thing most easily broken by accident: an earlier
+    version started it and then had _sync_window snap straight to the end
+    value a millisecond later, and every transition measured as a single step.
+    New data - as opposed to the advisor's own hand - may still resize the
+    panel, and when it does it has to glide.
+    """
+    _app()
+    panel = main.ComplianceAlertPanel()
+    panel.show_live()
+    panel.show()
+    panel._cap = 2000
+    panel.update_stage("IE", _sections(4), _long_stage()[:2])
+    panel._retarget(animate=False)
+    start = panel._scroll.maximumHeight()
+
+    panel.update_stage("IE", _sections(4), _long_stage())
+    QApplication.processEvents()
+    panel._deferred_retarget()
+
     anim = panel._grow
     assert anim is not None, "no animation was created"
     assert anim.state() == main.QPropertyAnimation.State.Running, \
         "the animation is not running"
     assert anim.startValue() == start
-    assert anim.endValue() > start, "opening a check makes the panel taller"
+    assert anim.endValue() > start, "more rows make the panel taller"
     anim.stop()
 
 

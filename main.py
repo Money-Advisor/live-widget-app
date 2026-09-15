@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.35"
+APP_VERSION = "2.9.36"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2402,6 +2402,16 @@ class SectionAccordion(QWidget):
         finally:
             self._user_toggle = False
 
+    def has_open(self):
+        """Is any check the advisor opened actually in this render?
+
+        Not just "is _open non-empty": ids stay in that set across a stage
+        change, so a check opened in Onboarding would otherwise keep the
+        panel pinned for the rest of the call.
+        """
+        shown = {c.get("id") for c in (self._checks or [])}
+        return bool(self._open & shown & set(self._row_by_id))
+
     def _caret(self, chk, row_widget=None):
         """The dropdown control: how many parts are proved, and an arrow.
 
@@ -3620,6 +3630,14 @@ class ComplianceAlertPanel(QFrame):
         self._cap = 0            # set from the real screen by _sync_window
         self._grow = None
         self._retarget_queued = False
+        # While the advisor has a disclosure open, the panel holds the height
+        # it had when they opened it. Suppressing the ANIMATED retarget was
+        # not enough: the server sends the checklist about twice a second and
+        # every one of those goes show_live -> _sync_window -> retarget
+        # (animate=False), so the window grew half a second after the toggle
+        # instead of instantly. Pinned here because _target_height is the one
+        # place all of those paths meet.
+        self._pinned_height = None
         # Owned by the panel, not a free-standing QTimer.singleShot. One of
         # those fired after this panel's C++ side had gone and took the whole
         # process down with it; a child timer dies with its parent.
@@ -4000,6 +4018,12 @@ class ComplianceAlertPanel(QFrame):
         if wanted <= 0:
             wanted = inner.sizeHint().height()
         cap = getattr(self, "_cap", 0)
+        pinned = getattr(self, "_pinned_height", None)
+        if pinned:
+            # Held at what the advisor was looking at. Still clamped to the
+            # screen, so a pin taken before a monitor change cannot leave the
+            # panel taller than the display it is now on.
+            return min(pinned, cap) if cap else pinned
         return min(wanted, cap) if cap else wanted
 
     def _retarget(self, animate=True):
@@ -4065,6 +4089,16 @@ class ComplianceAlertPanel(QFrame):
         there was nothing to do, and the panel snapped to 451px on the following
         tick. Which is exactly the jump this was meant to remove.
         """
+        # The pin is held for as long as the advisor has something open, not
+        # just for the toggle itself. A check going green while a disclosure
+        # is open is genuinely new data, but resizing then would look exactly
+        # like the bug - the panel jumping under an open list.
+        if self._accordion.has_open():
+            if not self._pinned_height:
+                self._pinned_height = (self._scroll.height()
+                                       or self._get_panel_height() or None)
+        else:
+            self._pinned_height = None
         if not may_resize:
             # Next turn, for the same reason _retarget defers: the rows that
             # just appeared have not been given a width yet, so the one we
