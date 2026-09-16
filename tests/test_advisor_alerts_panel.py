@@ -126,8 +126,15 @@ def test_no_bracket_ever_reaches_the_screen(panel):
 
 # -- nothing is cut off, and there is no scrollbar -------------------------
 
-def test_the_worst_case_column_gives_way_in_the_right_order(panel):
-    """Safety card, the two longest corrections, and every reminder.
+def test_the_worst_case_column_keeps_everything_and_scrolls(panel):
+    """Safety card, the two longest corrections, four more, every reminder.
+
+    This used to be a test of what got THROWN AWAY, and in what order:
+    reminders first, then corrections down to one, then the safety card's
+    approved script rewritten short. That was the only defence a column with
+    no scrollbar had. Bilal saw the result on 16 Sep - cards cut off at the
+    screen edge, and "+1 more to put right" standing where a repair he
+    needed the words for should have been. Nothing is discarded now.
 
     Behaviour, not pixels. These run on the offscreen platform, which has no
     fonts - every glyph is a tofu box wider than the real character, and it
@@ -136,26 +143,38 @@ def test_the_worst_case_column_gives_way_in_the_right_order(panel):
     measurement is measure_panel.py, which runs with Plus Jakarta Sans.
     """
     panel.show_crisis(crisis.payload("I can't go on", True))
-    panel.set_trigger_actions([dict(r, severity="critical")
-                               for r in LONGEST[:2]] + CORRECTIONS[:4])
+    rows = [dict(r, severity="critical") for r in LONGEST[:2]] + CORRECTIONS[:4]
+    panel.set_trigger_actions(rows)
     panel.set_warnings(WARNINGS)
     settle(panel)
-    # the reminders went first, and went completely
-    assert panel._shown_warnings == 0
-    # a correction survived, and the safety card was not removed
-    assert panel._shown_actions >= 1
+    # the reminders stayed - capped at MAX_WARNINGS by choice, not by room
+    assert panel._shown_warnings == panel.MAX_WARNINGS
+    # every correction stayed, and the safety card kept its full script
+    assert panel._shown_actions == len(rows)
     assert panel._crisis_box.count() == 1
-    # nothing hidden without saying so
-    assert "more to put right" in " ".join(l.text() for l in labels(panel))
+    assert panel._crisis_compact is False
+    # ...and the column still does not run off the bottom of the screen
+    assert panel.sizeHint().height() <= panel._room()
 
 
-def test_there_is_never_a_scrollbar(panel):
+def test_the_column_scrolls_rather_than_running_off_the_screen(panel):
+    """It had no scrollbar at all, which is precisely why it had to trim.
+
+    Both halves matter. There must BE a scroller, and the column must still
+    be capped at the screen - a scroller whose parent is free to grow is
+    just a taller column running off the bottom.
+    """
     panel.show_crisis(crisis.payload("I can't go on", True))
     panel.set_trigger_actions(CORRECTIONS[:6])
     panel.set_warnings(WARNINGS)
     settle(panel)
-    assert panel.findChildren(QScrollArea) == []
-    assert panel.findChildren(QAbstractScrollArea) == []
+
+    scrolls = panel.findChildren(QScrollArea)
+    assert len(scrolls) == 1, "the alerts column needs exactly one scroller"
+    assert panel.sizeHint().height() <= panel._room()
+    # more content than fits, and it is reachable rather than discarded
+    assert scrolls[0].widget().sizeHint().height() > panel._room()
+    assert scrolls[0].verticalScrollBar().maximum() > 0
 
 
 def test_no_two_cards_overlap(panel):
@@ -174,14 +193,15 @@ def test_no_two_cards_overlap(panel):
 
 # -- what gives way, and in what order -------------------------------------
 
-def test_the_reminders_go_before_a_correction_does(panel):
+def test_the_reminders_are_no_longer_sacrificed_for_a_correction(panel):
+    """They used to come off the bottom to make room. Nothing has to now."""
     panel.show_crisis(crisis.payload("I can't go on", True))
     panel.set_trigger_actions([dict(r, severity="critical")
                                for r in LONGEST[:2]])
     panel.set_warnings(WARNINGS)
     settle(panel)
-    assert panel._shown_warnings == 0
-    assert panel._shown_actions >= 1
+    assert panel._shown_warnings == panel.MAX_WARNINGS
+    assert panel._shown_actions == 2
 
 
 def test_a_correction_is_never_trimmed_to_none(panel):
@@ -201,11 +221,20 @@ def test_a_correction_is_never_trimmed_to_none(panel):
     assert [w for w in cards if w.objectName() == "actionCard"]
 
 
-def test_whatever_is_hidden_is_counted_rather_than_vanishing(panel):
-    panel.set_trigger_actions(CORRECTIONS[:6])
+def test_nothing_is_hidden_at_all_any_more(panel):
+    """Bilal, 16 Sep: "it shows +1 instead, all should be displayed there".
+
+    The card carries the WORDS TO SAY, so a correction that is counted
+    rather than drawn is a repair the advisor cannot make.
+    """
+    rows = CORRECTIONS[:6]
+    panel.set_trigger_actions(rows)
     settle(panel)
     text = " ".join(l.text() for l in labels(panel))
-    assert "more to put right" in text
+    assert "more to put right" not in text
+    assert panel._shown_actions == len(rows)
+    for r in rows:
+        assert r["message"] in text, "correction not on screen: " + str(r["id"])
 
 
 # -- the safety card --------------------------------------------------------
@@ -296,13 +325,23 @@ def test_a_new_call_gets_the_full_script_back(panel):
 
 def test_rebuilding_does_not_leave_a_duplicate_line_behind(panel):
     """Adding a card resizes the panel, resizeEvent calls _fit, and _fit
-    trims by rebuilding. Left unguarded those two run inside one another and
-    the layout keeps a line from the pass that was interrupted."""
+    rebuilds. Left unguarded those two run inside one another and the layout
+    keeps a line from the pass that was interrupted.
+
+    Checked per correction rather than "every label on the panel is unique".
+    That shortcut only held while at most two cards were ever drawn: each
+    card carries its own "PUT THIS RIGHT NOW" heading, so six cards share
+    five headings quite legitimately - the shortcut would call that a
+    duplicate, while missing a genuinely repeated card.
+    """
     panel.show_crisis(crisis.payload("I can't go on", True))
-    panel.set_trigger_actions(CORRECTIONS[:5])
+    rows = CORRECTIONS[:5]
+    panel.set_trigger_actions(rows)
     settle(panel)
     texts = [l.text() for l in labels(panel)]
-    assert len(texts) == len(set(texts)), texts
+    for r in rows:
+        n = texts.count(r["message"])
+        assert n == 1, str(r["id"]) + " is on the panel " + str(n) + " times"
 
 
 def test_the_count_matches_what_is_actually_on_screen(panel):
@@ -551,3 +590,49 @@ def test_a_new_call_starts_with_an_empty_column(panel):
     panel.clear_open_criticals()
     settle(panel)
     assert panel._open_crit_box.count() == 0
+
+
+# -- the column has to APPEAR for a critical, on its own -------------------
+
+OPEN_CRITICALS = [
+    {"id": "vuln.suicide_signposting",
+     "label": "Current/recent suicide or self-harm - signposting",
+     "section_label": "Vulnerability",
+     "prompt": "Disclose the approved mental-health support details now.",
+     "missing_parts": []},
+    {"id": "vuln.texas_consent", "label": "Consent to note on file",
+     "section_label": "Vulnerability",
+     "prompt": "Ask for consent to record this on the file.",
+     "missing_parts": ["consent asked", "answer captured"]},
+]
+
+
+def test_a_critical_on_its_own_brings_the_column_up(panel):
+    """16 Sep: a client said they were suicidal, the follow-ups opened on the
+    checklist, and the red column never appeared at all.
+
+    The cards were built, added and shown - and then _restyle asked
+    has_content() whether there was anything worth showing, was told no,
+    and hid the column with the cards inside it. _open_crit_box was simply
+    missing from that list.
+
+    It only ever looked like it worked because a Q17 correction usually
+    arrives alongside one: that fills _action_box, which WAS on the list, so
+    the column came up and the criticals rode in with it.
+    """
+    panel.set_open_criticals(OPEN_CRITICALS)
+    settle(panel)
+    assert panel.has_content(), "the panel does not know it has criticals"
+    assert panel.isVisible(), "the red column stayed hidden"
+    text = " ".join(l.text() for l in labels(panel))
+    for r in OPEN_CRITICALS:
+        assert r["label"] in text, f"critical not on screen: {r['id']}"
+
+
+def test_the_column_goes_away_again_when_the_criticals_are_done(panel):
+    panel.set_open_criticals(OPEN_CRITICALS)
+    settle(panel)
+    assert panel.isVisible()
+    panel.set_open_criticals([])
+    settle(panel)
+    assert not panel.isVisible(), "an empty red column is still a red column"

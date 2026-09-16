@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.45"
+APP_VERSION = "2.9.46"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2729,6 +2729,20 @@ class SectionAccordion(QWidget):
                 self._rows.addWidget(self._parts_block(chk))
 
 
+class _OpenableRow(QWidget):
+    """A still-to-do row that can be clicked to show what is missing inside it.
+
+    A QPushButton would be the obvious thing and is the wrong one: these
+    labels wrap to two and three lines, and a button sizes to one.
+    """
+
+    clicked = pyqtSignal()
+
+    def mousePressEvent(self, ev):
+        self.clicked.emit()
+        super().mousePressEvent(ev)
+
+
 class StillToDo(QWidget):
     """Everything the advisor has moved past without finishing, in one list.
 
@@ -2757,6 +2771,12 @@ class StillToDo(QWidget):
         self.setObjectName("stillToDo")
         self.setStyleSheet("QWidget#stillToDo { background:transparent; }")
         self._open = False
+        # Which rows have been opened out, by check id. Kept on the widget
+        # rather than in the row, because _render throws every row away and
+        # builds it again - an advisor who opened "Step 6 - Missing debts" to
+        # read the four categories they skipped would otherwise have it shut
+        # itself the next time the server spoke, which is every 25 seconds.
+        self._open_rows = set()
         # None, not [] - "nothing yet" and "nothing left to do" are different
         # states, and starting at [] made the first empty update a no-op, so
         # the widget kept whatever visibility it happened to have.
@@ -2788,7 +2808,7 @@ class StillToDo(QWidget):
         """`rows` as the server sends them: id, label, section_label."""
         rows = [r for r in (rows or [])
                 if isinstance(r, dict) and (r.get("label") or "").strip()]
-        if self._rows is not None and                 [r.get("id") for r in rows] ==                 [r.get("id") for r in self._rows]:
+        if self._rows is not None and self._key(rows) == self._key(self._rows):
             return                      # unchanged; do not rebuild and flicker
         self._rows = rows
         self._render()
@@ -2855,16 +2875,61 @@ class StillToDo(QWidget):
                     " font-size:10px; color:#A2A2BC;")
                 self._body_lay.addWidget(more)
 
+    @staticmethod
+    def _key(rows):
+        """What makes this list different from the one already drawn.
+
+        The PARTS are in it, not just the ids. Keyed on ids alone, a check
+        whose twelve categories were being worked through one at a time
+        looked unchanged the whole way - so the list never redrew, and the
+        parts the advisor had since covered stayed on it.
+        """
+        return [(r.get("id"), tuple(r.get("missing_parts") or []))
+                for r in (rows or [])]
+
+    def _flip_row(self, check_id):
+        if check_id in self._open_rows:
+            self._open_rows.discard(check_id)
+        else:
+            self._open_rows.add(check_id)
+        self._render()
+        self.changed.emit()
+
     def _row(self, r):
-        row = QWidget()
+        """One check. Openable where it is made of several parts.
+
+        "Step 6 - Missing debts" is one line on this list and twelve
+        questions in the rulebook, so an advisor reading the line has no way
+        to know which four they skipped. The parts are what they need, and
+        they are already in the payload.
+        """
+        parts = [str(p).strip() for p in (r.get("missing_parts") or [])
+                 if str(p).strip()]
+        cid = r.get("id")
+        open_here = bool(parts) and cid in self._open_rows
+
+        box = QWidget()
+        box.setStyleSheet("background:transparent;")
+        v = QVBoxLayout(box)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+
+        row = _OpenableRow() if parts else QWidget()
         row.setStyleSheet("background:transparent;")
+        if parts:
+            row.setCursor(Qt.CursorShape.PointingHandCursor)
+            row.clicked.connect(lambda _c=cid: self._flip_row(_c))
         h = QHBoxLayout(row)
         h.setContentsMargins(0, 1, 0, 1)
         h.setSpacing(7)
-        dot = QLabel("\u25cb")
+        # An open circle for a plain check, an arrow for one that opens out -
+        # so the advisor can see which rows have more behind them without
+        # clicking every line to find out.
+        mark = ("\u25be" if open_here else "\u25b8") if parts else "\u25cb"
+        dot = QLabel(mark)
         dot.setStyleSheet(
             f"background:transparent; font-family:{FF}; font-size:11px;"
-            " color:#C4C2D6;")
+            f" color:{'#8A84B8' if parts else '#C4C2D6'};")
         dot.setFixedWidth(12)
         h.addWidget(dot, 0, Qt.AlignmentFlag.AlignTop)
         lab = QLabel(r.get("label") or "")
@@ -2873,7 +2938,25 @@ class StillToDo(QWidget):
             f"background:transparent; font-family:{FF}; font-size:11.5px;"
             " color:#4A4560;")
         h.addWidget(lab, 1)
-        return row
+        if parts:
+            n = QLabel(str(len(parts)))
+            n.setStyleSheet(
+                f"background:#EDEBF8; font-family:{FF}; font-size:9.5px;"
+                " font-weight:800; color:#5B5580; border-radius:7px;"
+                " padding:1px 6px;")
+            h.addWidget(n, 0, Qt.AlignmentFlag.AlignTop)
+        v.addWidget(row)
+
+        if open_here:
+            for p in parts:
+                line = QLabel("\u00b7  " + p)
+                line.setWordWrap(True)
+                line.setContentsMargins(19, 0, 0, 0)
+                line.setStyleSheet(
+                    f"background:transparent; font-family:{FF};"
+                    " font-size:10.5px; color:#7A7699;")
+                v.addWidget(line)
+        return box
 
 
 class StageTracker(QWidget):
@@ -3141,6 +3224,26 @@ class _PanelScroll(QScrollArea):
         super().wheelEvent(ev)
 
 
+class _AlertScroll(_PanelScroll):
+    """_PanelScroll, but as tall as its contents rather than always full.
+
+    The compliance panel is a fixed-height card and wants the parent's
+    sizeHint to be the cap. This column is hidden when empty and holds one
+    card most of the time, so taking the cap would make an empty-looking
+    column the height of the screen. It takes the smaller of the two.
+    """
+
+    def sizeHint(self):
+        w = self.widget()
+        if w is None:
+            return super().sizeHint()
+        cap = self.maximumHeight()
+        h = w.sizeHint().height()
+        if 0 < cap < 16777215:
+            h = min(h, cap)
+        return QSize(w.sizeHint().width(), h)
+
+
 def build_crisis_card(msg: dict, compact: bool = False) -> QFrame:
     """The customer-safety card. One builder, used by both columns.
 
@@ -3265,8 +3368,31 @@ class AdvisorAlertsPanel(QFrame):
         self.setSizePolicy(QSizePolicy.Policy.Fixed,
                            QSizePolicy.Policy.Minimum)
 
-        self._lay = QVBoxLayout(self)
-        self._lay.setContentsMargins(0, 0, 0, 0)
+        # The cards live in a body widget inside a scroller, not directly on
+        # the frame. Without it this column had no scrollbar at all - it grew
+        # until it ran off the bottom of the screen, and the only defence was
+        # to THROW CARDS AWAY until it fitted. A vulnerability disclosure
+        # opens eight follow-ups at once and a Q17 correction is two cards on
+        # its own, so on 16 Sep Bilal got a column cut off mid-card with "+1
+        # more to put right" where the second repair should have been. Now it
+        # scrolls and nothing is discarded.
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        self._body = QWidget()
+        self._body.setObjectName("alertsBody")
+        self._body.setStyleSheet(
+            "QWidget#alertsBody { background:transparent; }")
+        self._scroll = _AlertScroll()
+        self._scroll.setWidget(self._body)
+        self._scroll.setSizePolicy(QSizePolicy.Policy.Fixed,
+                                   QSizePolicy.Policy.Minimum)
+        outer.addWidget(self._scroll)
+
+        self._lay = QVBoxLayout(self._body)
+        # Room on the right for the scrollbar, so a card's rounded corner and
+        # the bar are never on top of one another.
+        self._lay.setContentsMargins(0, 0, self._scroll.BAR_W + 5, 0)
         self._lay.setSpacing(10)
         self._lay.setAlignment(Qt.AlignmentFlag.AlignTop)
 
@@ -3344,7 +3470,18 @@ class AdvisorAlertsPanel(QFrame):
     # ── what is in it ────────────────────────────────────────────────────
 
     def has_content(self):
+        # _open_crit_box was missing from this list, and it is the whole
+        # reason the column failed to appear on 16 Sep when a client said
+        # they were suicidal. The criticals were built, added and shown - and
+        # then _restyle asked this whether there was anything to show, was
+        # told no, and hid the column with the cards inside it.
+        #
+        # It only ever LOOKED like it worked because a Q17 correction usually
+        # arrives alongside: that fills _action_box, which IS on this list, so
+        # the column appeared and the criticals came up with it. A disclosure
+        # on its own, with no correction, showed nothing at all.
         return (self._crisis_box.count() > 0 or self._action_box.count() > 0
+                or self._open_crit_box.count() > 0
                 or self._warn_box.count() > 0)
 
     def _reveal(self):
@@ -3387,16 +3524,40 @@ class AdvisorAlertsPanel(QFrame):
         # passed perfectly well on its own. Owned, it dies with the panel.
         self._reveal_timer.start(0)
 
+    #: passes of grow-then-pin. Two is enough in every measured case; the
+    #: third is there so a pathological card cannot leave the column short.
+    FIT_PASSES = 3
+
     def _fit_now(self):
-        """The real work. Twice, because growing a label changes the layout
-        and the pass that follows sees the widths that result. A third pass
-        measured no change."""
-        for _ in range(2):
-            lay = self.layout()
-            if lay is not None:
-                lay.invalidate()
-                lay.activate()
-            grown = False
+        """Grow the wrapped labels, then pin the scroller to what they need.
+
+        Repeated, because the two depend on each other. A label cannot know
+        its height until it has a width, it has no width until the scroller
+        has been given a height, and the scroller's height comes from the
+        labels. Run once through, the column pinned 369px for content that
+        wanted 440 and stayed there - the resize that would have corrected it
+        calls _fit, and _fit refuses to run inside itself, by design.
+
+        THE COLUMN IS CAPPED AT THE SCREEN AND SCROLLS PAST IT, rather than
+        discarding cards until it fits. It used to trim: reminders off the
+        bottom first, then corrections down to one, then the safety card's
+        approved script rewritten short. Every one of those was a real loss,
+        and the last two happen at the worst moment of a call - a disclosure
+        that opens eight follow-ups, or a second manipulation while the
+        advisor is still repairing the first. Bilal saw both on 16 Sep: cards
+        cut off at the screen edge, and "+1 more to put right" standing where
+        a repair he needed the words for should have been. A scrollbar was
+        the answer all along; this column simply never had one.
+
+        The height is PINNED, not merely capped. A QScrollArea reports a
+        small fixed sizeHint of its own and the layout item takes that rather
+        than the override - measured at 11x0, which made the whole column
+        vanish. Setting minimum AND maximum leaves the layout nothing to
+        decide: as tall as the cards, or as tall as the screen, whichever is
+        less.
+        """
+        for _ in range(self.FIT_PASSES):
+            self._relayout()
             for lab in self.findChildren(QLabel):
                 if not lab.wordWrap() or not lab.text().strip():
                     continue
@@ -3406,55 +3567,20 @@ class AdvisorAlertsPanel(QFrame):
                 need = lab.heightForWidth(w)
                 if need > lab.minimumHeight():
                     lab.setMinimumHeight(need)
-                    grown = True
-            if not grown:
-                break
-        self.adjustSize()
-
-        # Nothing may be cut off, and there is no scrollbar to fall back on.
-        # Neither the safety card nor a correction is ever trimmed - one is a
-        # disclosure and the other is a repair the advisor is mid-way through
-        # - so the standing reminders come off the bottom until it fits. They
-        # are the only part of this column that will still be true in a
-        # minute's time.
-        room = self._room()
-        # Bounded. The loop terminates because _render_warnings floors at
-        # zero - but this runs on the UI thread during a layout, and an
-        # unbounded while here would freeze the advisor's widget rather than
-        # merely look wrong. One iteration per warning is the most it can
-        # ever need.
-        # Bounded, both loops. They terminate on their own because each
-        # render floors - but this runs on the UI thread during a layout, so
-        # an unbounded while here would freeze the advisor's widget rather
-        # than merely look wrong. One iteration per card is the most either
-        # can need.
-        for _ in range(self.MAX_WARNINGS + 1):
-            if self.sizeHint().height() <= room or self._shown_warnings <= 0:
-                break
-            self._render_warnings(self._shown_warnings - 1)
-            self._relayout()
-        # Only once the reminders are gone. A correction is about something
-        # already said and cannot wait; a reminder is about something that
-        # has not happened yet and can.
-        for _ in range(self.MAX_ACTIONS + 1):
-            if self.sizeHint().height() <= room or self._shown_actions <= 1:
-                break
-            self._render_actions(self._shown_actions - 1)
-            self._relayout()
-        # Last, and only to make room for a repair the advisor is mid-way
-        # through. Every number and the 999 bar survive it; the approved
-        # script is what goes, and by this point in the call it has been
-        # read out. With no correction on screen the card is never touched.
-        if (self.sizeHint().height() > room and self._shown_actions > 0
-                and not self._crisis_compact):
-            self._render_crisis(True)
-            self._relayout()
+            want = max(0, min(self._body.sizeHint().height(), self._room()))
+            if (want == self._scroll.maximumHeight()
+                    and want == self._scroll.minimumHeight()):
+                break                 # settled; another pass changes nothing
+            self._scroll.setMinimumHeight(want)
+            self._scroll.setMaximumHeight(want)
+        self._relayout()
 
     def _relayout(self):
-        lay = self.layout()
-        if lay is not None:
-            lay.invalidate()
-            lay.activate()
+        for lay in (self._lay, self.layout()):
+            if lay is not None:
+                lay.invalidate()
+                lay.activate()
+        self._body.adjustSize()
         self.adjustSize()
 
     def resizeEvent(self, ev):
@@ -3544,11 +3670,13 @@ class AdvisorAlertsPanel(QFrame):
     def clear_warnings(self):
         self.set_warnings([])
 
-    # Two at once is the ceiling. A third correction on screen means the
-    # advisor is being asked to repair three conversations at the same time
-    # as having the fourth, and the honest answer is to show the worst two
-    # and say how many are waiting.
-    MAX_ACTIONS = 2
+    # Was 2, with "+N more to put right" underneath. Bilal, 16 Sep: "it
+    # shows +1 instead, all should be displayed there". He is right - the
+    # card carries the WORDS TO SAY, so a hidden one is a repair the advisor
+    # cannot make. The cap existed because this column could not scroll; it
+    # can now, so the ceiling is only a guard against an absurd number of
+    # cards pushing the real one off the top.
+    MAX_ACTIONS = 12
 
     def set_trigger_actions(self, rows):
         """Corrections for triggers that have already fired.
@@ -3609,7 +3737,14 @@ class AdvisorAlertsPanel(QFrame):
                 w.deleteLater()
         # Never none. An advisor mid-repair losing the script off the screen
         # is worse than being shown only the worst of two.
-        self._shown_actions = max(1, int(limit)) if self._action_items else 0
+        #
+        # ...and never more than there ARE. This counted the limit rather than
+        # the cards, which was harmless while the limit was 2 and always
+        # reached, and wrong the moment the cap went up to 12: five
+        # corrections reported twelve on screen, and the "+N more" line below
+        # is worked out from this number.
+        self._shown_actions = (min(max(1, int(limit)), len(self._action_items))
+                               if self._action_items else 0)
         for row in self._action_items[:self._shown_actions]:
             card = self._action_card(row)
             self._action_box.addWidget(card)

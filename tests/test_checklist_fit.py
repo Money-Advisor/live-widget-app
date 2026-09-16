@@ -1180,3 +1180,103 @@ def test_a_short_stage_does_not_stretch_its_own_rows():
         f"{badge.sizeHint().height()}px")
     assert p._heading.height() <= p._heading.sizeHint().height() + 2
     _stop(p)
+
+
+# -- a long check opens up into the parts that are missing ----------------
+
+MULTI = [
+    {"id": "cc.missing_debts", "label": "Step 6 - Missing-debts checklist",
+     "section_label": "Creditor Check", "severity": "high",
+     "missing_parts": ["car finance or HP", "catalogues",
+                       "payday or short-term loans", "council tax arrears"]},
+    {"id": "cc.pref", "label": "Wrap-up - Preferential payments",
+     "section_label": "Creditor Check", "severity": "high",
+     "missing_parts": []},
+]
+
+
+def test_a_one_line_row_stays_one_line():
+    """Most rows are a single requirement. Nothing to open, nothing to hint
+    at - an arrow on every line would say there is more behind all of them."""
+    w = _still(MULTI)
+    w._flip()
+    for _ in range(6):
+        app.processEvents()
+    shown = texts(w)
+    assert "Wrap-up - Preferential payments" in shown
+    # the open circle, not the closed-arrow marker
+    assert "\u25cb" in shown
+    w.deleteLater()
+
+
+def test_a_multi_part_check_opens_up_into_its_parts():
+    """Bilal, 16 Sep: "if advisor misses something from a long checklist, for
+    example additional debt, advisor will not be able to understand from the
+    still to do list which exactly point was missed".
+
+    "Step 6 - Missing-debts checklist" is one line here and twelve questions
+    in the rulebook. The parts were in the payload all along and the widget
+    threw them away.
+    """
+    w = _still(MULTI)
+    w._flip()
+    for _ in range(6):
+        app.processEvents()
+    shut = texts(w)
+    assert "Step 6 - Missing-debts checklist" in shut
+    assert not any("catalogues" in t for t in shut), \
+        "it must start closed - four parts on every row is the old wall of text"
+    # the count is on the row, so the advisor knows there is something behind it
+    assert "4" in shut
+
+    w._flip_row("cc.missing_debts")
+    for _ in range(6):
+        app.processEvents()
+    opened = " ".join(texts(w))
+    for part in MULTI[0]["missing_parts"]:
+        assert part in opened, f"missing part not shown: {part}"
+
+    w._flip_row("cc.missing_debts")
+    for _ in range(6):
+        app.processEvents()
+    assert not any("catalogues" in t for t in texts(w)), "it must close again"
+    w.deleteLater()
+
+
+def test_an_opened_row_survives_the_next_message_from_the_server():
+    """The server speaks every 25 seconds. A row that shut itself each time
+    would be unreadable - the advisor opens it, reads one line, loses it."""
+    w = _still(MULTI)
+    w._flip()
+    w._flip_row("cc.missing_debts")
+    for _ in range(6):
+        app.processEvents()
+    assert any("catalogues" in t for t in texts(w))
+
+    w.set_rows([dict(r) for r in MULTI])       # same content, sent again
+    for _ in range(6):
+        app.processEvents()
+    assert any("catalogues" in t for t in texts(w)), "the row shut itself"
+    w.deleteLater()
+
+
+def test_a_part_that_gets_done_leaves_the_row():
+    """Keyed on ids alone the list looked unchanged while the advisor worked
+    through the twelve categories one at a time, so it never redrew and the
+    parts they had since covered stayed on it."""
+    w = _still(MULTI)
+    w._flip()
+    w._flip_row("cc.missing_debts")
+    for _ in range(6):
+        app.processEvents()
+    assert any("catalogues" in t for t in texts(w))
+
+    fewer = [dict(MULTI[0], missing_parts=["car finance or HP"]), MULTI[1]]
+    w.set_rows(fewer)
+    for _ in range(6):
+        app.processEvents()
+    shown = texts(w)
+    assert not any("catalogues" in t for t in shown), \
+        "a part the advisor has since covered is still on the list"
+    assert any("car finance or HP" in t for t in shown)
+    w.deleteLater()

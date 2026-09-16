@@ -908,7 +908,7 @@ def test_nothing_dropped_disappears_silently():
     assert f"+{hidden} more" in _visible_text(panel),         f"{hidden} warnings dropped and the panel does not say so"
 
 
-def test_the_alerts_column_never_scrolls():
+def test_the_alerts_column_does_not_scroll_for_a_safety_card():
     """Replaces "the card is scrolled into view".
 
     That test existed because the card went in at the top of the CHECKLIST,
@@ -916,8 +916,14 @@ def test_the_alerts_column_never_scrolls():
     1823px above the visible area. In its own column there is nothing above
     it and nothing to scroll past, which is a better fix than scrolling to it.
 
-    So the promise is now stronger and this asserts it: the column has no
-    scroll area at all, and nothing in it is clipped.
+    It then asserted the column had NO scroll area at all. That was true, and
+    it was the reason the column had to throw cards away to fit - which on 16
+    Sep cut a disclosure's follow-ups off at the screen edge and replaced a
+    correction with "+1 more to put right". There is a scroller now.
+
+    The promise that mattered survives intact and is what this asserts: on a
+    safety card and two warnings the advisor scrolls for NOTHING, and nothing
+    is clipped. See test_advisor_alerts_panel.py for the overflow case.
     """
     _app()
     panel = main.AdvisorAlertsPanel()
@@ -932,10 +938,11 @@ def test_the_alerts_column_never_scrolls():
     _app().processEvents()
     _app().processEvents()
 
-    from PyQt6.QtWidgets import QScrollArea, QAbstractScrollArea
-    assert not panel.findChildren(QScrollArea), \
-        "the alerts column must never need scrolling"
-    assert not panel.findChildren(QAbstractScrollArea)
+    from PyQt6.QtWidgets import QScrollArea
+    scrolls = panel.findChildren(QScrollArea)
+    assert len(scrolls) == 1
+    assert scrolls[0].verticalScrollBar().maximum() == 0, \
+        "the advisor had to scroll to read a safety card"
 
     short = [(l.text()[:40], l.width(), l.height(),
               l.heightForWidth(l.width()))

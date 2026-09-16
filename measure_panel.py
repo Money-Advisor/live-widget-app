@@ -95,8 +95,14 @@ print(f"clipped or squeezed labels : {len(bad)}")
 for b in bad:
     print("   ", b)
 
-sc = panel.findChildren(QScrollArea) + panel.findChildren(QAbstractScrollArea)
-print(f"scroll areas               : {len(sc)}")
+# One scroller, and it is meant to be there. The column had none until
+# 2026-09-16, which is exactly why it had to throw cards away to fit; a
+# missing one is now the fault, not a present one.
+sc = panel.findChildren(QScrollArea)
+bar = sc[0].verticalScrollBar() if sc else None
+print(f"scroll areas               : {len(sc)} (expected 1)")
+print(f"  scrolls under overload   : {bool(bar and bar.maximum() > 0)}")
+scroll_ok = len(sc) == 1 and bar is not None and bar.maximum() > 0
 
 kids = []
 for box in (panel._crisis_box, panel._action_box, panel._warn_box):
@@ -119,15 +125,20 @@ showing = [l for l in panel.findChildren(m.QLabel) if l.isVisibleTo(panel)]
 brackets = [l.text() for l in showing if "[" in l.text()]
 print(f"unfilled placeholders      : {len(brackets)} {brackets[:2]}")
 
-# The one thing only a real font can prove: that the trim pass actually
-# reached for the condensed safety card. The pytest suite drives condensing
-# directly because the offscreen platform never overflows, so whether _fit
-# CALLS it under a genuine overflow is only visible here.
+# The one thing only a real font can prove: that a genuine overflow no
+# longer costs the advisor anything. This used to require the OPPOSITE - the
+# safety card condensed, reminders gone, corrections down to one - because a
+# column that could not scroll had no other way to fit. Bilal saw the result
+# on 16 Sep. Under the same overload now, everything sent is on screen and
+# reachable by scrolling.
 seen = " ".join(l.text() for l in showing)
-condensed = "Thank you for telling me that" not in seen
+full_script = "Thank you for telling me that" in seen
 keeps_numbers = all(n in seen for n in ("116 123", "85258", "0300 123 3393"))
-print(f"safety card condensed      : {condensed}")
+print(f"safety card kept in full   : {full_script}")
 print(f"  ...and kept every number : {keeps_numbers}")
+kept_all = (panel._shown_actions == len(ACTIONS)
+            and panel._shown_warnings == panel.MAX_WARNINGS)
+print(f"nothing discarded to fit   : {kept_all}")
 
 # ---------------------------------------------------------------- checklist
 # The other column, and the one Bilal saw a scrollbar on. Worst case: the
@@ -191,7 +202,7 @@ for b in cl_bad[:4]:
 checklist.hide()
 
 panel.hide()
-ok = (not bad and not sc and not over and fits and not brackets
-      and condensed and keeps_numbers and not cl_bad)
+ok = (not bad and scroll_ok and not over and fits and not brackets
+      and full_script and keeps_numbers and kept_all and not cl_bad)
 print("\n" + ("PIXEL CHECK PASSED" if ok else "PROBLEMS ABOVE"))
 sys.exit(0 if ok else 1)
