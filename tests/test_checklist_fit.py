@@ -878,21 +878,6 @@ def test_a_check_going_green_does_not_jump_an_open_list():
     _stop(p)
 
 
-def test_closing_everything_lets_the_panel_fit_itself_again():
-    """The pin is not permanent - it is released the moment the advisor has
-    nothing open, or the panel would be stuck at one height all call."""
-    p, checks = _panel_with_parts()
-    natural = p._scroll.height()
-    p._accordion._toggle("c0")
-    settle(p)
-    assert p._pinned_height, "opening must pin the height"
-    p._accordion._toggle("c0")          # close it again
-    settle(p)
-    assert p._pinned_height is None, "closing must release the pin"
-    assert p._scroll.height() == natural
-    _stop(p)
-
-
 def test_an_id_opened_in_an_earlier_stage_does_not_pin_the_rest_of_the_call():
     """_open keeps ids across a stage change, so "is anything open" has to
     mean "in THIS render" or the panel freezes at one height for good."""
@@ -1005,58 +990,6 @@ def test_pinning_the_handle_does_not_break_scrolling():
 
 # -- the pin must not survive the call it was taken in ---------------------
 
-def test_going_idle_releases_the_height_pinned_during_the_call():
-    """Reported: after a call the READY chip was a green block down the side
-    of the panel.
-
-    The pin holds the panel still while the advisor has a disclosure open, so
-    the window cannot move under their hand. Nothing released it when the
-    call ended, so the panel sat at its call height over an idle page of four
-    rows and the layout spread the slack across them - stretching a small
-    pill into a block. The panel must go back to its own content height
-    between calls.
-    """
-    p, checks = _panel_with_parts()
-    p._accordion._toggle("c0")
-    settle(p)
-    assert p._pinned_height, "opening a check must pin the height"
-    tall = p._scroll.height()
-
-    p.show_idle()
-    settle(p)
-    assert p._pinned_height is None, "going idle must release the pin"
-    assert p._scroll.height() < tall, (
-        f"the idle page is still at the call's height: {p._scroll.height()}")
-    _stop(p)
-
-
-def test_a_new_call_does_not_inherit_the_last_calls_pin():
-    """Same fault, the other way round: the next call measures itself.
-
-    The release belongs to show_idle and NOT to show_live, which reads like
-    the start of a call and is not - update_stage calls it on every server
-    message, so clearing the pin there un-pins the panel mid-call and the
-    window grows under an open disclosure again. Both of those are asserted
-    here, because putting it in the wrong one passed the idle test.
-    """
-    p, checks = _panel_with_parts()
-    p._accordion._toggle("c0")
-    settle(p)
-    assert p._pinned_height
-
-    # a server tick mid-call must NOT release it
-    p.show_live()
-    assert p._pinned_height, "show_live must not release the pin"
-
-    # ...the call ending must
-    p.show_idle()
-    settle(p)
-    assert p._pinned_height is None
-    p.show_live()
-    assert p._pinned_height is None, "the new call starts unpinned"
-    _stop(p)
-
-
 def test_the_idle_page_is_no_taller_than_what_it_holds():
     """The thing the advisor actually saw. A panel taller than its rows is
     what stretched the pill, so measure the gap rather than the pill.
@@ -1074,4 +1007,51 @@ def test_the_idle_page_is_no_taller_than_what_it_holds():
     assert slack <= 4, (
         f"the idle panel is {slack}px taller than its contents, so the "
         f"layout has spare space to stretch things into")
+    _stop(p)
+
+
+# -- one height for the whole call ----------------------------------------
+
+def test_the_panel_is_one_height_for_the_whole_call():
+    """Every resize complaint on this panel came from the height chasing the
+    content: the window stretched when a check was opened, the idle page
+    spread four rows down a tall card, a stage scrolled with empty screen
+    below it. Pinning fixed the first two and caused the third.
+
+    A panel that is simply always as tall as the screen allows has nothing
+    left to get wrong, so this asserts the one rule that replaced all of it.
+    """
+    p, checks = _panel_with_parts()
+    start = p._scroll.height()
+    assert start > 0
+
+    p._accordion._toggle("c0")                      # open a disclosure
+    settle(p)
+    assert p._scroll.height() == start
+
+    greened = [dict(c) for c in checks]
+    greened[2]["done"] = True                       # a check goes green
+    p.update_stage("Onboarding", STAGE, greened)
+    settle(p)
+    assert p._scroll.height() == start
+
+    p.update_stage("Fact Find",                     # a whole new stage
+                   [{"key": "FACT_FIND", "label": "Fact Find"}],
+                   [check(f"f{i}", f"Another requirement {i}")
+                    for i in range(14)])
+    settle(p)
+    assert p._scroll.height() == start, "a longer stage resized the panel"
+    _stop(p)
+
+
+def test_the_idle_page_keeps_its_own_small_height():
+    """Four rows do not want a full-height card, which is what turned the
+    READY pill into a green block down the side of the panel."""
+    p, checks = _panel_with_parts()
+    live = p._scroll.height()
+    p.show_idle()
+    settle(p)
+    assert p._scroll.height() < live
+    inner = p._scroll.widget()
+    assert p._scroll.height() - inner.sizeHint().height() <= 4
     _stop(p)

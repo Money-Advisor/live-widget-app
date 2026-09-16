@@ -524,66 +524,58 @@ def test_a_real_change_does_rebuild():
 
 
 def test_opening_a_check_no_longer_grows_the_panel():
-    """This asserted the opposite until 2026-09-15.
-
-    Growing on a toggle moved the whole window - Stop Recording included -
-    under an advisor who was reading it, which Bilal reported twice. The parts
-    now open inside the height the panel already has, and the panel scrolls
-    down to them instead.
+    """This asserted the opposite until 2026-09-15, then a pinned height
+    until the 16th. The panel now has ONE height for a whole call, so neither
+    a toggle nor a longer stage moves it.
     """
     _app()
     panel = main.ComplianceAlertPanel()
     panel.show_live()
     panel.show()
-    panel._cap = 2000
     panel.update_stage("IE", _sections(4), _long_stage())
-    panel._retarget(animate=False)          # settle at the closed height
-    start = panel._scroll.maximumHeight()
+    for _ in range(5):
+        QApplication.processEvents()     # let _sync_window set the cap
+    panel._retarget(animate=False)
+    start = panel._target_height()
+    assert start > 0
 
     panel._accordion._toggle("ie.income")
-    # The real code defers by a zero-length timer precisely so Qt can lay the
-    # new rows out first; without turning the event loop here the test would
-    # measure the same stale height the production bug did.
     QApplication.processEvents()
-    panel._deferred_retarget()              # what the queued timer would do
+    panel._deferred_retarget()
+    assert panel._target_height() == start, "a toggle moved the panel"
 
-    assert panel._pinned_height, "opening a check must pin the height"
-    assert panel._target_height() <= start, (
-        "a toggle must not raise the height the panel is heading for")
     anim = getattr(panel, "_grow", None)
     if anim is not None:
         anim.stop()
 
 
-def test_a_genuinely_taller_stage_still_glides_rather_than_jumping():
-    """The half of the old test that is still true, and still worth guarding.
+def test_a_longer_stage_does_not_move_the_panel_either():
+    """The other half of the old pair, which asserted that more rows make the
+    panel taller. They do not any more: the rows scroll inside a card that is
+    always as tall as the screen allows.
 
-    The animation is the thing most easily broken by accident: an earlier
-    version started it and then had _sync_window snap straight to the end
-    value a millisecond later, and every transition measured as a single step.
-    New data - as opposed to the advisor's own hand - may still resize the
-    panel, and when it does it has to glide.
+    Every resize complaint on this panel came from the height chasing the
+    content, so the height stopped chasing it.
     """
     _app()
     panel = main.ComplianceAlertPanel()
     panel.show_live()
     panel.show()
-    panel._cap = 2000
     panel.update_stage("IE", _sections(4), _long_stage()[:2])
+    for _ in range(5):
+        QApplication.processEvents()     # let _sync_window set the cap
     panel._retarget(animate=False)
-    start = panel._scroll.maximumHeight()
+    start = panel._target_height()
+    assert start > 0
 
     panel.update_stage("IE", _sections(4), _long_stage())
     QApplication.processEvents()
     panel._deferred_retarget()
+    assert panel._target_height() == start
 
-    anim = panel._grow
-    assert anim is not None, "no animation was created"
-    assert anim.state() == main.QPropertyAnimation.State.Running, \
-        "the animation is not running"
-    assert anim.startValue() == start
-    assert anim.endValue() > start, "more rows make the panel taller"
-    anim.stop()
+    anim = getattr(panel, "_grow", None)
+    if anim is not None:
+        anim.stop()
 
 
 def test_a_checklist_that_fits_gets_no_scrollbar():

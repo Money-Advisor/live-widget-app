@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.42"
+APP_VERSION = "2.9.43"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -3983,12 +3983,9 @@ class ComplianceAlertPanel(QFrame):
         live checklist was fixed, which is exactly that case: nothing to
         scroll, and a bar over it anyway.
         """
-        # Let go of any height pinned during the call. It is held while the
-        # advisor has a disclosure open so the window cannot move under them,
-        # and nothing was releasing it when the call ended - so the panel sat
-        # at its call height over an idle page of four rows, and the layout
-        # spread the slack across them. That is what turned the small READY
-        # pill into a green block down the side of the panel.
+        # The idle page is four rows and keeps its own small height; a live
+        # call gets the full available height and never changes.
+        self._idle_mode = True
         self._pinned_height = None
         self._scroll.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -4018,12 +4015,7 @@ class ComplianceAlertPanel(QFrame):
         without this it would stay off for the whole call - where, rarely, it
         is the honest answer to a stage that genuinely does not fit.
         """
-        # NOT the place to release a pinned height, however much it reads like
-        # the start of a call. update_stage calls this on every server message
-        # - about twice a second - so clearing the pin here un-pins the panel
-        # mid-call and the window starts growing under an open disclosure
-        # again. show_idle owns the release, and a new call always comes
-        # through idle first.
+        self._idle_mode = False
         self._scroll.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._scroll.set_scrollable(True)
@@ -4166,13 +4158,28 @@ class ComplianceAlertPanel(QFrame):
         if wanted <= 0:
             wanted = inner.sizeHint().height()
         cap = getattr(self, "_cap", 0)
-        pinned = getattr(self, "_pinned_height", None)
-        if pinned:
-            # Held at what the advisor was looking at. Still clamped to the
-            # screen, so a pin taken before a monitor change cannot leave the
-            # panel taller than the display it is now on.
-            return min(pinned, cap) if cap else pinned
-        return min(wanted, cap) if cap else wanted
+        if not cap:
+            return wanted
+        # ONE HEIGHT FOR THE WHOLE CALL, and it is everything the screen
+        # allows. Every resize complaint on this panel has come from the
+        # height chasing the content:
+        #
+        #   the window stretched when a check was opened   (2026-09-15)
+        #   the idle page spread four rows down a tall panel (2026-09-16)
+        #   a stage scrolled with empty screen below it      (2026-09-16)
+        #
+        # The first two were fixed by pinning the height, which caused the
+        # third: pinned to a short stage, a longer one scrolls inside it while
+        # the screen underneath is empty. Chasing the content and pinning it
+        # are two answers to the same bad question. A panel that is simply
+        # always as tall as it may be never moves, never wastes the screen,
+        # and has nothing left to get wrong.
+        #
+        # The idle page is the exception - four rows do not want a full-height
+        # card - so it keeps its own height.
+        if getattr(self, "_idle_mode", False):
+            return min(wanted, cap)
+        return cap
 
     def _retarget(self, animate=True):
         """Move the panel to the height its contents now need.
@@ -4237,16 +4244,6 @@ class ComplianceAlertPanel(QFrame):
         there was nothing to do, and the panel snapped to 451px on the following
         tick. Which is exactly the jump this was meant to remove.
         """
-        # The pin is held for as long as the advisor has something open, not
-        # just for the toggle itself. A check going green while a disclosure
-        # is open is genuinely new data, but resizing then would look exactly
-        # like the bug - the panel jumping under an open list.
-        if self._accordion.has_open():
-            if not self._pinned_height:
-                self._pinned_height = (self._scroll.height()
-                                       or self._get_panel_height() or None)
-        else:
-            self._pinned_height = None
         if not may_resize:
             # Next turn, for the same reason _retarget defers: the rows that
             # just appeared have not been given a width yet, so the one we
