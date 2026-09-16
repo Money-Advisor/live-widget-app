@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.40"
+APP_VERSION = "2.9.41"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -3409,8 +3409,8 @@ class AdvisorAlertsPanel(QFrame):
         """
         items = [r for r in (rows or [])
                  if isinstance(r, dict) and (r.get("message") or "").strip()]
-        items = [r for r in items
-                 if (r.get("id") or r["message"]) not in self._expired_actions]
+        items = [r for r in items if self._card_key(r) not in
+                 self._expired_actions]
         key = tuple(r.get("id") or r["message"] for r in items)
         if key == self._action_key:
             return                      # unchanged; do not rebuild and flicker
@@ -3470,6 +3470,18 @@ class AdvisorAlertsPanel(QFrame):
             self._action_box.addWidget(more)
             more.show()
 
+    @staticmethod
+    def _card_key(row):
+        """What makes one card different from another.
+
+        The trigger id AND which occurrence it is. On the id alone, an
+        advisor who made the same mistake twice would see the warning once:
+        the first card times out, its id is remembered as expired, and the
+        server's second finding is filtered straight back out. Compliance
+        want the second one shown and recorded separately.
+        """
+        return (row.get("id") or row.get("message"), row.get("occurrence"))
+
     def _arm_expiries(self, items):
         """Start the one-minute clock on any card that clears itself.
 
@@ -3479,7 +3491,7 @@ class AdvisorAlertsPanel(QFrame):
         """
         for row in items:
             secs = row.get("auto_clear_seconds")
-            rid = row.get("id") or row.get("message")
+            rid = self._card_key(row)
             # `is None`, not a truth test: a card with no clock is one the
             # server left the field off, and 0 is a real duration meaning
             # "immediately". `if not secs` treated the two the same.
@@ -3507,7 +3519,7 @@ class AdvisorAlertsPanel(QFrame):
         except RuntimeError:
             return      # the panel's C++ side has gone; nothing to redraw
         left = [r for r in self._action_items
-                if (r.get("id") or r.get("message")) != rid]
+                if self._card_key(r) != rid]
         if len(left) == len(self._action_items):
             return
         self._action_items = left
