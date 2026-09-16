@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.46"
+APP_VERSION = "2.9.47"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -7011,16 +7011,25 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             _marks.append(("streams + session_end", time.monotonic() - _t1))
+            # Phase 4: hold the socket open so session_summary /
+            # upload_complete can arrive; close on upload_complete or timeout.
+            #
+            # THIS BELONGS TO `if self._streamer is not None`, and for one
+            # build it sat inside the timing report below instead - so on any
+            # stop quicker than a quarter of a second the streamer was never
+            # handed over, the backstop timer was never armed, and
+            # self._streamer was never cleared, leaving the NEXT call to
+            # start with the last call's streamer attached. The slow path
+            # went on working perfectly, which is exactly why timing the slow
+            # path did not show it.
+            self._closing_streamer = self._streamer
+            QTimer.singleShot(15000, self._close_finished_streamer)
+            self._streamer = None
         total = time.monotonic() - _t0
         if total > 0.25:
             print(f"[stop] the window was frozen {total:.1f}s before "
                   f"session_end went out  ->  "
                   + "  ".join(f"{w} {s:.1f}s" for w, s in _marks))
-            # Phase 4: hold the socket open so session_summary /
-            # upload_complete can arrive; close on upload_complete or timeout.
-            self._closing_streamer = self._streamer
-            QTimer.singleShot(15000, self._close_finished_streamer)
-            self._streamer = None
 
         self._mic_thread = None
         self._spk_thread = None
