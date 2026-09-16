@@ -58,8 +58,22 @@ panel.show()
 for _ in range(6):
     app.processEvents()
 
+# The red cards - a disclosure's criticals, which is what the column exists
+# for and what this script never used to put on screen. Taken from the
+# rulebook rather than typed out, so the longest real prompt is the one
+# measured.
+CRITICALS = [
+    {"id": c.id, "label": c.label, "section_label": "Vulnerability",
+     "prompt": c.prompt,
+     "missing_parts": [e for e in (c.elements or [])[:3]]}
+    for c in sorted(rb.checks,
+                    key=lambda c: -len((c.prompt or "") + c.label))
+    if c.severity == "critical" and c.advisor_visible
+    and not c.is_breach_trigger][:4]
+
 panel.show_crisis(crisis.payload("I have been thinking about ending it", True))
 panel.set_trigger_actions(ACTIONS)
+panel.set_open_criticals(CRITICALS)
 panel.set_warnings(WARNINGS)
 for _ in range(10):
     app.processEvents()
@@ -70,7 +84,10 @@ for _ in range(6):
 print(f"column          {panel.width()} x {panel.height()}")
 print(f"room on screen  {panel._room()}")
 print(f"corrections     {len(ACTIONS)} sent, {panel._shown_actions} shown")
+print(f"red cards       {len(CRITICALS)} sent, "
+      f"{panel._open_crit_box.count()} drawn")
 for box, name in ((panel._crisis_box, "safety"), (panel._action_box, "correction"),
+                  (panel._open_crit_box, "red card"),
                   (panel._warn_box, "reminders")):
     for i in range(box.count()):
         w = box.itemAt(i).widget()
@@ -137,8 +154,14 @@ keeps_numbers = all(n in seen for n in ("116 123", "85258", "0300 123 3393"))
 print(f"safety card kept in full   : {full_script}")
 print(f"  ...and kept every number : {keeps_numbers}")
 kept_all = (panel._shown_actions == len(ACTIONS)
-            and panel._shown_warnings == panel.MAX_WARNINGS)
+            and panel._shown_warnings == panel.MAX_WARNINGS
+            and panel._open_crit_box.count() == len(CRITICALS))
 print(f"nothing discarded to fit   : {kept_all}")
+# Every red card's own text, on screen and readable. A critical the advisor
+# cannot read is the same as one that never appeared.
+crit_text = " ".join(l.text() for l in showing)
+crit_missing = [c["label"] for c in CRITICALS if c["label"] not in crit_text]
+print(f"every red card readable    : {not crit_missing} {crit_missing[:2]}")
 
 # ---------------------------------------------------------------- checklist
 # The other column, and the one Bilal saw a scrollbar on. Worst case: the
@@ -201,8 +224,68 @@ for b in cl_bad[:4]:
     print("     ", b)
 checklist.hide()
 
+# ------------------------------------------------- the disclosure checklist
+# Faseeh, 16 Sep: "the follow up questions for vulnerability appeared
+# perfectly but they are distorted in the UI" - the list ran off the bottom
+# of the screen mid-card. The pass above uses the longest STAGE, where every
+# row is an ordinary collapsed line; a disclosure is a different shape, with
+# every row urgent, expanded, and carrying its own red banner and parts.
+vuln = next(s_ for s_ in rb.sections if s_.key == "VULNERABILITY")
+DISCLOSED = [{"id": c.id, "label": c.label, "severity": c.severity,
+              "done": False, "evidence": None, "prompt": c.prompt,
+              "urgent": True,
+              "urgent_reason": "A vulnerability has been disclosed",
+              "missing_parts": [e for e in (c.elements or [])[:3]],
+              "parts": [{"text": e, "done": False, "na": False}
+                        for e in (c.elements or [])]}
+             for c in vuln.checks
+             if c.advisor_visible and not c.is_breach_trigger][:8]
+
+disc = m.ComplianceAlertPanel()
+disc.move(-3000, -3000)
+disc.show()
+for _ in range(6):
+    app.processEvents()
+disc.show_live()
+disc.update_stage("INTRODUCTION",
+                  [{"key": s_.key, "label": s_.label, "done": 0,
+                    "total": len(s_.checks),
+                    "current": s_.key == "INTRODUCTION"}
+                   for s_ in rb.sections], DISCLOSED)
+deadline = time.monotonic() + 2.0
+while time.monotonic() < deadline:
+    app.processEvents()
+    time.sleep(0.01)
+
+print()
+print(f"DISCLOSURE  {len(DISCLOSED)} urgent follow-ups on the checklist")
+print(f"  size                     : {disc.width()} x {disc.height()}")
+scr_ = disc.screen() or QApplication.primaryScreen()
+room_ = scr_.availableGeometry().height() if scr_ else 900
+fits_disc = disc.height() <= room_
+print(f"  fits the screen          : {fits_disc}  (room {room_})")
+d_bad = []
+for lab in disc.findChildren(m.QLabel):
+    if not lab.isVisibleTo(disc) or not lab.text().strip():
+        continue
+    need = (lab.heightForWidth(lab.width()) if lab.wordWrap()
+            else lab.sizeHint().height())
+    if need > lab.height() + 1:
+        d_bad.append((lab.text()[:44], lab.height(), need))
+print(f"  clipped labels           : {len(d_bad)}")
+for b in d_bad[:4]:
+    print("     ", b)
+# Every follow-up has to be REACHABLE - drawn, or scrollable to. A question
+# the advisor cannot get to during a disclosure is the one that matters most.
+seen_disc = " ".join(l.text() for l in disc.findChildren(m.QLabel)
+                     if l.isVisibleTo(disc))
+d_missing = [c["label"] for c in DISCLOSED if c["label"] not in seen_disc]
+print(f"  every follow-up drawn    : {not d_missing} {d_missing[:2]}")
+disc.hide()
+
 panel.hide()
 ok = (not bad and scroll_ok and not over and fits and not brackets
-      and full_script and keeps_numbers and kept_all and not cl_bad)
+      and full_script and keeps_numbers and kept_all and not crit_missing
+      and not cl_bad and fits_disc and not d_bad and not d_missing)
 print("\n" + ("PIXEL CHECK PASSED" if ok else "PROBLEMS ABOVE"))
 sys.exit(0 if ok else 1)
