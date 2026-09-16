@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.44"
+APP_VERSION = "2.9.45"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2813,12 +2813,12 @@ class StillToDo(QWidget):
         self._toggle.setText(f"  {arrow}  STILL TO DO FROM EARLIER  ·  {n}")
         self._toggle.setStyleSheet(
             "QPushButton {"
-            f"  font-family:{FF}; font-size:10px; font-weight:800;"
-            "  letter-spacing:0.9px; color:#6E6E8C; text-align:left;"
-            "  background:#F3F2FA; border:none; border-radius:9px;"
-            "  padding:0 4px;"
+            f"  font-family:{FF}; font-size:11.5px; font-weight:800;"
+            "  letter-spacing:0.6px; color:#3B3B54; text-align:left;"
+            "  background:#EDEBF8; border:1px solid #DDD9F0;"
+            "  border-radius:9px; padding:0 6px;"
             "}"
-            "QPushButton:hover { background:#EAE8F6; color:#4A4560; }")
+            "QPushButton:hover { background:#E1DDF4; color:#241F45; }")
         self._body.setVisible(self._open)
         while self._body_lay.count():
             it = self._body_lay.takeAt(0)
@@ -2839,11 +2839,11 @@ class StillToDo(QWidget):
         for sec in seen:
             mine = [r for r in (self._rows or [])
                     if (r.get("section_label") or "") == sec]
-            cap = QLabel(sec.upper())
+            cap = QLabel(sec)
             cap.setStyleSheet(
-                f"background:transparent; font-family:{FF}; font-size:9px;"
-                " font-weight:800; color:#A2A2BC; letter-spacing:1.1px;")
-            cap.setContentsMargins(0, 5, 0, 1)
+                f"background:transparent; font-family:{FF}; font-size:11px;"
+                " font-weight:800; color:#4A4560; letter-spacing:0.3px;")
+            cap.setContentsMargins(0, 8, 0, 3)
             self._body_lay.addWidget(cap)
             for r in mine[:self.MAX_PER_SECTION]:
                 self._body_lay.addWidget(self._row(r))
@@ -2871,7 +2871,7 @@ class StillToDo(QWidget):
         lab.setWordWrap(True)
         lab.setStyleSheet(
             f"background:transparent; font-family:{FF}; font-size:11.5px;"
-            " color:#5F5F78;")
+            " color:#4A4560;")
         h.addWidget(lab, 1)
         return row
 
@@ -4215,6 +4215,20 @@ class ComplianceAlertPanel(QFrame):
             " padding:14px 12px; }}")
         self._listening.setVisible(False)
         self._lay.addWidget(self._listening)
+
+        # Somewhere for spare height to go.
+        #
+        # The panel is now always as tall as the screen allows, so on a short
+        # stage there is real slack - and a QVBoxLayout with no stretch
+        # distributes slack across its children. That is what blew the count
+        # badge into a purple column down the side and left the heading
+        # floating in the middle of an empty card. The same shape as the
+        # green READY block, arrived at from the other direction.
+        #
+        # One stretch at the end takes all of it, so every row keeps the
+        # height it asked for and the empty space collects at the bottom
+        # where it belongs.
+        self._lay.addStretch(1)
 
         # Last line of __init__ on purpose: show_idle() touches every widget
         # above, so calling it any earlier raises on whichever one does not

@@ -1107,7 +1107,9 @@ def test_opening_it_shows_every_stage_it_came_from():
         app.processEvents()
     assert w._body.isVisible()
     shown = " ".join(texts(w))
-    assert "CREDITOR CHECK" in shown and "VULNERABILITY" in shown
+    # Title case, not shouted: these name a stage to go back to, so they
+    # read as headings rather than as the faint captions they started as.
+    assert "Creditor Check" in shown and "Vulnerability" in shown
     assert "Summary - Totals stated" in shown
     assert "Q7 - Support network" in shown
     w.deleteLater()
@@ -1151,4 +1153,30 @@ def test_the_panel_passes_the_list_through():
     p.show_idle()
     settle(p)
     assert p._still.count() == 0
+    _stop(p)
+
+
+def test_a_short_stage_does_not_stretch_its_own_rows():
+    """The panel is always as tall as the screen allows, and a QVBoxLayout
+    with no stretch shares spare height out among its children - which blew
+    the count badge into a purple column down the side of the card and left
+    the heading floating in an empty panel.
+
+    One stretch at the end takes the slack instead, so every row keeps the
+    height it asked for.
+    """
+    p = m.ComplianceAlertPanel()
+    p.move(-3000, -3000)
+    p.show()
+    for _ in range(6):
+        app.processEvents()
+    p.show_live()
+    p.update_stage("Onboarding", STAGE, [check("c0", "One short thing")])
+    settle(p)
+    # the count badge must be its own size, not a column
+    badge = p._count
+    assert badge.height() <= badge.sizeHint().height() + 2, (
+        f"the badge stretched to {badge.height()}px against a natural "
+        f"{badge.sizeHint().height()}px")
+    assert p._heading.height() <= p._heading.sizeHint().height() + 2
     _stop(p)
