@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.43"
+APP_VERSION = "2.9.44"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2729,6 +2729,153 @@ class SectionAccordion(QWidget):
                 self._rows.addWidget(self._parts_block(chk))
 
 
+class StillToDo(QWidget):
+    """Everything the advisor has moved past without finishing, in one list.
+
+    The panel follows the conversation now - it no longer holds a stage until
+    the work there is done, because holding it stopped the stage the advisor
+    was ACTUALLY in from being judged, and that cost more checks than it ever
+    saved. This is the other half of that change: what gets left behind has
+    to stay reachable, or the fix would simply lose it instead.
+
+    ONE list for the whole call, not one per stage. Compliance were explicit:
+    "a single dropdown covering all sections, not a separate dropdown for
+    each". So a row carries its stage name, and the rows are grouped under it.
+
+    Collapsed by default. An advisor mid-call is reading the stage they are
+    in; this is for the moment they look up, and a list that opens itself
+    would push that stage off the screen.
+    """
+
+    #: how many rows to draw under each stage heading before summarising
+    MAX_PER_SECTION = 6
+
+    changed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("stillToDo")
+        self.setStyleSheet("QWidget#stillToDo { background:transparent; }")
+        self._open = False
+        # None, not [] - "nothing yet" and "nothing left to do" are different
+        # states, and starting at [] made the first empty update a no-op, so
+        # the widget kept whatever visibility it happened to have.
+        self._rows = None
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 6, 0, 0)
+        lay.setSpacing(0)
+
+        self._toggle = QPushButton()
+        self._toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._toggle.setFixedHeight(30)
+        self._toggle.clicked.connect(self._flip)
+        lay.addWidget(self._toggle)
+
+        self._body = QWidget()
+        self._body.setObjectName("stillToDoBody")
+        self._body.setStyleSheet(
+            "QWidget#stillToDoBody { background:#FAFAFE;"
+            " border:1px solid #ECEBF5; border-radius:10px; }")
+        self._body_lay = QVBoxLayout(self._body)
+        self._body_lay.setContentsMargins(10, 8, 10, 10)
+        self._body_lay.setSpacing(3)
+        self._body.setVisible(False)
+        lay.addWidget(self._body)
+        self.setVisible(False)
+
+    # ------------------------------------------------------------------ api
+    def set_rows(self, rows):
+        """`rows` as the server sends them: id, label, section_label."""
+        rows = [r for r in (rows or [])
+                if isinstance(r, dict) and (r.get("label") or "").strip()]
+        if self._rows is not None and                 [r.get("id") for r in rows] ==                 [r.get("id") for r in self._rows]:
+            return                      # unchanged; do not rebuild and flicker
+        self._rows = rows
+        self._render()
+        self.changed.emit()
+
+    def count(self):
+        return len(self._rows or [])
+
+    # --------------------------------------------------------------- inside
+    def _flip(self):
+        self._open = not self._open
+        self._render()
+        self.changed.emit()
+
+    def _render(self):
+        n = len(self._rows or [])
+        self.setVisible(bool(n))
+        if not n:
+            self._body.setVisible(False)
+            return
+        arrow = "\u25be" if self._open else "\u25b8"
+        self._toggle.setText(f"  {arrow}  STILL TO DO FROM EARLIER  ·  {n}")
+        self._toggle.setStyleSheet(
+            "QPushButton {"
+            f"  font-family:{FF}; font-size:10px; font-weight:800;"
+            "  letter-spacing:0.9px; color:#6E6E8C; text-align:left;"
+            "  background:#F3F2FA; border:none; border-radius:9px;"
+            "  padding:0 4px;"
+            "}"
+            "QPushButton:hover { background:#EAE8F6; color:#4A4560; }")
+        self._body.setVisible(self._open)
+        while self._body_lay.count():
+            it = self._body_lay.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+        if not self._open:
+            return
+        # Grouped by the stage each one came from, in call order, because
+        # "Creditor Check: recent spending" is a place the advisor can go
+        # back to and a bare label is not.
+        seen = []
+        for r in (self._rows or []):
+            sec = r.get("section_label") or ""
+            if sec not in seen:
+                seen.append(sec)
+        for sec in seen:
+            mine = [r for r in (self._rows or [])
+                    if (r.get("section_label") or "") == sec]
+            cap = QLabel(sec.upper())
+            cap.setStyleSheet(
+                f"background:transparent; font-family:{FF}; font-size:9px;"
+                " font-weight:800; color:#A2A2BC; letter-spacing:1.1px;")
+            cap.setContentsMargins(0, 5, 0, 1)
+            self._body_lay.addWidget(cap)
+            for r in mine[:self.MAX_PER_SECTION]:
+                self._body_lay.addWidget(self._row(r))
+            rest = len(mine) - self.MAX_PER_SECTION
+            if rest > 0:
+                more = QLabel(f"\u00b7  {rest} more in this stage")
+                more.setStyleSheet(
+                    f"background:transparent; font-family:{FF};"
+                    " font-size:10px; color:#A2A2BC;")
+                self._body_lay.addWidget(more)
+
+    def _row(self, r):
+        row = QWidget()
+        row.setStyleSheet("background:transparent;")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 1, 0, 1)
+        h.setSpacing(7)
+        dot = QLabel("\u25cb")
+        dot.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:11px;"
+            " color:#C4C2D6;")
+        dot.setFixedWidth(12)
+        h.addWidget(dot, 0, Qt.AlignmentFlag.AlignTop)
+        lab = QLabel(r.get("label") or "")
+        lab.setWordWrap(True)
+        lab.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:11.5px;"
+            " color:#5F5F78;")
+        h.addWidget(lab, 1)
+        return row
+
+
 class StageTracker(QWidget):
     """Where the call has got to: the stage name, and one segment per stage.
 
@@ -3137,6 +3284,15 @@ class AdvisorAlertsPanel(QFrame):
         self._action_box.setContentsMargins(0, 0, 0, 0)
         self._action_box.setSpacing(8)
         self._lay.addLayout(self._action_box)
+
+        # Critical checks the advisor has moved past without doing. Below
+        # the corrections - a breach that has already happened outranks a
+        # question still to ask - and above the standing reminders.
+        self._open_crit_box = QVBoxLayout()
+        self._open_crit_box.setContentsMargins(0, 0, 0, 0)
+        self._open_crit_box.setSpacing(8)
+        self._lay.addLayout(self._open_crit_box)
+        self._open_crit_key = None
 
         self._warn_box = QVBoxLayout()
         self._warn_box.setContentsMargins(0, 0, 0, 0)
@@ -3548,6 +3704,93 @@ class AdvisorAlertsPanel(QFrame):
                 w.hide()
                 w.deleteLater()
 
+    def set_open_criticals(self, rows):
+        """Critical checks left behind when the panel moved on.
+
+        The panel follows the conversation now, so a critical the advisor
+        skipped leaves the screen with its stage and never comes back. These
+        travel instead - ALL of them, because compliance were explicit that
+        if several are live "they should all remain available in the same
+        popup area, with scrolling if needed so none are lost".
+
+        No cap, deliberately. The panel scrolls; that is what scrolling is
+        for. A "+2 more" line here would be hiding a critical, which is the
+        one thing this exists to stop.
+        """
+        rows = [r for r in (rows or [])
+                if isinstance(r, dict) and (r.get("label") or "").strip()]
+        key = tuple(r.get("id") or r["label"] for r in rows)
+        if key == self._open_crit_key:
+            return                      # unchanged; do not rebuild and flicker
+        self._open_crit_key = key
+        was, self._busy = self._busy, True
+        try:
+            while self._open_crit_box.count():
+                it = self._open_crit_box.takeAt(0)
+                w = it.widget()
+                if w is not None:
+                    w.hide()
+                    w.deleteLater()
+            for r in rows:
+                card = self._open_critical_card(r)
+                self._open_crit_box.addWidget(card)
+                # A widget built without a parent starts hidden, and adding
+                # it to a layout does not reliably show it. This has bitten
+                # the safety card and the warnings already.
+                card.show()
+        finally:
+            self._busy = was
+        self._restyle()
+        self._fit()
+
+    def clear_open_criticals(self):
+        self._open_crit_key = None
+        self.set_open_criticals([])
+
+    def _open_critical_card(self, row):
+        """One critical still outstanding, and where it was left."""
+        card = QFrame()
+        card.setObjectName("openCritCard")
+        card.setStyleSheet(
+            "QFrame#openCritCard { background:#FFF7F6;"
+            " border:1px solid #E9A79F; border-left:3px solid #D93025;"
+            " border-radius:12px; }")
+        col = QVBoxLayout(card)
+        col.setContentsMargins(14, 11, 14, 12)
+        col.setSpacing(6)
+
+        where = QLabel((row.get("section_label") or "").upper())
+        where.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:9px;"
+            " font-weight:800; color:#B4736C; letter-spacing:1.1px;")
+        col.addWidget(where)
+
+        title = QLabel(row.get("label") or "")
+        title.setWordWrap(True)
+        title.setStyleSheet(
+            f"background:transparent; font-family:{FF}; font-size:12.5px;"
+            " font-weight:800; color:#7A130A;")
+        col.addWidget(title)
+
+        prompt = (row.get("prompt") or "").strip()
+        if prompt:
+            say = QLabel(prompt)
+            say.setWordWrap(True)
+            say.setStyleSheet(
+                f"background:transparent; font-family:{FF}; font-size:11.5px;"
+                " color:#9A4238;")
+            col.addWidget(say)
+
+        for part in (row.get("missing_parts") or [])[:3]:
+            bullet = QLabel(f"•  {part}")
+            bullet.setWordWrap(True)
+            bullet.setStyleSheet(
+                f"background:transparent; font-family:{FF}; font-size:11px;"
+                " color:#9A4238;")
+            col.addWidget(bullet)
+        _smooth_fonts(card)
+        return card
+
     def _action_card(self, row):
         """One correction: what went wrong, and the words that repair it."""
         critical = row.get("severity") == "critical"
@@ -3823,6 +4066,11 @@ class ComplianceAlertPanel(QFrame):
         self._accordion.contents_changed.connect(self._refit)
         self._lay.addWidget(self._accordion)
 
+        # ── what was left behind, from every stage, in one list ──
+        self._still = StillToDo()
+        self._still.changed.connect(lambda: self._refit(False))
+        self._lay.addWidget(self._still)
+
         # ── idle: what the advisor sees between calls ──────────────────────
         # The panel used to vanish entirely between calls, which made a working
         # feature look like a broken one. It now always says something.
@@ -3987,6 +4235,7 @@ class ComplianceAlertPanel(QFrame):
         # call gets the full available height and never changes.
         self._idle_mode = True
         self._pinned_height = None
+        self._still.set_rows([])
         self._scroll.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll.set_scrollable(False)
@@ -4532,6 +4781,16 @@ class ComplianceAlertPanel(QFrame):
         pin = getattr(win, "set_compliance_on_top", None)
         if callable(pin):
             pin(self.isVisible())
+
+    def set_still_to_do(self, rows):
+        """What the advisor has moved past without finishing.
+
+        Sent on every message, from every stage, already filtered by the
+        server to things that apply on THIS call and are not critical -
+        criticals travel as cards instead, where they cannot be collapsed
+        away.
+        """
+        self._still.set_rows(rows)
 
     def update_stage(self, stage, sections, section_checks=None):
         """Show the stage tracker and the opened-out stage. Safe to call empty."""
@@ -6496,6 +6755,7 @@ class MainWindow(QMainWindow):
         self._alerts_panel.clear_crisis()
         self._alerts_panel.clear_warnings()
         self._alerts_panel.clear_trigger_actions()
+        self._alerts_panel.clear_open_criticals()
         self._compliance_panel.clear_forbidden()
         self._compliance_panel.clear_cues()
         self._compliance_panel.set_transcription_status("recovered")  # hide any stale notice
@@ -6645,6 +6905,7 @@ class MainWindow(QMainWindow):
         self._alerts_panel.clear_crisis()
         self._alerts_panel.clear_warnings()
         self._alerts_panel.clear_trigger_actions()
+        self._alerts_panel.clear_open_criticals()
         self._tray_rec_act.setText("⏺  Start Recording")
         self._tray.setIcon(ICON_IDLE)
         self._tray.setToolTip("Spark Flow – idle")
@@ -6745,6 +7006,12 @@ class MainWindow(QMainWindow):
             # from a message that carries stage fields - the same reason
             # update_stage is gated: a "good job" message carries no stage and
             # would otherwise blank the warnings every time a check went green.
+            if has_stage:
+                self._compliance_panel.set_still_to_do(msg.get("still_to_do"))
+                # Criticals left behind in an earlier stage. Cards, not list
+                # rows: the panel moves on with the conversation now, so one
+                # of these would otherwise leave the screen and never return.
+                self._alerts_panel.set_open_criticals(msg.get("open_criticals"))
             if has_stage:
                 self._alerts_panel.set_warnings(msg.get("warnings"))
                 # Corrections for mistakes already made. Same gate: a "good

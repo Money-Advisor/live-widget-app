@@ -395,15 +395,14 @@ def _quiesce(panel):
 # -- the two breaches that cannot be taken back ---------------------------
 
 def _texts(panel):
-    out = []
-    for i in range(panel._action_box.count()):
-        w = panel._action_box.itemAt(i).widget()
-        if w is None:
-            continue
-        out += [l.text() for l in w.findChildren(QLabel) if l.text().strip()]
-        if isinstance(w, QLabel) and w.text().strip():
-            out.append(w.text())
-    return out
+    """Every visible label on the panel, whichever box it sits in.
+
+    This used to walk _action_box alone, which made it silently blind to any
+    card added anywhere else - the open-criticals column read as empty while
+    its three cards were on screen.
+    """
+    return [l.text() for l in panel.findChildren(QLabel)
+            if l.text().strip() and l.isVisibleTo(panel)]
 
 
 def test_a_no_repair_card_comes_off_the_screen_by_itself(panel):
@@ -479,3 +478,76 @@ def test_an_ordinary_correction_card_never_expires(panel):
     assert "Say the monthly figure out loud." in " ".join(_texts(panel))
     assert not panel._expiry_timers, "an ordinary card was given a clock"
     _quiesce(panel)
+
+
+# -- criticals left behind travel as cards --------------------------------
+
+CRITS = [
+    {"id": "vuln.opening_question", "label": "Opening question asked",
+     "section_label": "Vulnerability",
+     "prompt": "Ask the vulnerability question covering all eight areas.",
+     "missing_parts": ["bereavement", "addictions"]},
+    {"id": "onb.dpa_dob", "label": "Date of birth confirmed",
+     "section_label": "Onboarding",
+     "prompt": "Take the date of birth before discussing anything else.",
+     "missing_parts": []},
+    {"id": "clos.final_confirmation", "label": "Final confirmation",
+     "section_label": "Closing & Consents",
+     "prompt": "Confirm the client is happy to proceed.",
+     "missing_parts": []},
+]
+
+
+def test_every_outstanding_critical_is_shown_not_just_the_first(panel):
+    """Compliance: if several are live "they should all remain available in
+    the same popup area, with scrolling if needed so none are lost".
+
+    No cap here on purpose. The panel scrolls; a "+2 more" line would be
+    hiding a critical, which is the one thing this exists to prevent.
+    """
+    panel.set_open_criticals(CRITS)
+    settle(panel)
+    shown = " ".join(_texts(panel))
+    for row in CRITS:
+        assert row["label"] in shown, row["label"]
+    assert panel._open_crit_box.count() == 3
+
+
+def test_a_critical_card_says_which_stage_it_was_left_in(panel):
+    """The panel follows the conversation now, so a card can be about a
+    stage the advisor left ten minutes ago. Without the stage name it is an
+    instruction with no context."""
+    panel.set_open_criticals(CRITS[:1])
+    settle(panel)
+    shown = " ".join(_texts(panel))
+    assert "VULNERABILITY" in shown
+    assert "all eight areas" in shown
+    assert "bereavement" in shown
+
+
+def test_the_same_criticals_again_do_not_rebuild_the_cards(panel):
+    """Sent twice a second. Rebuilding every time is the panel's flicker."""
+    panel.set_open_criticals(CRITS)
+    settle(panel)
+    before = [panel._open_crit_box.itemAt(i).widget() for i in range(3)]
+    panel.set_open_criticals(list(CRITS))
+    after = [panel._open_crit_box.itemAt(i).widget() for i in range(3)]
+    assert before == after
+
+
+def test_a_critical_that_gets_done_leaves_the_column(panel):
+    panel.set_open_criticals(CRITS)
+    settle(panel)
+    panel.set_open_criticals(CRITS[1:])
+    settle(panel)
+    shown = " ".join(_texts(panel))
+    assert "Opening question asked" not in shown
+    assert "Date of birth confirmed" in shown
+
+
+def test_a_new_call_starts_with_an_empty_column(panel):
+    panel.set_open_criticals(CRITS)
+    settle(panel)
+    panel.clear_open_criticals()
+    settle(panel)
+    assert panel._open_crit_box.count() == 0

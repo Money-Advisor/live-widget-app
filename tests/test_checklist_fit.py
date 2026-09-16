@@ -1055,3 +1055,100 @@ def test_the_idle_page_keeps_its_own_small_height():
     inner = p._scroll.widget()
     assert p._scroll.height() - inner.sizeHint().height() <= 4
     _stop(p)
+
+
+# -- what was left behind is still reachable ------------------------------
+
+LEFT = [
+    {"id": "cc.totals", "label": "Summary - Totals stated",
+     "section_label": "Creditor Check", "severity": "high"},
+    {"id": "cc.pref", "label": "Wrap-up - Preferential payments",
+     "section_label": "Creditor Check", "severity": "high"},
+    {"id": "vuln.q7", "label": "Q7 - Support network",
+     "section_label": "Vulnerability", "severity": "high"},
+]
+
+
+def _still(rows=LEFT):
+    w = m.StillToDo()
+    w.move(-3000, -3000)
+    w.show()
+    w.set_rows(rows)
+    for _ in range(6):
+        app.processEvents()
+    return w
+
+
+def test_nothing_left_behind_means_no_list_at_all():
+    """A panel that shows an empty box is a panel saying something untrue."""
+    w = _still([])
+    assert not w.isVisible()
+    assert w.count() == 0
+    w.deleteLater()
+
+
+def test_the_list_says_how_many_and_stays_shut():
+    """An advisor mid-call is reading the stage they are in. A list that
+    opened itself would push that stage off the screen."""
+    w = _still()
+    assert w.isVisible()
+    assert "3" in w._toggle.text()
+    assert not w._body.isVisible(), "it must start collapsed"
+    w.deleteLater()
+
+
+def test_opening_it_shows_every_stage_it_came_from():
+    """One list for the whole call - compliance: "a single dropdown covering
+    all sections, not a separate dropdown for each" - so each row has to say
+    which stage it belongs to or the advisor cannot go back to it."""
+    w = _still()
+    w._flip()
+    for _ in range(6):
+        app.processEvents()
+    assert w._body.isVisible()
+    shown = " ".join(texts(w))
+    assert "CREDITOR CHECK" in shown and "VULNERABILITY" in shown
+    assert "Summary - Totals stated" in shown
+    assert "Q7 - Support network" in shown
+    w.deleteLater()
+
+
+def test_a_long_stage_is_summarised_rather_than_endless():
+    w = _still([{"id": f"x{i}", "label": f"Requirement number {i}",
+                 "section_label": "Available Options", "severity": "high"}
+                for i in range(11)])
+    w._flip()
+    for _ in range(6):
+        app.processEvents()
+    shown = texts(w)
+    rows = [t for t in shown if t.startswith("Requirement number")]
+    assert len(rows) == m.StillToDo.MAX_PER_SECTION
+    assert any("more in this stage" in t for t in shown)
+    w.deleteLater()
+
+
+def test_the_same_rows_again_do_not_rebuild_it():
+    """The server sends this twice a second. Rebuilding on every message is
+    what the panel's flicker has always been."""
+    w = _still()
+    w._flip()
+    for _ in range(4):
+        app.processEvents()
+    before = [w._body_lay.itemAt(i).widget() for i in range(w._body_lay.count())]
+    w.set_rows(list(LEFT))
+    after = [w._body_lay.itemAt(i).widget() for i in range(w._body_lay.count())]
+    assert before == after, "identical rows rebuilt the list"
+    w.deleteLater()
+
+
+def test_the_panel_passes_the_list_through():
+    p, checks = _panel_with_parts()
+    p.set_still_to_do(LEFT)
+    settle(p)
+    assert p._still.count() == 3
+    assert p._still.isVisible()
+    # ...and going idle between calls clears it
+    p.show_idle()
+    settle(p)
+    assert p._still.count() == 0
+    _stop(p)
