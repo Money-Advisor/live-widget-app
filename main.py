@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.41"
+APP_VERSION = "2.9.42"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -6578,18 +6578,38 @@ class MainWindow(QMainWindow):
             self._spk_thread._start_ack.set()
 
     def _stop_recording(self):
+        # Where the advisor's wait actually goes. The server finalises a call
+        # in 0.0s - measured over about 300 real calls, the worst being 0.9s
+        # on a 36-minute one - and building the summary screen takes 50ms. So
+        # the "stuck on the summary screen" reported on a long call is spent
+        # HERE, between the button and session_end leaving the widget.
+        #
+        # t.wait() blocks the GUI thread, whatever the old comment beside it
+        # said: two threads at up to 1500ms each is up to three seconds of
+        # frozen window. Timed rather than guessed at, because guessing is
+        # what sent me to the server first.
+        _t0 = time.monotonic()
+        _marks = []
         for t in (self._mic_thread, self._spk_thread):
             if t is not None:
                 t.stop()
-                t.wait(1500)   # daemon threads; don't freeze the GUI waiting
+                t.wait(1500)   # blocks this thread; see the timing below
+        _marks.append(("audio threads", time.monotonic() - _t0))
 
         if self._streamer is not None:
+            _t1 = time.monotonic()
             try:
                 self._streamer.stop_stream("mic")
                 self._streamer.stop_stream("speaker")
                 self._streamer.end_session()
             except Exception:
                 pass
+            _marks.append(("streams + session_end", time.monotonic() - _t1))
+        total = time.monotonic() - _t0
+        if total > 0.25:
+            print(f"[stop] the window was frozen {total:.1f}s before "
+                  f"session_end went out  ->  "
+                  + "  ".join(f"{w} {s:.1f}s" for w, s in _marks))
             # Phase 4: hold the socket open so session_summary /
             # upload_complete can arrive; close on upload_complete or timeout.
             self._closing_streamer = self._streamer
