@@ -374,3 +374,108 @@ def test_the_fade_timer_belongs_to_the_panel(panel):
     down rather than raising - which is exactly what it did."""
     assert panel._reveal_timer.parent() is panel
     assert panel._reveal_timer.isSingleShot()
+
+
+def _quiesce(panel):
+    """Stop everything still ticking before the fixture lets the panel go.
+
+    Clearing an expired card runs the panel's normal redraw, which starts its
+    reveal timer and its opacity animation. Both then fire against a widget
+    deleteLater() has already queued for destruction - and because that
+    happens on a LATER file's event loop, the whole suite died inside
+    test_call_buffering while this file passed on its own.
+    """
+    panel.clear_trigger_actions()
+    for attr in ("_reveal_timer", "_fade"):
+        thing = getattr(panel, attr, None)
+        if thing is not None:
+            thing.stop()
+
+
+# -- the two breaches that cannot be taken back ---------------------------
+
+def _texts(panel):
+    out = []
+    for i in range(panel._action_box.count()):
+        w = panel._action_box.itemAt(i).widget()
+        if w is None:
+            continue
+        out += [l.text() for l in w.findChildren(QLabel) if l.text().strip()]
+        if isinstance(w, QLabel) and w.text().strip():
+            out.append(w.text())
+    return out
+
+
+def test_a_no_repair_card_comes_off_the_screen_by_itself(panel):
+    """Bilal, 2026-09-15: for a breach with no genuine in-call recovery,
+    "show the warning for 1 minute, then clear it from the live screen". The
+    audit finding stays; this is the advisor's screen only.
+
+    Driven with a 0ms expiry rather than by waiting a minute - the duration
+    is the server's to choose and is asserted separately.
+    """
+    rows = [{"id": "q17.omitted_numeric_policy_value",
+             "message": "You disclosed a guideline figure.",
+             "severity": "critical", "auto_clear_seconds": 0},
+            {"id": "q17.partial_category_steering",
+             "message": "Withdraw the category suggestion.",
+             "severity": "high"}]
+    panel.set_trigger_actions(rows)
+    assert any("guideline figure" in t for t in _texts(panel))
+    for _ in range(20):
+        app.processEvents()
+    shown = " ".join(_texts(panel))
+    assert "guideline figure" not in shown, "the minute card is still up"
+    # ...and the one that CAN be repaired is untouched
+    assert "Withdraw the category suggestion" in shown
+    _quiesce(panel)
+
+
+def test_an_expired_card_does_not_come_back_on_the_next_message(panel):
+    """The server keeps sending it - the finding is permanent and it cannot
+    know what the advisor has had time to read. Without remembering the
+    expiry the card would reappear about half a second later, which is worse
+    than never clearing it.
+    """
+    rows = [{"id": "q17.omitted_iva_di_control",
+             "message": "You worked the figures towards an IVA target.",
+             "severity": "critical", "auto_clear_seconds": 0}]
+    panel.set_trigger_actions(rows)
+    for _ in range(20):
+        app.processEvents()
+    assert "IVA target" not in " ".join(_texts(panel))
+    panel.set_trigger_actions(rows)          # the server says it again
+    for _ in range(10):
+        app.processEvents()
+    assert "IVA target" not in " ".join(_texts(panel)), "it came back"
+    _quiesce(panel)
+
+
+def test_a_new_call_forgets_what_expired_in_the_last_one(panel):
+    """Otherwise an advisor who made the same mistake on two calls in a row
+    would only be told once."""
+    rows = [{"id": "q17.omitted_iva_di_control", "message": "IVA target.",
+             "severity": "critical", "auto_clear_seconds": 0}]
+    panel.set_trigger_actions(rows)
+    for _ in range(20):
+        app.processEvents()
+    assert panel._expired_actions
+    panel.clear_trigger_actions()
+    assert not panel._expired_actions
+    assert not panel._expiry_timers
+    panel.set_trigger_actions(rows)
+    assert "IVA target." in " ".join(_texts(panel))
+    _quiesce(panel)
+
+
+def test_an_ordinary_correction_card_never_expires(panel):
+    """Only the no-repair ones clear themselves. Everything else waits for
+    the advisor to put it right."""
+    panel.set_trigger_actions([
+        {"id": "q17.partial_monthly_conversion_not_verbalised",
+         "message": "Say the monthly figure out loud.", "severity": "high"}])
+    for _ in range(20):
+        app.processEvents()
+    assert "Say the monthly figure out loud." in " ".join(_texts(panel))
+    assert not panel._expiry_timers, "an ordinary card was given a clock"
+    _quiesce(panel)

@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.39"
+APP_VERSION = "2.9.40"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -3161,6 +3161,13 @@ class AdvisorAlertsPanel(QFrame):
         self._crisis_compact = False
         self._action_key = None        # what is on screen, to avoid rebuilding
         self._action_items = []        # every correction we were sent
+        # The one-minute cards: a timer each while they are up, and the ids
+        # whose minute has already passed. The server keeps sending those
+        # rows - the finding is permanent and it cannot know what the advisor
+        # has had time to read - so without this they would come straight
+        # back on the next message.
+        self._expiry_timers = {}
+        self._expired_actions = set()
         self._shown_actions = 0        # ...and how many fit
         self._warn_key = None          # what is on screen, to avoid rebuilding
         self._warn_items = []          # everything we were sent
@@ -3390,18 +3397,26 @@ class AdvisorAlertsPanel(QFrame):
     def set_trigger_actions(self, rows):
         """Corrections for triggers that have already fired.
 
-        Never removed once shown. Compliance are explicit that repairing the
-        conversation does not reverse the finding, and an advisor who reads
-        half a script and looks up to find it gone is worse off than one who
-        never saw it.
+        Most stay until the advisor puts the thing right. Two cannot be put
+        right at all - saying a guideline figure out loud, and working the
+        figures towards an IVA target - and compliance asked on 2026-09-15
+        that those show for a minute and then come off the live screen. The
+        server marks them with `auto_clear_seconds`; which ones they are is
+        its business, not the widget's.
+
+        The FINDING is never removed either way. This is the advisor's screen,
+        not the audit record.
         """
         items = [r for r in (rows or [])
                  if isinstance(r, dict) and (r.get("message") or "").strip()]
+        items = [r for r in items
+                 if (r.get("id") or r["message"]) not in self._expired_actions]
         key = tuple(r.get("id") or r["message"] for r in items)
         if key == self._action_key:
             return                      # unchanged; do not rebuild and flicker
         self._action_key = key
         self._action_items = items
+        self._arm_expiries(items)
         was, self._busy = self._busy, True
         try:
             self._render_actions(self.MAX_ACTIONS)
@@ -3455,8 +3470,62 @@ class AdvisorAlertsPanel(QFrame):
             self._action_box.addWidget(more)
             more.show()
 
+    def _arm_expiries(self, items):
+        """Start the one-minute clock on any card that clears itself.
+
+        One timer per card, owned by this panel. A free-standing
+        QTimer.singleShot outlived its panel once and took the process down,
+        so nothing here is allowed to be one.
+        """
+        for row in items:
+            secs = row.get("auto_clear_seconds")
+            rid = row.get("id") or row.get("message")
+            # `is None`, not a truth test: a card with no clock is one the
+            # server left the field off, and 0 is a real duration meaning
+            # "immediately". `if not secs` treated the two the same.
+            if secs is None or rid in self._expiry_timers:
+                continue
+            t = QTimer(self)
+            t.setSingleShot(True)
+            t.timeout.connect(lambda _rid=rid: self._expire_action(_rid))
+            t.start(int(secs) * 1000)
+            self._expiry_timers[rid] = t
+
+    def _expire_action(self, rid):
+        """Its minute is up: off the screen, and it does not come back.
+
+        Remembered in `_expired_actions` because the server keeps sending the
+        row - the finding is permanent and it has no idea what the advisor
+        has already had time to read. Without that memory the card would
+        reappear on the very next message.
+        """
+        try:
+            self._expired_actions.add(rid)
+            t = self._expiry_timers.pop(rid, None)
+            if t is not None:
+                t.stop()
+        except RuntimeError:
+            return      # the panel's C++ side has gone; nothing to redraw
+        left = [r for r in self._action_items
+                if (r.get("id") or r.get("message")) != rid]
+        if len(left) == len(self._action_items):
+            return
+        self._action_items = left
+        self._action_key = tuple(r.get("id") or r["message"] for r in left)
+        was, self._busy = self._busy, True
+        try:
+            self._render_actions(self.MAX_ACTIONS)
+        finally:
+            self._busy = was
+        self._restyle()
+        self._fit()
+
     def clear_trigger_actions(self):
         """New call, clean slate. Not a way to dismiss one mid-call."""
+        for t in self._expiry_timers.values():
+            t.stop()
+        self._expiry_timers = {}
+        self._expired_actions = set()
         self._action_key = None
         self._action_items = []
         self._shown_actions = 0
