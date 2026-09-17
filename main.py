@@ -3439,6 +3439,14 @@ class AdvisorAlertsPanel(QFrame):
         self._reveal_timer = QTimer(self)
         self._reveal_timer.setSingleShot(True)
         self._reveal_timer.timeout.connect(self._reveal)
+        # One more measurement after the layout has really settled - see
+        # _recheck_height. Owned by the panel, never a free-standing
+        # singleShot: one of those outlived its panel and took the process
+        # down with it.
+        self._recheck_timer = QTimer(self)
+        self._recheck_timer.setSingleShot(True)
+        self._recheck_timer.timeout.connect(self._recheck_height)
+        self._rechecks_left = 0
         self._crisis_msg = None        # kept, so it can be rebuilt shorter
         self._crisis_compact = False
         self._action_key = None        # what is on screen, to avoid rebuilding
@@ -3523,6 +3531,37 @@ class AdvisorAlertsPanel(QFrame):
         # did: the whole widget suite died partway through, on a test that
         # passed perfectly well on its own. Owned, it dies with the panel.
         self._reveal_timer.start(0)
+        # ...and look once more once Qt has actually laid the column out.
+        # The three passes above run synchronously against sizes Qt has not
+        # committed to yet; in the running app the real geometry arrives a
+        # turn later, and a pin made before it leaves the column short - a
+        # safety card cut off mid-sentence with half the screen empty below
+        # it, which is what Bilal photographed on 17 Sep.
+        self._rechecks_left = 2
+        self._recheck_timer.start(0)
+
+    def _recheck_height(self):
+        """Re-pin if the settled layout wants a different height.
+
+        Bounded twice over: it stops when the number stops changing, and it
+        will not run more than _rechecks_left times whatever happens. This is
+        the UI thread, so a loop here freezes the advisor's widget rather
+        than merely looking wrong.
+        """
+        try:
+            if self._busy or self._rechecks_left <= 0 or not self.isVisible():
+                return
+        except RuntimeError:
+            return                    # the panel went away while we waited
+        self._rechecks_left -= 1
+        want = max(0, min(self._body.sizeHint().height(), self._room()))
+        if want == self._scroll.maximumHeight():
+            return                    # settled; nothing to do
+        self._scroll.setMinimumHeight(want)
+        self._scroll.setMaximumHeight(want)
+        self._relayout()
+        if self._rechecks_left > 0:
+            self._recheck_timer.start(0)
 
     #: passes of grow-then-pin. Two is enough in every measured case; the
     #: third is there so a pathological card cannot leave the column short.

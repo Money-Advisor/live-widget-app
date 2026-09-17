@@ -636,3 +636,51 @@ def test_the_column_goes_away_again_when_the_criticals_are_done(panel):
     panel.set_open_criticals([])
     settle(panel)
     assert not panel.isVisible(), "an empty red column is still a red column"
+
+
+# -- the column must not measure itself short --------------------------------
+
+def test_the_column_is_as_tall_as_its_contents_need(panel):
+    """Bilal, 17 Sep: "the red card has a scrolling effect - half the message
+    appears and you have to scroll for the rest, and there is a lot of space
+    below it".
+
+    The column pins itself to what its contents say they need, and the three
+    synchronous passes that work it out run against sizes Qt has not
+    committed to yet. In the running app the real geometry lands a turn
+    later, so a pin made before it leaves the column short and the card
+    inside it scrolls with the screen half empty underneath.
+    """
+    panel.show_crisis(crisis.payload("I can't go on", True))
+    settle(panel)
+    need = panel._body.sizeHint().height()
+    room = panel._room()
+    if need >= room:
+        pytest.skip("this card genuinely does not fit; scrolling is correct")
+    assert panel._scroll.maximumHeight() >= need, (
+        f"column pinned to {panel._scroll.maximumHeight()}px for content "
+        f"that needs {need}px, with {room}px of room available")
+    assert panel._scroll.verticalScrollBar().maximum() == 0, \
+        "it scrolls even though it fits"
+
+
+def test_the_recheck_cannot_run_away_with_itself(panel):
+    """It re-pins on the UI thread, so an unbounded loop here freezes the
+    advisor's widget rather than merely looking wrong."""
+    panel.show_crisis(crisis.payload("I can't go on", True))
+    settle(panel)
+    panel._rechecks_left = 2
+    for _ in range(12):
+        panel._recheck_height()
+    assert panel._rechecks_left <= 0, "the recheck never runs out"
+
+
+def test_a_settled_column_is_left_alone(panel):
+    """A re-pin that changes nothing still costs a relayout on every message
+    the server sends, which is twice a second."""
+    panel.show_crisis(crisis.payload("I can't go on", True))
+    settle(panel)
+    before = panel._scroll.maximumHeight()
+    panel._rechecks_left = 2
+    panel._recheck_height()
+    assert panel._scroll.maximumHeight() == before
