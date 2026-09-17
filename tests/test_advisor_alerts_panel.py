@@ -684,3 +684,63 @@ def test_a_settled_column_is_left_alone(panel):
     panel._rechecks_left = 2
     panel._recheck_height()
     assert panel._scroll.maximumHeight() == before
+
+
+# -- every wording that would put it right, not just the first -------------
+
+ALT_ROW = {
+    "id": "q17.omitted_affordability_misstatement",
+    "severity": "critical",
+    "message": "Correct the affordability statement and ask the customer to "
+               "state their affordable amount again without suggesting a figure.",
+    "script": "I'm sorry, I incorrectly repeated the amount you said you "
+              "could afford. Can you tell me again what amount you feel you "
+              "can genuinely afford each month?",
+    "alternatives": [
+        "I'm sorry, I shouldn't have suggested a different amount as what "
+        "you can afford. What amount do you feel you can genuinely afford?",
+        "Apologies, you told me you could afford \u00a3110 per month. Can "
+        "you confirm that is still the amount you feel you can genuinely "
+        "afford?",
+    ],
+}
+
+
+def test_the_second_way_to_put_it_right_is_on_the_screen(panel):
+    """Faseeh, 17 Sep: "it still does not contain the second recovery action
+    which I told you at least 50 times... it is still showing 1 only."
+
+    He was right, and it was never the rulebook. The server has sent
+    `alternatives` with every correction card since the handling file was
+    adopted, and main.py did not contain the word - so every alternative
+    wording compliance ever wrote arrived at the widget and was thrown away.
+    No amount of fixing the data was ever going to put it on screen.
+    """
+    panel.set_trigger_actions([ALT_ROW])
+    settle(panel)
+    shown = " ".join(l.text() for l in labels(panel))
+    assert ALT_ROW["script"] in shown, "the main script vanished"
+    for alt in ALT_ROW["alternatives"]:
+        assert alt in shown, f"alternative not drawn: {alt[:50]}"
+    assert "OR SAY THIS" in shown, \
+        "the alternatives are drawn but not introduced, so they read as " \
+        "part of the sentence above them"
+
+
+def test_a_card_with_one_wording_gains_nothing(panel):
+    """Most triggers have a single script. They must not sprout an empty
+    "OR SAY THIS" heading."""
+    panel.set_trigger_actions([dict(ALT_ROW, alternatives=[])])
+    settle(panel)
+    shown = " ".join(l.text() for l in labels(panel))
+    assert ALT_ROW["script"] in shown
+    assert "OR SAY THIS" not in shown
+
+
+def test_an_alternative_identical_to_the_script_is_not_repeated(panel):
+    panel.set_trigger_actions([dict(ALT_ROW,
+                                    alternatives=[ALT_ROW["script"], ""])])
+    settle(panel)
+    shown = [l.text() for l in labels(panel)]
+    assert shown.count(ALT_ROW["script"]) == 1
+    assert "OR SAY THIS" not in " ".join(shown)

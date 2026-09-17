@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.48"
+APP_VERSION = "2.9.49"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -4017,6 +4017,43 @@ class AdvisorAlertsPanel(QFrame):
                 f"background:transparent; font-family:{FF}; font-size:12.5px;"
                 " font-weight:600; color:#1A1A1A; line-height:146%;"))
             col.addWidget(say)
+
+            # ...and any OTHER wording that would also put it right. The
+            # server has sent these with every card since the handling file
+            # was adopted and nothing here read them, so every alternative
+            # compliance ever wrote arrived and was thrown away. Bilal's
+            # second affordability route - "repeat back correctly what the
+            # client said and ask them to confirm it" - is the one that made
+            # it obvious, but it was never only that one.
+            #
+            # Either is enough on its own. Compliance, 2026-09-17: "Either
+            # route is enough to complete the correction. Nothing additional
+            # is required before the live warning can clear." So they are
+            # drawn the same size and weight as the first, not as a footnote.
+            for alt in (row.get("alternatives") or []):
+                alt = str(alt or "").strip()
+                if not alt or alt == script:
+                    continue
+                other = QFrame()
+                other.setObjectName("sayThis")
+                other.setStyleSheet(
+                    "QFrame#sayThis { background:#FFFFFF;"
+                    f" border:1px solid {edge}; border-radius:9px; }}")
+                oin = QVBoxLayout(other)
+                oin.setContentsMargins(11, 9, 11, 10)
+                oin.setSpacing(5)
+                olab = QLabel("OR SAY THIS")
+                olab.setStyleSheet(
+                    f"background:transparent; font-family:{FF};"
+                    f" font-size:9.5px; font-weight:800; color:{quiet};"
+                    " letter-spacing:1.3px;")
+                oin.addWidget(olab)
+                oin.addWidget(wrapped_label(
+                    alt,
+                    f"background:transparent; font-family:{FF};"
+                    " font-size:12.5px; font-weight:600; color:#1A1A1A;"
+                    " line-height:146%;"))
+                col.addWidget(other)
         elif row.get("coaching_only"):
             # Compliance: the disclosure "cannot genuinely be taken back once
             # the customer has heard it". Saying so plainly is kinder than an
