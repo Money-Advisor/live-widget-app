@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.49"
+APP_VERSION = "2.9.50"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -2304,8 +2304,19 @@ class SectionAccordion(QWidget):
         return lab
 
     def _caption(self, text: str) -> QLabel:
-        """A quiet divider between the outstanding items and the finished ones."""
+        """A quiet divider between the outstanding items and the finished ones.
+
+        WRAPPED, and that is not cosmetic. A QLabel without wordWrap reports
+        its minimum width as the full width of its text, and no layout can
+        make it narrower - so "·  2 more still to do in this stage" set a
+        357px floor, the frame around it went to 377, the panel's inner
+        widget to 409, and every card in a 340px panel was laid out 69px too
+        wide and sliced off at the edge. That is what Bilal photographed on
+        18 Sep as the follow-up questions and the Loans criticals running
+        outside the panel.
+        """
         lab = QLabel(text)
+        lab.setWordWrap(True)
         lab.setStyleSheet(
             f"background:transparent; font-family:{FF}; font-size:9px;"
             " font-weight:800; color:#A2A2BC; letter-spacing:1.1px;")
@@ -2870,7 +2881,8 @@ class StillToDo(QWidget):
             rest = len(mine) - self.MAX_PER_SECTION
             if rest > 0:
                 more = QLabel(f"\u00b7  {rest} more in this stage")
-                more.setStyleSheet(
+                more.setWordWrap(True)      # see _caption: an unwrapped
+                more.setStyleSheet(         # label sets a floor for the column
                     f"background:transparent; font-family:{FF};"
                     " font-size:10px; color:#A2A2BC;")
                 self._body_lay.addWidget(more)
@@ -3177,6 +3189,16 @@ class _PanelScroll(QScrollArea):
         # longer does.
         super().resizeEvent(ev)
         self._pin_timer.start(0)
+        # ...and nothing inside may be laid out wider than the space there
+        # is. setWidgetResizable grows the content to fill the viewport but
+        # will not shrink it below its minimum, so a single un-wrapped label
+        # can set a floor for the whole column and every card beside it gets
+        # clipped at the edge - measured at 409px of content in a 340px
+        # panel. The captions are wrapped now; this is the guard that stops
+        # the next one doing it again.
+        w = self.widget()
+        if w is not None:
+            w.setMaximumWidth(self.viewport().width())
 
     def sizeHint(self):
         # The panel drives the height through its `panelHeight` property, which

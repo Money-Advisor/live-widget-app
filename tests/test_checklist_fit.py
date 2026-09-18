@@ -1280,3 +1280,91 @@ def test_a_part_that_gets_done_leaves_the_row():
         "a part the advisor has since covered is still on the list"
     assert any("car finance or HP" in t for t in shown)
     w.deleteLater()
+
+
+# -- nothing may be laid out wider than the panel it sits in ---------------
+
+def _panel_for(section_key, urgent_from=None, n_urgent=8):
+    import rulebook as _rb
+    rb = _rb.load(_rb.BUNDLED / "sfm.json")
+    sec = next(s for s in rb.sections if s.key == section_key)
+
+    def row(c, urgent=False):
+        d = {"id": c.id, "label": c.label, "severity": c.severity,
+             "done": False, "evidence": None, "prompt": c.prompt,
+             "missing_parts": [e for e in (c.elements or [])[:3]],
+             "parts": [{"text": e, "done": False, "na": False}
+                       for e in (c.elements or [])]}
+        if urgent:
+            d["urgent"] = True
+            d["urgent_reason"] = "A vulnerability has been disclosed"
+        return d
+
+    rows = [row(c) for c in sec.checks
+            if c.advisor_visible and not c.is_breach_trigger]
+    if urgent_from:
+        v = next(s for s in rb.sections if s.key == urgent_from)
+        rows = [row(c, True) for c in v.checks
+                if c.advisor_visible and not c.is_breach_trigger
+                ][:n_urgent] + rows
+
+    p = m.ComplianceAlertPanel()
+    p.move(-3000, -3000)
+    p.show()
+    for _ in range(6):
+        app.processEvents()
+    p.show_live()
+    p.update_stage(section_key,
+                   [{"key": s.key, "label": s.label, "done": 0,
+                     "total": len(s.checks), "current": s.key == section_key}
+                    for s in rb.sections], rows)
+    settle(p)
+    return p
+
+
+def _overflowing(panel):
+    from PyQt6.QtWidgets import QScrollArea, QFrame
+    sa = panel.findChildren(QScrollArea)[0]
+    vp = sa.viewport().width()
+    return [(f.objectName(), f.width(), vp)
+            for f in panel.findChildren(QFrame)
+            if f.isVisibleTo(panel) and f.objectName() and f.width() > vp]
+
+
+@pytest.mark.parametrize("section,urgent", [
+    ("FACT_FIND", "VULNERABILITY"),
+    ("LOANS", "VULNERABILITY"),
+    ("AVAILABLE_OPTIONS", None),
+    ("FACT_FIND", None),
+])
+def test_no_card_is_drawn_wider_than_the_panel(section, urgent):
+    """Bilal, 18 Sep: the vulnerability follow-ups and the Loans criticals
+    "are moving outside the panel".
+
+    Measured at the time: the content demanded 409px inside a 340px viewport,
+    so every card was laid out 69px too wide and sliced off at the edge. The
+    cause was a single QLabel with no wordWrap - "·  2 more still to do in
+    this stage" - whose minimum width is the full width of its text, which no
+    layout can shrink. One caption set the floor for the whole column.
+
+    The pixel check never caught it because it measures label HEIGHTS, and
+    that label was drawn perfectly in full. It was the cards beside it that
+    were cut.
+    """
+    p = _panel_for(section, urgent)
+    over = _overflowing(p)
+    assert not over, (
+        f"{len(over)} card(s) wider than the panel in {section}: {over[:3]}")
+    p.deleteLater()
+
+
+def test_a_caption_cannot_set_the_width_of_the_column():
+    """The specific defect, pinned directly: an unwrapped caption reports its
+    full text width as a minimum and drags everything out with it."""
+    p = _panel_for("FACT_FIND")
+    inner = p._scroll.widget()
+    vp = p._scroll.viewport().width()
+    assert inner.minimumSizeHint().width() <= vp + 1, (
+        f"the content demands {inner.minimumSizeHint().width()}px inside a "
+        f"{vp}px viewport, so every card in it will be clipped")
+    p.deleteLater()
