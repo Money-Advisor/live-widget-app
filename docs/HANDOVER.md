@@ -6,7 +6,7 @@
 
 ## Current state
 
-**Version 2.9.32**, in production on agents' machines across Drafters, SFM Advisors
+**Version 2.9.50**, in production on agents' machines across Drafters, SFM Advisors
 and Lead Generation.
 
 | | |
@@ -15,8 +15,8 @@ and Lead Generation.
 | Distribution | `SparkFlowSetup.exe` (Inno Setup, per-user, no admin prompt), published as a GitHub release |
 | Build | PyInstaller **folder** build, not one-file |
 | Default servers | `http://192.168.80.53:8080` and `ws://192.168.80.53:8765`, with a one-time migration off the retired `192.168.80.52` |
-| Live AI | On for SFM only, in a silent trial - the server scores the call and the panel shows it, but nothing interrupts the advisor |
-| Tests | 318 passing, plus 21 smoke checks |
+| Live AI | On for SFM only. The server scores the call and the panel shows the checklist, the warnings and the correction cards to the advisor during it (`LIVE_PIPELINE_SILENT=0`) |
+| Tests | 430 passing, plus 21 smoke checks |
 | Code | One file, `main.py`, about 4,600 lines |
 | Signed | **No.** SmartScreen warns on first run. |
 

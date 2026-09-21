@@ -74,13 +74,13 @@ always starts signed out.
 
 | | |
 | --- | --- |
-| Version | **2.9.32** |
+| Version | **2.9.50** |
 | Platform | Windows only — `pyaudiowpatch` is required for WASAPI loopback |
 | Distribution | `SparkFlowSetup.exe`, built with PyInstaller and Inno Setup, published as a GitHub release |
 | Build type | A **folder** build, not one-file (see [ARCHITECTURE.md](ARCHITECTURE.md#a-folder-build-not-one-file)) |
 | Server | Points at 192.168.80.53 by default, with a one-time migration off the retired 192.168.80.52 |
-| Live AI | On for SFM only, in a silent trial - scored and shown on the panel, never interrupting |
-| Tests | 318 passing, plus 21 smoke checks |
+| Live AI | On for SFM only. The server scores the call and the panel shows the checklist, the warnings and the correction cards to the advisor during it (`LIVE_PIPELINE_SILENT=0`) |
+| Tests | 430 passing, plus 21 smoke checks |
 | Logs | `%LOCALAPPDATA%\Spark Flow\logs\widget.log` |
 
 ## Recent history worth knowing
