@@ -60,8 +60,13 @@ Run both from the repo root so `import main` resolves, and scope pytest to
 
 ```powershell
 python build_all.py                                              # -> dist\SparkFlow\SparkFlow.exe
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\installer.iss   # -> installer\Output\SparkFlowSetup.exe
+"$env:USERPROFILE\tools\InnoSetup6\ISCC.exe" installer\installer.iss     # -> installer\Output\SparkFlowSetup.exe
 ```
+
+Inno Setup is installed **per user**, not in Program Files — the build machine has no
+administrator rights. Bump `APP_VERSION` in `main.py` and `#define AppVersion` in
+`installer/installer.iss` together, or the auto-updater's version check and the
+installer disagree about what was just built.
 
 Windows only. It needs `pyaudiowpatch` for WASAPI loopback capture, which is how
 the customer's side of the call is recorded.
