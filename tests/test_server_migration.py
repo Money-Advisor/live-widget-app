@@ -1,9 +1,19 @@
-"""The Aug-2026 server move: 192.168.80.52 -> .53.
+"""The saved-server migration, and why it is now switched off.
 
-A new build alone does NOT fix an existing agent. QSettings takes precedence over
-DEFAULT_*, so anyone who had ever run the widget kept the retired address and hit a
-502 at login (the old box still serves nginx but no API). These cover the migration
-that rewrites it, and that a deliberately-chosen server is left alone.
+Aug 2026: the servers moved 192.168.80.52 -> .53. A new build alone did NOT fix an
+existing agent, because QSettings takes precedence over DEFAULT_*, so anyone who had
+ever run the widget kept the retired address and hit a 502 at login. `RETIRED_HOSTS`
+rewrote it on startup.
+
+Sep 2026: **192.168.80.52 is the STAGING box again**, and the whole AI pipeline is
+developed against it. A widget deliberately pointed there was being dragged back to
+production on every launch, and the staging login then failed against production's
+database — the two boxes have separate databases. So `RETIRED_HOSTS` is now empty, and
+.52 must never go back into it.
+
+The migration machinery is kept because the next server move will need it; these tests
+cover that it is inert today, that it still works when a host IS listed, and that a
+deliberately-chosen server is never hijacked.
 """
 import os
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -38,8 +48,24 @@ def _run_migration(api, ws):
     return obj
 
 
-def test_retired_host_is_rewritten_and_persisted():
+def test_the_staging_box_is_no_longer_retired():
+    """THE one that matters. 192.168.80.52 is staging now, and a widget pointed there
+    on purpose must stay there. While it was in RETIRED_HOSTS the address was silently
+    rewritten to production on every launch, so the staging login failed — the two
+    boxes have separate databases and the account simply does not exist on production."""
+    assert "192.168.80.52" not in main.MainWindow.RETIRED_HOSTS
+
     obj = _run_migration("http://192.168.80.52:8080", "ws://192.168.80.52:8765")
+    assert obj._api_base == "http://192.168.80.52:8080"
+    assert obj._ws_url == "ws://192.168.80.52:8765"
+    assert not obj._settings.synced          # nothing rewritten -> no write
+
+
+def test_the_migration_still_works_when_a_host_IS_listed(monkeypatch):
+    """Kept for the next server move: the mechanism must still rewrite and persist.
+    Without this, emptying the list could quietly rot into a no-op function."""
+    monkeypatch.setattr(main.MainWindow, "RETIRED_HOSTS", ("10.9.9.9",))
+    obj = _run_migration("http://10.9.9.9:8080", "ws://10.9.9.9:8765")
     assert obj._api_base == main.DEFAULT_API_BASE_URL
     assert obj._ws_url == main.DEFAULT_RECORDING_WS
     # must be written back, or it reverts on the next launch

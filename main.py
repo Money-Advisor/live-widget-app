@@ -257,7 +257,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.50"
+APP_VERSION = "2.9.51"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -6442,7 +6442,14 @@ class MainWindow(QMainWindow):
     # keeps the dead address and sees a 502 at login (the old box still runs nginx but
     # not the API). This rewrites only the retired host, so anyone who has deliberately
     # set a different server (a test box, a future move) is left alone.
-    RETIRED_HOSTS = ("192.168.80.52",)
+    #
+    # EMPTY SINCE 2026-09-24, and .52 must never go back in it. That address is the
+    # STAGING box again — the whole AI pipeline is developed against it — so a widget
+    # pointed there on purpose was being silently dragged back to production on every
+    # launch, and the staging login then failed against production's database. The
+    # migration has also finished its job: every one of the 106 agents reports a widget
+    # version, which is only possible by reaching .53, so none is left to rescue.
+    RETIRED_HOSTS: tuple = ()
 
     def _migrate_server_urls(self) -> None:
         """One-time: repoint a saved address that still names a retired server."""
