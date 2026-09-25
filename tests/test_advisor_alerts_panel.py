@@ -744,3 +744,91 @@ def test_an_alternative_identical_to_the_script_is_not_repeated(panel):
     shown = [l.text() for l in labels(panel)]
     assert shown.count(ALT_ROW["script"]) == 1
     assert "OR SAY THIS" not in " ".join(shown)
+
+
+# -- the card log -------------------------------------------------------------
+#
+# REF545, 25 Sep: Bilal saw a card "flash for a second" and two cards land
+# 40-50s after the breach, where the server record says 10s and 29s. His
+# widget.log could settle neither: no clock on any line, and nothing ever said
+# a card was drawn or taken down.
+
+import re                                                        # noqa: E402
+
+STAMP = r"\d\d:\d\d:\d\d\.\d{3}"
+
+
+def _card_lines(capsys):
+    return [l for l in capsys.readouterr().out.splitlines()
+            if l.startswith("[cards]")]
+
+
+def test_the_log_says_when_each_card_appears_and_goes_and_why(panel, capsys):
+    a = {"id": "q17.partial_category_steering", "message": "Withdraw it.",
+         "severity": "high"}
+    b = {"id": "q17.omitted_pip_dla_mishandling", "message": "Offset it.",
+         "severity": "critical"}
+    capsys.readouterr()
+    panel.set_trigger_actions([a, b])
+    shown = _card_lines(capsys)
+    assert len(shown) == 2, shown
+    for line, cid in zip(shown, (a["id"], b["id"])):
+        assert re.match(rf"\[cards\] {STAMP} SHOWN {re.escape(cid)} #1 ", line), line
+        assert "(server)" in line or "; server)" in line, line
+
+    panel.set_trigger_actions([b])                 # the server dropped `a`
+    gone = _card_lines(capsys)
+    assert gone == [l for l in gone if "GONE" in l] and len(gone) == 1, gone
+    assert a["id"] in gone[0] and "(server)" in gone[0]
+
+    panel.set_trigger_actions([b])                 # unchanged: nothing to say
+    assert _card_lines(capsys) == []
+
+    panel.clear_trigger_actions()
+    end = _card_lines(capsys)
+    assert len(end) == 1 and b["id"] in end[0] and "(new call)" in end[0], end
+    _quiesce(panel)
+
+
+def test_a_second_occurrence_is_logged_as_its_own_card(panel, capsys):
+    row = {"id": "q17.partial_category_steering", "message": "Withdraw it.",
+           "severity": "high"}
+    capsys.readouterr()
+    panel.set_trigger_actions([row, dict(row, occurrence=2)])
+    lines = _card_lines(capsys)
+    assert any("#1 " in l for l in lines) and any("#2 " in l for l in lines), lines
+    _quiesce(panel)
+
+
+def test_a_card_that_times_out_is_logged_as_timing_out(panel, capsys):
+    """Otherwise a one-minute card going reads exactly like the server
+    taking it down, and those are the two explanations for a vanishing card
+    that most need telling apart."""
+    capsys.readouterr()
+    panel.set_trigger_actions([{"id": "q17.omitted_iva_di_control",
+                                "message": "IVA target.", "severity": "critical",
+                                "auto_clear_seconds": 0}])
+    for _ in range(20):
+        app.processEvents()
+    lines = _card_lines(capsys)
+    assert any("GONE" in l and "its minute ran out" in l for l in lines), lines
+    _quiesce(panel)
+
+
+def test_the_card_log_never_carries_the_customers_words(panel, capsys):
+    """The quote is what the customer or advisor said on a regulated call.
+    It has no place in a log file on an advisor's PC."""
+    capsys.readouterr()
+    panel.set_trigger_actions([{
+        "id": "q17.partial_category_steering", "message": "Withdraw it.",
+        "severity": "high", "quote": "my rent is 812 pounds at 14 Acacia Road",
+        "script": "Say this instead."}])
+    panel.clear_trigger_actions()
+    out = "\n".join(_card_lines(capsys))
+    assert out, "nothing was logged at all"
+    assert "Acacia" not in out and "812" not in out
+    _quiesce(panel)
+
+
+def test_every_log_stamp_is_wall_clock_to_the_millisecond():
+    assert re.fullmatch(STAMP, m._stamp()), m._stamp()

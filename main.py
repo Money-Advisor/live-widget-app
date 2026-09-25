@@ -151,6 +151,17 @@ def _now() -> float:
     return time.monotonic()
 
 
+def _stamp() -> str:
+    """Wall-clock time for the log, to the millisecond.
+
+    widget.log had no clock on any line until 2.9.52, so a report like "the
+    card came 40 seconds late" could not be checked against the server's
+    record of when it fired. Wall clock, not `_now()`: it has to line up with
+    the server's timestamps and the recording, not with this process.
+    """
+    return datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
+
 # pyaudiowpatch names a loopback after the render endpoint it taps, e.g.
 # 'Headphones (PLT Focus)' -> 'Headphones (PLT Focus) [Loopback]'.
 _LOOPBACK_SUFFIX = " [Loopback]"
@@ -257,7 +268,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.51"
+APP_VERSION = "2.9.52"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -1663,7 +1674,7 @@ class AudioStreamer:
             ws.settimeout(WS_STREAM_TIMEOUT)
         except Exception:
             pass
-        print("[recv] receiver loop started")
+        print(f"[recv] {_stamp()} receiver loop started")
         while not self._receiver_stop.is_set():
             try:
                 raw = ws.recv()
@@ -1682,7 +1693,7 @@ class AudioStreamer:
                 break                         # socket closed / error – exit
             if not raw:
                 continue
-            print(f"[recv] {str(raw)[:90]}")
+            print(f"[recv] {_stamp()} {str(raw)[:90]}")
             try:
                 msg = json.loads(raw)
             except (json.JSONDecodeError, TypeError, ValueError):
@@ -3481,6 +3492,7 @@ class AdvisorAlertsPanel(QFrame):
         self._expiry_timers = {}
         self._expired_actions = set()
         self._shown_actions = 0        # ...and how many fit
+        self._logged_cards = {}        # what the log last said was on screen
         self._warn_key = None          # what is on screen, to avoid rebuilding
         self._warn_items = []          # everything we were sent
         self._shown_warnings = 0       # ...and how many fit
@@ -3764,7 +3776,7 @@ class AdvisorAlertsPanel(QFrame):
         self._arm_expiries(items)
         was, self._busy = self._busy, True
         try:
-            self._render_actions(self.MAX_ACTIONS)
+            self._render_actions(self.MAX_ACTIONS, why="server")
         finally:
             self._busy = was
         self._restyle()
@@ -3788,7 +3800,7 @@ class AdvisorAlertsPanel(QFrame):
         card.show()
         _smooth_fonts(card)
 
-    def _render_actions(self, limit):
+    def _render_actions(self, limit, why="refit"):
         """Rebuild the correction cards showing at most `limit` of them."""
         while self._action_box.count():
             it = self._action_box.takeAt(0)
@@ -3821,6 +3833,30 @@ class AdvisorAlertsPanel(QFrame):
                 " font-weight:700; color:#8A1008;")
             self._action_box.addWidget(more)
             more.show()
+        self._log_cards(self._action_items[:self._shown_actions], why)
+
+    def _log_cards(self, rows, why):
+        """One timestamped line whenever a correction card appears or goes.
+
+        REF545, 25 Sep: Bilal saw one card "flash for a second" and two land
+        40-50 seconds after the breach, where the server record says 10s and
+        29s. His widget.log could settle neither - it had no clock on any line
+        and never said a card was drawn or taken down, so the only record of
+        what the advisor saw was the advisor's memory. `why` says who changed
+        it: the server's message, the card's own minute running out, a new
+        call, or a refit to the screen. Ids only - never the quote, which is
+        the customer's words.
+        """
+        now = {self._card_key(r): r for r in rows}
+        before = self._logged_cards
+        for k, r in now.items():
+            if k not in before:
+                print(f"[cards] {_stamp()} SHOWN {k[0]} #{k[1] or 1} "
+                      f"({r.get('severity') or '-'}; {why})")
+        for k in before:
+            if k not in now:
+                print(f"[cards] {_stamp()} GONE  {k[0]} #{k[1] or 1} ({why})")
+        self._logged_cards = now
 
     @staticmethod
     def _card_key(row):
@@ -3878,7 +3914,7 @@ class AdvisorAlertsPanel(QFrame):
         self._action_key = tuple(r.get("id") or r["message"] for r in left)
         was, self._busy = self._busy, True
         try:
-            self._render_actions(self.MAX_ACTIONS)
+            self._render_actions(self.MAX_ACTIONS, why="its minute ran out")
         finally:
             self._busy = was
         self._restyle()
@@ -3899,6 +3935,7 @@ class AdvisorAlertsPanel(QFrame):
             if w is not None:
                 w.hide()
                 w.deleteLater()
+        self._log_cards([], "new call")
 
     def set_open_criticals(self, rows):
         """Critical checks left behind when the panel moved on.

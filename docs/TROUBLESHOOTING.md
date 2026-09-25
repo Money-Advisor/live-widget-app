@@ -86,6 +86,29 @@ thing an agent can give you.
 Then check the dashboard's **Agents** page: is that agent online, and what build are
 they on? Those two facts eliminate most of the possibilities immediately.
 
+## "The card flashed" or "the card came late"
+
+From 2.9.52 every `[recv]` line carries the wall-clock time to the millisecond,
+and every correction card that appears or goes is logged on its own line:
+
+```
+[cards] 13:52:10.481 SHOWN q17.partial_category_steering #1 (high; server)
+[cards] 13:52:11.302 GONE  q17.partial_category_steering #1 (server)
+```
+
+The bracket says who changed it: `server` (a message from the recording server
+added or dropped it), `its minute ran out` (a no-repair card's own one-minute
+clock), `new call`, or `refit`. A card that flashed is two lines a second apart,
+and the reason on the `GONE` line tells you which side to look at. For a late
+card, compare its `SHOWN` time with the trigger's `fired_at` in the call's
+`compliance_records/<session>.json` on the server. The widget logs UK local
+time; the record's `fired_at` and `started_at` are UTC (an hour behind in
+summer).
+
+Only ids are logged, never the quote. Before 2.9.52 there was no clock on any
+line and no card was ever logged, which is why REF545's two card complaints
+(25 Sep) could not be settled from Bilal's log.
+
 ## The four questions that resolve most reports
 
 1. **Is the widget running and online?** The Agents page says. Running but offline usually means a wrong server address.
