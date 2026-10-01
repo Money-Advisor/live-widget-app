@@ -268,7 +268,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.53"
+APP_VERSION = "2.9.54"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -5420,6 +5420,469 @@ class SummaryScreen(QFrame):
 # ──────────────────────────────────────────────────────────────
 # Frameless drag helper
 # ──────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
+# Live I&E panel  (its own column, right of the call card)
+# ──────────────────────────────────────────────────────────────
+# Bilal, 1 Oct 2026: the client's income and expenditure, built live by the
+# recording server (ie_panel.py) and drawn here exactly as the server sends it.
+# READ-ONLY: the advisor can open and close a group, nothing else. Every
+# figure and every word on it is made on the server, so a wording fix reaches
+# every widget without a new build - the QSettings lesson applies to code too.
+#
+# Laid out like the Standard Financial Statement screens Bilal sent: a card
+# per group with an icon tile, its total and a chevron, opening to the items.
+#
+# NOTHING HERE TOUCHES THE OTHER THREE COLUMNS. Faseeh, 1 Oct: "dont make any
+# kind of change to the current UI of all other 3 panels even a slight one".
+# The column is one more widget in the page's row, hidden until the server
+# says otherwise, and a hidden widget takes no space and no spacing in a
+# QBoxLayout - so with it hidden the window is pixel-identical (proved by
+# tests/test_ie_panel_widget.py against screenshots of the committed build).
+
+_IE_ICONS = {
+    "home": '<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/>'
+            '<path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999'
+            'A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+    "bolt": '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02'
+            'A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02'
+            'A1 1 0 0 0 11 14z"/>',
+    "drop": '<path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5'
+            'C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/>',
+    "phone": '<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>',
+    "car": '<path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10'
+           's-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12'
+           'v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/>'
+           '<circle cx="17" cy="17" r="2"/>',
+    "cart": '<circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/>'
+            '<path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57'
+            'l1.65-7.43H5.12"/>',
+    "umbrella": '<path d="M22 12a10.06 10.06 1 0 0-20 0Z"/><path d="M12 12v8a2 2 0 0 0 4 0"/>'
+                '<path d="M12 2v1"/>',
+    "shirt": '<path d="M20.38 3.46 16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47'
+             'a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84'
+             'l.58-3.47a2 2 0 0 0-1.34-2.23z"/>',
+    "heart": '<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2'
+             '-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>'
+             '<path d="M3.22 12H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27"/>',
+    "cap": '<path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08'
+           'a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z"/><path d="M22 10v6"/>'
+           '<path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5"/>',
+    "award": '<circle cx="12" cy="8" r="6"/><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/>',
+    "piggy": '<path d="M19 5c-1.5 0-2.8 1.4-3 2-3.5-1.5-11-.3-11 5 0 1.8 0 3 2 4.5V20h4v-2h3v2h4'
+             'v-4c1-.5 1.7-1 2-2h2v-4h-2c0-1-.5-1.5-1-2V5z"/><path d="M2 9v1c0 1.1.9 2 2 2h1"/>'
+             '<path d="M16 11h.01"/>',
+    "box": '<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4'
+           'a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/>'
+           '<path d="m3.3 7 7.703 4.734a2 2 0 0 0 1.994 0L20.7 7"/><path d="m7.5 4.27 9 5.15"/>',
+    "briefcase": '<path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>'
+                 '<rect width="20" height="14" x="2" y="6" rx="2"/>',
+    "hand": '<path d="M11 15h2a2 2 0 1 0 0-4h-3c-.6 0-1.1.2-1.4.6L3 17"/>'
+            '<path d="m7 21 1.6-1.4c.3-.4.8-.6 1.4-.6h4c1.1 0 2.1-.4 2.8-1.2l4.6-4.4'
+            'a2 2 0 0 0-2.75-2.91l-4.2 3.9"/><path d="m2 16 6 6"/>'
+            '<circle cx="16" cy="9" r="2.9"/><circle cx="6" cy="5" r="3"/>',
+    "coins": '<circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/>'
+             '<path d="M7 6h1v4"/><path d="m16.71 13.88.7.71-2.82 2.82"/>',
+    "chev_right": '<path d="m9 18 6-6-6-6"/>',
+    "chev_down": '<path d="m6 9 6 6 6-6"/>',
+}
+
+
+def _ie_pixmap(name, color, size, stroke=1.8):
+    """A crisp, hi-DPI icon from _IE_ICONS - the same rendering as svg_icon,
+    kept separate so nothing the other panels draw can change."""
+    body = _IE_ICONS.get(name) or _IE_ICONS["box"]
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" '
+           f'viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="{stroke}" '
+           f'stroke-linecap="round" stroke-linejoin="round">{body}</svg>')
+    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+    dpr = _dpr()
+    pix = QPixmap(round(size * dpr), round(size * dpr))
+    pix.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    renderer.render(painter)
+    painter.end()
+    pix.setDevicePixelRatio(dpr)
+    return pix
+
+
+class _IEElide(QLabel):
+    """One line, cut with an ellipsis rather than wrapped or clipped - the
+    screenshots' "Communications an..." - with the full text as a tooltip."""
+
+    def __init__(self, text, style, parent=None):
+        super().__init__(parent)
+        self._full = text
+        self.setStyleSheet(style)
+        self.setToolTip(text)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setMinimumWidth(20)
+        super().setText(text)
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        super().setText(self.fontMetrics().elidedText(
+            self._full, Qt.TextElideMode.ElideRight, max(10, self.width())))
+
+
+class _IEScroll(_PanelScroll):
+    """The checklist's scroller - same slim bar, same fixed handle - except it
+    never asks for height. The column takes whatever height the row already
+    has; if it asked for more, the window would grow and the call card beside
+    it would stretch, which is a change to a panel this one must not touch."""
+
+    def sizeHint(self):
+        return QSize(340, 120)
+
+    def minimumSizeHint(self):
+        return QSize(0, 0)
+
+
+class _IEHeader(QWidget):
+    """A group's clickable header row."""
+
+    clicked = pyqtSignal()
+
+    def mousePressEvent(self, ev):
+        if ev.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(ev)
+
+
+class IEPanel(QFrame):
+    """The live I&E column. `apply(msg)` with each `ie_panel` message."""
+
+    WIDTH = 340
+    INK, MUTED, SOFT, LINE = "#1A1A2E", "#8888A8", "#F7F7FB", "#ECECF3"
+    DIM = "#B4B4C6"
+    ACCENT = "#6B4EFF"
+    AMBER, AMBER_BG = "#B45309", "#FEF3C7"
+    DOTS = {"green": "#16A34A", "red": "#DC2626", "grey": "#B4B4C6"}
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setVisible(False)
+        self.setObjectName("iePanel")
+        self.setStyleSheet("QFrame#iePanel { background:white; border-radius:18px; }")
+        self.setFixedWidth(self.WIDTH)
+        # Ignored vertically: the column fills the row's height and never sets
+        # it (see _IEScroll).
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Ignored)
+        self.setMinimumHeight(0)
+        shell = QVBoxLayout(self)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
+        self._scroll = _IEScroll()
+        shell.addWidget(self._scroll)
+        self._msg = None
+        # Which groups the advisor has opened. Bilal (answer 3): closed until
+        # the advisor opens one. Kept across updates, so a new figure never
+        # snaps a group shut under the advisor's eyes.
+        self._open = {}
+        self._body = None
+
+    # -- public --------------------------------------------------------------
+
+    def apply(self, msg):
+        """Draw a panel message. Returns True if visibility changed."""
+        was = self.isVisible()
+        if msg != self._msg:
+            self._msg = msg
+            self._rebuild()
+        self.setVisible(bool(msg.get("visible")))
+        return self.isVisible() != was
+
+    def clear(self):
+        """The call is over: forget it. Returns True if the column was showing."""
+        was = self.isVisible()
+        self._msg = None
+        self._open = {}
+        self.setVisible(False)
+        return was
+
+    def toggle_group(self, key):
+        self._open[key] = not self._is_open(key)
+        self._rebuild()
+
+    # -- drawing -------------------------------------------------------------
+
+    def _is_open(self, key):
+        if key in self._open:
+            return self._open[key]
+        # The income groups are open in the income view - they ARE the view;
+        # everything else starts closed.
+        return bool(self._msg and self._msg.get("view") == "income"
+                    and key.startswith("income."))
+
+    def _rebuild(self):
+        msg = self._msg or {}
+        bar = self._scroll.verticalScrollBar()
+        keep = bar.value()
+        self.setUpdatesEnabled(False)
+        try:
+            old = self._scroll.takeWidget()
+            if old is not None:
+                old.deleteLater()
+            body = QWidget()
+            body.setObjectName("ieBody")
+            body.setStyleSheet("QWidget#ieBody { background:transparent; }")
+            lay = QVBoxLayout(body)
+            lay.setContentsMargins(16, 14, 16, 16)
+            lay.setSpacing(8)
+            self._body = body
+            if msg:
+                self._draw(lay, msg)
+            lay.addStretch(1)
+            self._scroll.setWidget(body)
+            _smooth_fonts(body)
+        finally:
+            self.setUpdatesEnabled(True)
+        QTimer.singleShot(0, lambda: bar.setValue(min(keep, bar.maximum())))
+
+    @staticmethod
+    def _label(text, style, wrap=False, align=None):
+        lab = QLabel(text)
+        lab.setStyleSheet(f"background:transparent; border:none; {style}")
+        lab.setWordWrap(wrap)
+        if align is not None:
+            lab.setAlignment(align)
+        return lab
+
+    def _draw(self, lay, msg):
+        view = msg.get("view")
+        # heading: the same voice as the checklist's COMPLIANCE heading
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        head.addWidget(self._label(
+            "I&E",
+            f"font-size:11px; font-family:{FF}; font-weight:800; color:{self.INK};"
+            " letter-spacing:1.5px;"))
+        head.addStretch(1)
+        stage = ("SOLUTIONS" if msg.get("solutions")
+                 else "EXPENDITURE" if view == "expenditure" else "INCOME")
+        head.addWidget(self._label(
+            stage, f"font-size:10px; font-family:{FF}; font-weight:800; color:{self.ACCENT};"
+                   " background:#F1EEFF; border-radius:10px; padding:3px 9px;"
+                   " letter-spacing:0.6px;"))
+        lay.addLayout(head)
+
+        # the three facts that stay at the top all call (Bilal section 1)
+        h = msg.get("header") or {}
+        top = QFrame()
+        top.setObjectName("ieTop")
+        top.setStyleSheet(f"QFrame#ieTop {{ background:{self.SOFT}; border-radius:12px; }}")
+        tl = QVBoxLayout(top)
+        tl.setContentsMargins(12, 10, 12, 10)
+        tl.setSpacing(5)
+        for label, value in (("Household", h.get("household")),
+                             ("Vehicles", h.get("vehicles")),
+                             ("Client affordability", h.get("affordability"))):
+            tl.addLayout(self._fact(label, value or "Pending"))
+        lay.addWidget(top)
+
+        # totals and DI
+        inc, exp, di = msg.get("income") or {}, msg.get("expenditure") or {}, msg.get("di") or {}
+        summ = QFrame()
+        summ.setObjectName("ieSum")
+        summ.setStyleSheet(f"QFrame#ieSum {{ background:white; border:1px solid {self.LINE};"
+                           " border-radius:12px; }")
+        sl = QVBoxLayout(summ)
+        sl.setContentsMargins(12, 10, 12, 10)
+        sl.setSpacing(6)
+        sl.addLayout(self._total("Total income", inc.get("text") or "£0", inc.get("amber")))
+        if view == "expenditure":
+            sl.addLayout(self._total("Total outgoings", exp.get("text") or "£0",
+                                     exp.get("amber")))
+        if di.get("shown"):
+            rule = QFrame()
+            rule.setFixedHeight(1)
+            rule.setStyleSheet(f"background:{self.LINE}; border:none;")
+            sl.addWidget(rule)
+            pending = di.get("value") is None
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            row.addWidget(self._label(
+                "Disposable income",
+                f"font-size:13px; font-family:{FF}; font-weight:700; color:{self.INK};"))
+            row.addStretch(1)
+            # No red or green on DI, even negative (Bilal section 10).
+            row.addWidget(self._label(
+                di.get("text") or "",
+                (f"font-size:12px; font-family:{FF}; font-weight:700; color:{self.AMBER};"
+                 if pending else
+                 f"font-size:14px; font-family:{FF}; font-weight:800; color:{self.INK};"),
+                align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+            sl.addLayout(row)
+            if pending and di.get("note"):
+                sl.addWidget(self._label(
+                    di["note"], f"font-size:11px; font-family:{FF}; color:{self.AMBER};",
+                    align=Qt.AlignmentFlag.AlignRight))
+        lay.addWidget(summ)
+
+        if view == "income":
+            lay.addWidget(self._section("Income"))
+            groups = inc.get("groups") or []
+            if not groups:
+                lay.addWidget(self._label(
+                    "Income sources appear here as the client gives them.",
+                    f"font-size:12px; font-family:{FF}; color:{self.MUTED};", wrap=True))
+            for g in groups:
+                lay.addWidget(self._group(f"income.{g['key']}", g))
+        else:
+            # Income stays one click away (Bilal, answer 6), as one card.
+            items = [i for g in (inc.get("groups") or []) for i in g.get("items") or []]
+            lay.addWidget(self._section("Income"))
+            lay.addWidget(self._group("income.all", {
+                "label": "Income", "icon": "coins", "text": inc.get("text") or "£0",
+                "amber": inc.get("amber"), "dot": None, "items": items}))
+            lay.addWidget(self._section("Outgoings"))
+            for g in exp.get("groups") or []:
+                lay.addWidget(self._group(f"exp.{g['key']}", g))
+
+    def _fact(self, label, value):
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addWidget(self._label(label, f"font-size:12px; font-family:{FF}; color:{self.MUTED};"))
+        row.addStretch(1)
+        pending = value == "Pending"
+        val = self._label(
+            value,
+            (f"font-size:12px; font-family:{FF}; font-style:italic; color:{self.DIM};"
+             if pending else
+             f"font-size:12px; font-family:{FF}; font-weight:600; color:{self.INK};"),
+            wrap=True, align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        val.setMaximumWidth(180)
+        row.addWidget(val)
+        return row
+
+    def _total(self, label, text, amber):
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addWidget(self._label(label, f"font-size:12px; font-family:{FF}; color:#55556E;"))
+        row.addStretch(1)
+        row.addWidget(self._label(
+            text, f"font-size:12px; font-family:{FF}; font-weight:600;"
+                  f" color:{self.AMBER if amber else self.INK};"))
+        return row
+
+    def _section(self, text):
+        lab = self._label(text.upper(),
+                          f"font-size:10px; font-family:{FF}; color:{self.MUTED};"
+                          " letter-spacing:1px;")
+        lab.setContentsMargins(2, 6, 0, 0)
+        return lab
+
+    def _dot(self, color, size=8):
+        d = QLabel()
+        d.setFixedSize(size, size)
+        d.setStyleSheet(f"background:{color}; border:none; border-radius:{size // 2}px;")
+        return d
+
+    def _group(self, key, g):
+        is_open = self._is_open(key)
+        card = QFrame()
+        card.setObjectName("ieGroup")
+        card.setStyleSheet(f"QFrame#ieGroup {{ background:white; border:1px solid {self.LINE};"
+                           " border-radius:12px; }")
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(0)
+
+        header = _IEHeader()
+        header.setObjectName("ieHead")
+        header.setCursor(Qt.CursorShape.PointingHandCursor)
+        header.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        header.setStyleSheet("QWidget#ieHead { background:transparent; border-radius:12px; }"
+                             "QWidget#ieHead:hover { background:#FAFAFE; }")
+        header.clicked.connect(lambda k=key: self.toggle_group(k))
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(10, 8, 12, 8)
+        hl.setSpacing(10)
+        tile = QLabel()
+        tile.setFixedSize(30, 30)
+        tile.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tile.setStyleSheet("background:#F4F3FB; border:none; border-radius:8px;")
+        tile.setPixmap(_ie_pixmap(g.get("icon") or "box", "#5B5B7A", 16))
+        hl.addWidget(tile)
+        hl.addWidget(_IEElide(g.get("label") or "",
+                              f"background:transparent; border:none; font-size:13px;"
+                              f" font-family:{FF}; font-weight:600; color:{self.INK};"), 1)
+        text = g.get("text") or "Pending"
+        pending = text == "Pending"
+        hl.addWidget(self._label(
+            text,
+            (f"font-size:12px; font-family:{FF}; font-style:italic; color:{self.DIM};"
+             if pending else
+             f"font-size:13px; font-family:{FF}; font-weight:600;"
+             f" color:{self.AMBER if g.get('amber') else self.INK};")))
+        if g.get("dot"):
+            hl.addWidget(self._dot(self.DOTS.get(g["dot"], self.DOTS["grey"])))
+        chev = QLabel()
+        chev.setFixedSize(14, 14)
+        chev.setStyleSheet("background:transparent; border:none;")
+        chev.setPixmap(_ie_pixmap("chev_down" if is_open else "chev_right", "#A0A0B8", 14, 2))
+        hl.addWidget(chev)
+        cl.addWidget(header)
+
+        if is_open:
+            items = g.get("items") or []
+            box = QWidget()
+            box.setStyleSheet("background:transparent;")
+            bl = QVBoxLayout(box)
+            bl.setContentsMargins(12, 0, 12, 6)
+            bl.setSpacing(0)
+            rule = QFrame()
+            rule.setFixedHeight(1)
+            rule.setStyleSheet(f"background:{self.LINE}; border:none;")
+            bl.addWidget(rule)
+            if not items:
+                bl.addWidget(self._label(
+                    "Nothing given yet.",
+                    f"font-size:12px; font-family:{FF}; color:{self.MUTED}; padding:8px 0;"))
+            for n, it in enumerate(items):
+                if n:
+                    line = QFrame()
+                    line.setFixedHeight(1)
+                    line.setStyleSheet("background:#F3F3F8; border:none;")
+                    bl.addWidget(line)
+                bl.addWidget(self._item(it, g.get("icon") or "box"))
+            cl.addWidget(box)
+        return card
+
+    def _item(self, it, icon):
+        off = it.get("state") == "pending"
+        w = QWidget()
+        w.setStyleSheet("background:transparent;")
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 6, 0, 6)
+        v.setSpacing(2)
+        row = QHBoxLayout()
+        row.setSpacing(9)
+        ic = QLabel()
+        ic.setFixedSize(14, 14)
+        ic.setStyleSheet("background:transparent; border:none;")
+        ic.setPixmap(_ie_pixmap(icon, "#C9C9D8" if off else "#8888A8", 14))
+        row.addWidget(ic)
+        row.addWidget(_IEElide(it.get("label") or "",
+                               f"background:transparent; border:none; font-size:12px;"
+                               f" font-family:{FF}; color:{self.DIM if off else '#3A3A55'};"), 1)
+        row.addWidget(self._label(
+            it.get("text") or "—",
+            (f"font-size:12px; font-family:{FF}; color:{self.DIM};" if off else
+             f"font-size:12px; font-family:{FF}; font-weight:600; color:{self.INK};")))
+        v.addLayout(row)
+        if it.get("flag"):
+            fl = QHBoxLayout()
+            fl.setContentsMargins(23, 0, 0, 0)
+            fl.setSpacing(5)
+            fl.addWidget(self._dot(self.AMBER, 6), 0, Qt.AlignmentFlag.AlignVCenter)
+            fl.addWidget(self._label(it["flag"], f"font-size:11px; font-family:{FF};"
+                                                 f" font-weight:600; color:{self.AMBER};"), 1)
+            v.addLayout(fl)
+        return w
+
+
 class _DraggableWidget(QWidget):
     """A widget that lets the user drag the frameless window."""
 
@@ -6095,6 +6558,14 @@ class MainWindow(QMainWindow):
         settings_lay.addWidget(logout_btn)
 
         outer.addWidget(self._settings_card)
+
+        # ── LIVE I&E PANEL — its own column, right of the card ──
+        # Hidden until the server sends a visible `ie_panel` message, and a
+        # hidden widget takes neither space nor spacing in this row, so every
+        # call without the panel lays out exactly as before. See IEPanel.
+        self._ie_panel = IEPanel()
+        self._ie_shift = 0
+        outer.addWidget(self._ie_panel)
 
         # ── PILL SIDEBAR ──────────────────────────────────────
         pill = QFrame()
@@ -7089,6 +7560,7 @@ class MainWindow(QMainWindow):
         self._alerts_panel.clear_open_criticals()
         self._compliance_panel.clear_forbidden()
         self._compliance_panel.clear_cues()
+        self._reset_ie_panel()
         self._compliance_panel.set_transcription_status("recovered")  # hide any stale notice
         self._compliance_panel.update_missing([])
         self._compliance_panel.show_live()   # a call is starting: leave idle
@@ -7236,6 +7708,10 @@ class MainWindow(QMainWindow):
             "background:#F0FDF4; color:#22C55E; border-radius:12px;"
             f"padding:4px 12px; font-size:12px; font-family:{FF}; font-weight:700;")
         self._timer_lbl.setText("")
+        # Before the checklist goes idle, so the window gives back the I&E
+        # column first and the checklist's own resize starts from the width
+        # it knows.
+        self._reset_ie_panel()
         self._compliance_panel.update_missing([])
         self._compliance_panel.show_idle()   # back to READY between calls
         # The left column belongs to the call that has just ended. It used to
@@ -7374,6 +7850,11 @@ class MainWindow(QMainWindow):
             self._show_connection_status(msg.get("state", ""))
         elif mtype == "transcription_status":
             self._compliance_panel.set_transcription_status(msg.get("state", ""))
+        elif mtype == "ie_panel":
+            # Same rule as the checklist: a message landing after the call has
+            # stopped belongs to a finished call.
+            if self._recording:
+                self._show_ie_panel(msg)
         elif mtype == "session_summary":
             print(f"[widget] session_summary received: score={msg.get('score')} "
                   f"scoring={msg.get('scoring_enabled')} "
@@ -7405,6 +7886,74 @@ class MainWindow(QMainWindow):
         elif mtype == "dialer_resume":
             self._set_paused(False)
         # Unknown types are ignored quietly.
+
+    def _show_ie_panel(self, msg: dict):
+        """Draw an `ie_panel` message, and make room when the column appears."""
+        try:
+            if self._ie_panel.apply(msg):
+                self._fit_ie_column(self._ie_panel.isVisible())
+        except Exception as exc:                      # noqa: BLE001
+            # A drawing fault in the new column must never cost the advisor
+            # the recording or the other three columns.
+            print(f"[ie] panel not drawn ({type(exc).__name__}: {exc})")
+
+    def _reset_ie_panel(self):
+        try:
+            if self._ie_panel.clear():
+                self._fit_ie_column(False)
+        except Exception as exc:                      # noqa: BLE001
+            print(f"[ie] panel not cleared ({type(exc).__name__}: {exc})")
+
+    def _fit_ie_column(self, showing: bool):
+        """Widen (or narrow) the window by exactly the I&E column.
+
+        The other columns grow the window to the LEFT so the call card never
+        moves (ComplianceAlertPanel._sync_window). This column sits to the
+        RIGHT of the card, so it grows the window to the right instead - the
+        card still does not move - unless that would run off the screen, in
+        which case the window slides left just enough, and slides back by the
+        same amount when the column goes. One setGeometry, for the reason
+        _sync_window gives: two calls lay the row out twice.
+        """
+        if not self.isVisible():
+            return
+        lay = self.centralWidget().layout() if self.centralWidget() else None
+        # By the column's own width, not the window's sizeHint. Measured in
+        # tests/test_ie_panel_widget.py: after the column hid, the stacked
+        # page still reported the wider hint and the window never gave the
+        # 346px back. The column is exactly WIDTH plus one gap of the row.
+        page = self._page_main.layout()
+        delta = IEPanel.WIDTH + (page.spacing() if page is not None else 6)
+        new_w = self.width() + (delta if showing else -delta)
+        new_w = max(new_w, self.minimumWidth())
+        x, y, h = self.x(), self.y(), self.height()
+        scr = self.screen() or QApplication.primaryScreen()
+        avail = scr.availableGeometry() if scr is not None else None
+        x, self._ie_shift = self._ie_column_x(
+            x, new_w, showing, self._ie_shift,
+            avail.left() if avail is not None else None,
+            avail.right() + 1 if avail is not None else None)
+        if new_w != self.width() or x != self.x():
+            self.setGeometry(x, y, new_w, h)
+            if lay is not None:
+                lay.activate()
+
+    @staticmethod
+    def _ie_column_x(x, new_w, showing, shift, left, right):
+        """(window x, shift to undo later) for the I&E column appearing or going.
+
+        The window only ever slides LEFT to make room, never right - moving it
+        right moves the call card, which must stay where the advisor left it.
+        A window already hanging off the left edge stays put (the first
+        version "corrected" that by sliding it right, measured: the card moved
+        143px). Going, it slides back by exactly what it moved.
+        """
+        if not showing:
+            return x + shift, 0
+        if left is None or right is None or x + new_w <= right:
+            return x, 0
+        nx = min(x, max(right - new_w, left))
+        return nx, x - nx
 
     def _handle_dialer_activate(self, msg: dict):
         """Dialer-driven auto-start — behaves exactly like clicking Start."""

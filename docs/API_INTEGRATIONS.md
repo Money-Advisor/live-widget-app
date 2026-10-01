@@ -116,6 +116,7 @@ write arbitrary files.
 | Type | Handled by |
 | --- | --- |
 | `compliance_alert` | `ComplianceAlertPanel` — amber and red chips, forbidden hits, cue hits |
+| `ie_panel` | `IEPanel` — the live I&E column (only sent for departments in the server's `IE_PANEL_DEPARTMENTS`) |
 | `knowledge_surface` | The knowledge display |
 | `transcription_status` | The transcription indicator |
 | `session_summary` | `SummaryScreen` — score, covered, missing, duration |

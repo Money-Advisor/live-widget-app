@@ -117,6 +117,7 @@ Little-endian 4-byte length, then `mic` or `speaker`, then the raw PCM.
 | Type | What the widget does |
 | --- | --- |
 | `compliance_alert` | Renders missing items in `ComplianceAlertPanel` — amber and red chips, forbidden hits, cue hits |
+| `ie_panel` | Draws the live I&E column (`IEPanel`) exactly as sent, and widens the window for it when it appears |
 | `knowledge_surface` | Shows the relevant knowledge item |
 | `transcription_status` | Updates the transcription indicator |
 | `session_summary` | Populates `SummaryScreen` — score, covered, missing, duration |
@@ -262,6 +263,7 @@ for the same audio devices and register the same agent twice with the dialer.
 | `MainWindow` | The whole application shell, and by far the largest class |
 | `ComplianceAlertPanel` | Live alert chips: amber, red, forbidden hits, cue hits, transcription status |
 | `SummaryScreen` | Post-call: score, covered, missing, duration — or a plain "recording saved" card when the live pipeline is off |
+| `IEPanel` | The live I&E column, right of the call card (2.9.54): household, vehicles and affordability at the top, totals and DI, the income sources, and the 13 expenditure groups as cards that open to their items. Read-only - opening a group is the only click. Every word on it comes from the server. It grows the window to the RIGHT (the card never moves), slides left only if it would run off the screen, and never sets the window's height. Hidden, it takes no space, and `scripts/prove_panels_unchanged.py` proves the other columns pixel-identical to the committed build |
 | `ToggleSwitch`, `_DraggableWidget`, `RenderKeepAlive` | Small custom UI pieces |
 
 The window minimises to the tray rather than closing, and `hide_customer_fields`
