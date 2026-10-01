@@ -832,3 +832,136 @@ def test_the_card_log_never_carries_the_customers_words(panel, capsys):
 
 def test_every_log_stamp_is_wall_clock_to_the_millisecond():
     assert re.fullmatch(STAMP, m._stamp()), m._stamp()
+
+
+# -- newest card on top (Bilal, 2026-10-01, ref444) -------------------------
+
+def _row(i, severity="high"):
+    return {"id": f"q17.card_{i}", "message": f"Correction number {i}.",
+            "severity": severity, "script": f"Say the words for number {i}."}
+
+
+def _order(panel):
+    """The correction cards top to bottom, by their message."""
+    out = []
+    for i in range(panel._action_box.count()):
+        w = panel._action_box.itemAt(i).widget()
+        if w is None or w.objectName() != "actionCard":
+            continue
+        msgs = [l.text() for l in w.findChildren(QLabel)
+                if l.text().startswith("Correction number")]
+        out.append(msgs[0] if msgs else "another card")
+    return out
+
+
+def test_the_newest_card_goes_on_top(panel):
+    """The server sends worst first, then by name - a new card could land
+    anywhere. Bilal: 'the latest card should always appear at the top.'"""
+    panel.set_trigger_actions([_row(1), _row(2)])
+    settle(panel)
+    assert _order(panel) == ["Correction number 1.", "Correction number 2."]
+    # a critical one sorts first on the server; a new HIGH card still tops it
+    panel.set_trigger_actions([dict(_row(1), severity="critical"), _row(2), _row(0)])
+    settle(panel)
+    assert _order(panel)[0] == "Correction number 0."
+    panel.set_trigger_actions([_row(1), _row(2), _row(0), _row(3)])
+    settle(panel)
+    assert _order(panel) == ["Correction number 3.", "Correction number 0.",
+                             "Correction number 1.", "Correction number 2."]
+    _quiesce(panel)
+
+
+def test_cards_that_arrive_together_keep_the_servers_order(panel):
+    panel.set_trigger_actions([_row(5)])
+    panel.set_trigger_actions([_row(5), _row(1, "critical"), _row(2)])
+    settle(panel)
+    assert _order(panel) == ["Correction number 1.", "Correction number 2.",
+                             "Correction number 5."]
+    _quiesce(panel)
+
+
+def test_new_words_on_a_card_are_drawn(panel):
+    """ref444: the server updates a card in place (new figures, same id).
+    The widget compared ids only and kept the old words on screen."""
+    panel.set_trigger_actions([_row(1)])
+    settle(panel)
+    panel.set_trigger_actions([dict(_row(1), script="Now say £87 and £65.")])
+    settle(panel)
+    text = " ".join(l.text() for l in labels(panel))
+    assert "Now say £87 and £65." in text
+    assert "Say the words for number 1." not in text
+    _quiesce(panel)
+
+
+def test_a_card_that_stays_keeps_its_place(panel):
+    """Updated text (new figures on the same card) or a card going away is
+    not a new card: nothing moves to the top."""
+    panel.set_trigger_actions([_row(1)])
+    panel.set_trigger_actions([_row(1), _row(2)])
+    panel.set_trigger_actions([dict(_row(1), message="Correction number 1, updated."),
+                               _row(2)])
+    settle(panel)
+    assert _order(panel) == ["Correction number 2.", "Correction number 1, updated."]
+    panel.set_trigger_actions([_row(1)])
+    settle(panel)
+    assert _order(panel) == ["Correction number 1."]
+    _quiesce(panel)
+
+
+def test_a_second_occurrence_is_a_new_card_and_goes_on_top(panel):
+    panel.set_trigger_actions([_row(1), _row(2)])
+    panel.set_trigger_actions([_row(1), _row(2), dict(_row(1), occurrence=2,
+                                                       message="Correction number 1 again.")])
+    settle(panel)
+    assert _order(panel)[0] == "Correction number 1 again."
+    _quiesce(panel)
+
+
+def _scrolled_down(panel):
+    rows = [dict(r, id=f"{r['id']}-{i}") for i, r in enumerate(LONGEST[:6])]
+    panel.set_trigger_actions(rows)
+    panel.set_warnings(WARNINGS)
+    settle(panel)
+    bar = panel._scroll.verticalScrollBar()
+    assert bar.maximum() > 0, "needs more than a screen of cards to test"
+    bar.setValue(bar.maximum())
+    assert bar.value() > 0
+    return rows, bar
+
+
+def test_a_new_card_scrolls_the_column_back_to_the_top(panel):
+    rows, bar = _scrolled_down(panel)
+    panel.set_trigger_actions(rows + [_row(9)])
+    settle(panel)
+    assert bar.value() == 0
+    assert _order(panel)[0] == "Correction number 9."
+    _quiesce(panel)
+
+
+def test_nothing_new_leaves_the_scroll_where_the_advisor_put_it(panel):
+    rows, bar = _scrolled_down(panel)
+    where = bar.value()
+    panel.set_trigger_actions(list(reversed(rows)))   # same cards, re-sent
+    settle(panel)
+    assert bar.value() == where
+    _quiesce(panel)
+
+
+def test_the_column_still_scrolls_by_hand_after_a_new_card(panel):
+    rows, bar = _scrolled_down(panel)
+    panel.set_trigger_actions(rows + [_row(9)])
+    settle(panel)
+    bar.setValue(bar.maximum())
+    settle(panel)
+    assert bar.value() == bar.maximum() > 0
+    _quiesce(panel)
+
+
+def test_a_new_call_starts_the_order_again(panel):
+    panel.set_trigger_actions([_row(1)])
+    panel.set_trigger_actions([_row(1), _row(2)])
+    panel.clear_trigger_actions()
+    panel.set_trigger_actions([_row(2), _row(1)])
+    settle(panel)
+    assert _order(panel) == ["Correction number 2.", "Correction number 1."]
+    _quiesce(panel)

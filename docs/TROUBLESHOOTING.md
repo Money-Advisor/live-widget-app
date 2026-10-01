@@ -109,6 +109,15 @@ Only ids are logged, never the quote. Before 2.9.52 there was no clock on any
 line and no card was ever logged, which is why REF545's two card complaints
 (25 Sep) could not be settled from Bilal's log.
 
+**Card order (2.9.53, Bilal 1 Oct).** The newest correction card is always at
+the top, and when a new one fires the column scrolls back to the top so it is
+seen at once; it still scrolls by hand as before. Cards that arrived in the
+same message keep the server's order (worst first). A card whose words change
+on the server - new figures for the same gas and electricity card - is redrawn
+in place and does not move. Before 2.9.53 the cards came in the server's
+order, so a new card could land below the fold, and a card's changed words
+were never redrawn at all (the widget compared ids only).
+
 ## The four questions that resolve most reports
 
 1. **Is the widget running and online?** The Agents page says. Running but offline usually means a wrong server address.

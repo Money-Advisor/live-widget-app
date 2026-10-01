@@ -268,7 +268,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.52"
+APP_VERSION = "2.9.53"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -3491,6 +3491,9 @@ class AdvisorAlertsPanel(QFrame):
         # back on the next message.
         self._expiry_timers = {}
         self._expired_actions = set()
+        # Which message each card first arrived in - newest goes on top.
+        self._card_order = {}
+        self._card_batch = 0
         self._shown_actions = 0        # ...and how many fit
         self._logged_cards = {}        # what the log last said was on screen
         self._warn_key = None          # what is on screen, to avoid rebuilding
@@ -3768,7 +3771,22 @@ class AdvisorAlertsPanel(QFrame):
                  if isinstance(r, dict) and (r.get("message") or "").strip()]
         items = [r for r in items if self._card_key(r) not in
                  self._expired_actions]
-        key = tuple(r.get("id") or r["message"] for r in items)
+        # NEWEST ON TOP. Bilal, 2026-10-01 (ref444): "If there are multiple
+        # cards on screen, the latest card should always appear at the top."
+        # The server sends them worst first, then by name, so a new card could
+        # land anywhere in the list. Each card is numbered by the message it
+        # first arrived in; newer numbers go first, and cards that arrived
+        # together keep the server's order among themselves. Only the order
+        # of the correction cards changes - nothing about how they look.
+        fresh = [r for r in items if self._card_key(r) not in self._card_order]
+        if fresh:
+            self._card_batch += 1
+            for r in fresh:
+                self._card_order[self._card_key(r)] = self._card_batch
+        sent = {self._card_key(r): i for i, r in enumerate(items)}
+        items = sorted(items, key=lambda r: (-self._card_order[self._card_key(r)],
+                                             sent[self._card_key(r)]))
+        key = self._actions_key(items)
         if key == self._action_key:
             return                      # unchanged; do not rebuild and flicker
         self._action_key = key
@@ -3781,6 +3799,12 @@ class AdvisorAlertsPanel(QFrame):
             self._busy = was
         self._restyle()
         self._fit()
+        # ...and back to the top whenever a NEW card fires, so the advisor who
+        # had scrolled down sees it at once (Bilal, same day). Only for a new
+        # card: a card going away or being re-sent leaves the scroll alone,
+        # and the column still scrolls by hand exactly as before.
+        if fresh:
+            self._scroll.verticalScrollBar().setValue(0)
 
     def _render_crisis(self, compact):
         """Rebuild the safety card at full length or condensed."""
@@ -3858,6 +3882,20 @@ class AdvisorAlertsPanel(QFrame):
                 print(f"[cards] {_stamp()} GONE  {k[0]} #{k[1] or 1} ({why})")
         self._logged_cards = now
 
+    @classmethod
+    def _actions_key(cls, rows):
+        """What is on screen, card by card, WORDS included.
+
+        It was the ids alone, so a card whose words changed was never
+        redrawn. ref444 (1 Oct): the client gave new gas and electricity
+        figures and the server updated the card in place - same id, new
+        script - which the widget would have gone on showing with the old
+        figures. The words are compared too; volatile fields are not, so the
+        server re-sending an unchanged card still does nothing.
+        """
+        return tuple((cls._card_key(r), r.get("message"), r.get("script"),
+                      r.get("action")) for r in rows)
+
     @staticmethod
     def _card_key(row):
         """What makes one card different from another.
@@ -3911,7 +3949,7 @@ class AdvisorAlertsPanel(QFrame):
         if len(left) == len(self._action_items):
             return
         self._action_items = left
-        self._action_key = tuple(r.get("id") or r["message"] for r in left)
+        self._action_key = self._actions_key(left)
         was, self._busy = self._busy, True
         try:
             self._render_actions(self.MAX_ACTIONS, why="its minute ran out")
@@ -3926,6 +3964,8 @@ class AdvisorAlertsPanel(QFrame):
             t.stop()
         self._expiry_timers = {}
         self._expired_actions = set()
+        self._card_order = {}
+        self._card_batch = 0
         self._action_key = None
         self._action_items = []
         self._shown_actions = 0
