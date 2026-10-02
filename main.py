@@ -3509,8 +3509,25 @@ class AdvisorAlertsPanel(QFrame):
         self._fade = QPropertyAnimation(self._fx, b"opacity", self)
         self._fade.setDuration(self.FADE_MS)
         self._fade.setEasingCurve(QEasingCurve.Type.OutCubic)
+        # The effect is only ON while it is doing something - fading in. At
+        # full opacity it changes nothing a person can see, but the column
+        # was being drawn THROUGH it, and that drawing was stale: measured 1
+        # Oct, a correction card laid out at exactly 153px in a 153px column
+        # came out with its top border and last line cut off on most runs,
+        # and whole on the rest - the same pixels the effect-free drawing
+        # gives every time. It stayed cut until something else repainted the
+        # column, which is the "it fixed itself after a while" Bilal reported.
+        self._fade.finished.connect(self._fade_done)
+        self._fx.setEnabled(False)
 
         self.setVisible(False)
+
+    def _fade_done(self):
+        try:
+            if self._fx.opacity() >= 0.999:
+                self._fx.setEnabled(False)
+        except RuntimeError:
+            pass                      # the panel went away mid-fade
 
     # ── what is in it ────────────────────────────────────────────────────
 
@@ -3674,6 +3691,7 @@ class AdvisorAlertsPanel(QFrame):
             # The fade is armed rather than started - see _reveal, called at
             # the end of _fit once the geometry has stopped moving.
             self._fx.setOpacity(0.0)
+            self._fx.setEnabled(True)
             self.setVisible(True)
             self._fade.stop()
             self._needs_fade = True

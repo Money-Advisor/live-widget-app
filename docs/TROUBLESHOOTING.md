@@ -109,6 +109,13 @@ Only ids are logged, never the quote. Before 2.9.52 there was no clock on any
 line and no card was ever logged, which is why REF545's two card complaints
 (25 Sep) could not be settled from Bilal's log.
 
+**A card cut off at the top and bottom that "fixes itself" (fixed in 2.9.54).**
+The alerts column fades in through an opacity effect, and before 2.9.54 it was
+drawn through that effect for the rest of the call. The drawing went stale: a
+correction card laid out at exactly the right height came out with its top
+border and last line cut off on most runs, and stayed that way until something
+else repainted the column. The effect is now on only while the column fades in.
+
 **Card order (2.9.53, Bilal 1 Oct).** The newest correction card is always at
 the top, and when a new one fires the column scrolls back to the top so it is
 seen at once; it still scrolls by hand as before. Cards that arrived in the
