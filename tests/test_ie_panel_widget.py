@@ -269,3 +269,41 @@ def test_every_guideline_dot_is_the_same_size_whatever_its_colour():
     assert len(dots) == len(P.EXPENDITURE)
     assert {(d.width(), d.height()) for d in dots} == {(8, 8)}
     assert colours <= set(m.IEPanel.DOTS.values()) and len(colours) >= 2, (colours, sheet)
+
+
+# ── ref5544, 5 Oct ──────────────────────────────────────────────────────────
+
+def test_an_unresolved_group_says_so_on_its_heading_without_being_opened():
+    L = P.Ledger()
+    L.apply([{"kind": "alternatives", "side": E, "group": "utilities", "item": "electricity",
+              "amount": 150, "amount_high": 180, "quote": "q"}])
+    p = m.IEPanel()
+    p.apply(payload(L, view="expenditure"))
+    p.resize(340, 900)
+    p.show()
+    pump()
+    heads = [lab for lab in p.findChildren(QLabel) if lab.text() == "Unresolved"]
+    assert heads, "the heading should read Unresolved"
+    assert m.IEPanel.AMBER in heads[0].styleSheet()
+    amber_dots = [lab for lab in p.findChildren(QLabel)
+                  if not lab.text() and lab.width() == 6
+                  and m.IEPanel.AMBER in lab.styleSheet()]
+    assert amber_dots, "an amber mark on the closed heading"
+
+
+def test_a_line_paid_from_pip_carries_a_plain_grey_note():
+    L = P.Ledger()
+    L.apply([{"kind": "figure", "side": E, "group": "food_and_housekeeping",
+              "item": "groceries", "amount": 400, "quote": "q"},
+             {"kind": "pip_funded", "side": E, "group": "food_and_housekeeping",
+              "item": "groceries", "amount": 100, "whole": False, "quote": "q"}])
+    p = m.IEPanel()
+    p.apply(payload(L, view="expenditure"))
+    p.toggle_group("exp.food_and_housekeeping")
+    p.resize(340, 900)
+    p.show()
+    pump()
+    notes = [lab for lab in p.findChildren(QLabel)
+             if lab.text() == "£100 of it paid from PIP/DLA"]
+    assert notes and m.IEPanel.MUTED in notes[0].styleSheet()
+    assert "£300" in texts(p)

@@ -268,7 +268,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.54"
+APP_VERSION = "2.9.55"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -5769,7 +5769,11 @@ class IEPanel(QFrame):
             (f"font-size:12px; font-family:{FF}; font-style:italic; color:{self.DIM};"
              if pending else
              f"font-size:12px; font-family:{FF}; font-weight:600; color:{self.INK};"),
-            wrap=True, align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            # Only a long value wraps ("1 adult, children aged 7 and 12"). A
+            # wrapping label in a row is offered its smallest width, which
+            # broke "£100–£150" in two at the dash.
+            wrap=len(value) > 20,
+            align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         val.setMaximumWidth(180)
         row.addWidget(val)
         return row
@@ -5828,6 +5832,10 @@ class IEPanel(QFrame):
                               f" font-family:{FF}; font-weight:600; color:{self.INK};"), 1)
         text = g.get("text") or "Pending"
         pending = text == "Pending"
+        if g.get("unresolved"):
+            # Bilal, ref5544: "I did not know it was unresolved until I opened
+            # it". The heading carries the amber mark, opened or not.
+            hl.addWidget(self._dot(self.AMBER, 6), 0, Qt.AlignmentFlag.AlignVCenter)
         hl.addWidget(self._label(
             text,
             (f"font-size:12px; font-family:{FF}; font-style:italic; color:{self.DIM};"
@@ -5898,6 +5906,10 @@ class IEPanel(QFrame):
             fl.addWidget(self._label(it["flag"], f"font-size:11px; font-family:{FF};"
                                                  f" font-weight:600; color:{self.AMBER};"), 1)
             v.addLayout(fl)
+        if it.get("note"):
+            # Information, not a warning: "£100 of it paid from PIP/DLA".
+            v.addWidget(self._label(it["note"], f"font-size:11px; font-family:{FF};"
+                                                f" color:{self.MUTED}; padding-left:23px;"))
         return w
 
 
