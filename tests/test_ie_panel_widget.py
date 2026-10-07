@@ -346,6 +346,50 @@ def test_scoping_the_style_leaves_the_name_drawn_as_before():
     assert not lab.autoFillBackground()
 
 
+def _package(parts):
+    L = P.Ledger()
+    L.apply([{"kind": "figure", "side": E, "group": "communications_and_leisure",
+              "item": "home_phone_internet_tv_package", "amount": a, "part": n, "quote": "q"}
+             for n, a in parts])
+    return L
+
+
+def test_ref661_a_line_made_of_parts_shows_them_on_its_grey_note():
+    L = _package([("Internet", 25), ("Netflix", 10), ("Xbox Live", 10.99)])
+    p = m.IEPanel()
+    p.apply(payload(L, view="expenditure"))
+    p.toggle_group("exp.communications_and_leisure")
+    p.resize(340, 900)
+    p.show()
+    pump()
+    notes = [lab for lab in p.findChildren(QLabel)
+             if lab.text() == "Internet £25 + Netflix £10 + Xbox Live £11"]
+    assert notes and m.IEPanel.MUTED in notes[0].styleSheet()
+    assert "£46" in texts(p)
+    assert "Xbox Live" not in {lab._full for lab in p.findChildren(m._IEElide)}  # no own row
+
+
+def test_a_grey_note_too_long_for_the_line_never_widens_the_window(win):
+    """The widget never wraps the note; the server keeps it short - and if a
+    note were ever too long, it is cut, the column does not grow."""
+    import ie_panel
+    short = _package([("Internet", 25), ("Netflix", 10)])
+    win._handle_server_message(payload(short, view="expenditure"))
+    win._ie_panel.toggle_group("exp.communications_and_leisure")
+    pump(ms=300)
+    width = win.width()
+    keep = ie_panel.PARTS_NOTE_MAX
+    ie_panel.PARTS_NOTE_MAX = 999                       # force the longest note through
+    try:
+        long_ = _package([("Broadband and phone", 40), ("Disney Plus", 9),
+                          ("Xbox Game Pass", 13), ("Spotify Family", 17)])
+        win._handle_server_message(payload(long_, view="expenditure"))
+        pump(ms=300)
+    finally:
+        ie_panel.PARTS_NOTE_MAX = keep
+    assert win.width() == width
+
+
 def test_a_line_paid_from_pip_carries_a_plain_grey_note():
     L = P.Ledger()
     L.apply([{"kind": "figure", "side": E, "group": "food_and_housekeeping",
