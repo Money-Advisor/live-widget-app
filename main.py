@@ -268,7 +268,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.55"
+APP_VERSION = "2.9.56"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -5532,16 +5532,22 @@ class _IEElide(QLabel):
     def __init__(self, text, style, parent=None):
         super().__init__(parent)
         self._full = text
-        self.setStyleSheet(style)
-        self.setToolTip(text)
+        # Scoped to this label. Unscoped, the sheet's "background:transparent"
+        # also reached the label's TOOLTIP, which Windows then drew as a
+        # solid black box (Bilal, ref134, 7 Oct).
+        self.setObjectName("ieElide")
+        self.setStyleSheet(f"QLabel#ieElide {{ {style} }}")
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.setMinimumWidth(20)
         super().setText(text)
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
-        super().setText(self.fontMetrics().elidedText(
-            self._full, Qt.TextElideMode.ElideRight, max(10, self.width())))
+        shown = self.fontMetrics().elidedText(
+            self._full, Qt.TextElideMode.ElideRight, max(10, self.width()))
+        super().setText(shown)
+        # Only a name that has been cut needs its full text on hover.
+        self.setToolTip(self._full if shown != self._full else "")
 
 
 class _IEScroll(_PanelScroll):

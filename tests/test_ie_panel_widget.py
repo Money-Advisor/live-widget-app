@@ -32,8 +32,11 @@ E = "expenditure"
 def ledger(stage="income"):
     L = P.Ledger()
     L.apply([
-        {"kind": "household", "adults": 1, "children": [7, 12], "quote": "q"},
-        {"kind": "vehicles", "vehicles": 2, "quote": "q"},
+        {"kind": "household", "partner": False, "quote": "q"},
+        {"kind": "child", "age": 7, "lives": "full_time", "quote": "q"},
+        {"kind": "child", "age": 12, "lives": "full_time", "quote": "q"},
+        {"kind": "vehicle", "ownership": "owned", "description": "car", "quote": "q"},
+        {"kind": "vehicle", "ownership": "owned", "description": "van", "quote": "q"},
         {"kind": "affordability", "amount": 100, "quote": "q"},
         {"kind": "figure", "side": "income", "group": "earnings", "item": "wages",
          "amount": 1500, "quote": "q"},
@@ -289,6 +292,58 @@ def test_an_unresolved_group_says_so_on_its_heading_without_being_opened():
                   if not lab.text() and lab.width() == 6
                   and m.IEPanel.AMBER in lab.styleSheet()]
     assert amber_dots, "an amber mark on the closed heading"
+
+
+def _hover(label):
+    """The tooltip Windows would show for `label`, drawn; None if there is none."""
+    from PyQt6.QtCore import QEvent, QPoint
+    from PyQt6.QtGui import QHelpEvent
+    from PyQt6.QtWidgets import QToolTip
+    QToolTip.hideText()
+    pump()
+    app.sendEvent(label, QHelpEvent(QEvent.Type.ToolTip, QPoint(5, 5),
+                                    label.mapToGlobal(QPoint(5, 5))))
+    pump()
+    tips = [w for w in app.topLevelWidgets()
+            if w.objectName() == "qtooltip_label" and w.isVisible()]
+    if not tips:
+        return None
+    img = tips[0].grab().toImage()
+    QToolTip.hideText()
+    pump()
+    return img
+
+
+# ── ref134, 7 Oct ───────────────────────────────────────────────────────────
+
+def test_a_cut_name_shows_its_full_text_on_a_solid_tooltip_not_a_black_box():
+    """Bilal: hovering the panel showed a black box. The heading's
+    "background:transparent" reached its tooltip, which Windows draws black."""
+    p = panel("expenditure")
+    cut = next(lab for lab in p.findChildren(m._IEElide)
+               if lab._full == "Communications and leisure")
+    assert cut.text() != cut._full, "this heading must be cut at 340px to test anything"
+    assert cut.toolTip() == "Communications and leisure"
+    img = _hover(cut)
+    assert img is not None
+    for x, y in ((img.width() // 2, 2), (2, img.height() // 2)):
+        c = img.pixelColor(x, y)
+        assert c.alpha() == 255 and c.lightness() > 128, c.name()
+
+
+def test_a_name_shown_whole_has_no_tooltip():
+    p = panel("expenditure")
+    whole = next(lab for lab in p.findChildren(m._IEElide) if lab._full == "Utilities")
+    assert whole.text() == "Utilities"
+    assert whole.toolTip() == "" and _hover(whole) is None
+
+
+def test_scoping_the_style_leaves_the_name_drawn_as_before():
+    """The sheet still styles the label itself: transparent, its own colour."""
+    p = panel("expenditure")
+    lab = next(lab for lab in p.findChildren(m._IEElide) if lab._full == "Utilities")
+    assert lab.palette().color(lab.foregroundRole()).name().lower() == m.IEPanel.INK.lower()
+    assert not lab.autoFillBackground()
 
 
 def test_a_line_paid_from_pip_carries_a_plain_grey_note():

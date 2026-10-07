@@ -24,7 +24,7 @@ from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1]
 SRV = APP.parent / "live-widget-server"
-PANELS = ("alerts.png", "checklist.png", "card.png")
+PANELS = ("alerts.png", "checklist.png", "card.png", "ie.png")
 
 SHOOT = r'''
 import importlib.util, os, sys, tempfile
@@ -73,6 +73,28 @@ pump()
 w._alerts_panel.grab().save(str(out / "alerts.png"))
 w._compliance_panel.grab().save(str(out / "checklist.png"))
 w._front_card.grab().save(str(out / "card.png"))
+# The I&E column itself (7 Oct: its names' tooltip fix must not move a pixel
+# of the column). One message, built by the server's own code, for both builds.
+import ie_panel as P
+L = P.Ledger()
+E = "expenditure"
+L.apply([{"kind": "affordability", "amount": 100, "quote": "q"},
+         {"kind": "figure", "side": "income", "group": "earnings", "item": "wages",
+          "amount": 2829, "quote": "q"},
+         {"kind": "figure", "side": E, "group": "home_and_contents", "item": "rent",
+          "amount": 750, "quote": "q"},
+         {"kind": "figure", "side": E, "group": "communications_and_leisure",
+          "item": "hobbies_leisure_sport", "amount": 50, "quote": "q"},
+         {"kind": "figure", "side": E, "group": "personal_costs",
+          "item": "clothing_and_footwear", "amount": 78, "quote": "q"},
+         {"kind": "figure", "side": E, "group": "personal_costs", "item": "toiletries",
+          "amount": 50, "quote": "q"},
+         {"kind": "advisor_total", "which": "disposable", "amount": 100, "quote": "q"}])
+w._handle_server_message(dict(P.panel_payload(L, True, E, True), audio_ts=None))
+pump()
+w._ie_panel.toggle_group("exp.personal_costs")
+pump()
+w._ie_panel.grab().save(str(out / "ie.png"))
 print(w.width(), w.height())
 '''
 
