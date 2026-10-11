@@ -406,3 +406,130 @@ def test_a_line_paid_from_pip_carries_a_plain_grey_note():
              if lab.text() == "£100 of it paid from PIP/DLA"]
     assert notes and m.IEPanel.MUTED in notes[0].styleSheet()
     assert "£300" in texts(p)
+
+
+# ── Bilal, 11 Oct (Q3): a line's parts, to open ─────────────────────────────
+
+def _netflix_and_sky():
+    L = P.Ledger()
+    L.apply([{"kind": "alternatives", "side": E, "group": "communications_and_leisure",
+              "item": "home_phone_internet_tv_package", "amount": 9, "amount_high": 10,
+              "part": "Netflix", "quote": "q"},
+             {"kind": "figure", "side": E, "group": "communications_and_leisure",
+              "item": "home_phone_internet_tv_package", "amount": 76.5, "part": "Sky",
+              "quote": "q"}])
+    return L
+
+
+def _opened(L):
+    p = m.IEPanel()
+    p.apply(payload(L, view="expenditure"))
+    p.toggle_group("exp.communications_and_leisure")
+    p.resize(340, 900)
+    p.show()
+    pump()
+    return p
+
+
+def _chevs(p):
+    return [lab for lab in p.findChildren(QLabel) if lab.objectName() == "iePartsChev"]
+
+
+def test_q3_a_line_of_several_amounts_carries_an_arrow_and_starts_closed():
+    p = _opened(_netflix_and_sky())
+    assert len(_chevs(p)) == 1
+    t = texts(p)
+    assert "£86 / £87" in t and "Unresolved" in t
+    assert "Netflix" not in {lab._full for lab in p.findChildren(m._IEElide)}
+
+
+def test_q3_opening_it_shows_each_part_and_which_is_unresolved():
+    p = _opened(_netflix_and_sky())
+    p.toggle_parts("home_phone_internet_tv_package")
+    pump()
+    names = {lab._full for lab in p.findChildren(m._IEElide)}
+    assert {"Netflix", "Sky"} <= names
+    t = texts(p)
+    assert "£9 / £10" in t and "£77" in t
+    nine = next(lab for lab in p.findChildren(QLabel) if lab.text() == "£9 / £10")
+    sky = next(lab for lab in p.findChildren(QLabel) if lab.text() == "£77")
+    assert m.IEPanel.AMBER in nine.styleSheet() and m.IEPanel.AMBER not in sky.styleSheet()
+    assert t.count("Unresolved") == 3      # the group heading, the line, and Netflix
+
+
+def test_q3_a_click_on_the_line_opens_it():
+    from PyQt6.QtCore import QPoint, Qt as _Qt
+    from PyQt6.QtTest import QTest
+    p = _opened(_netflix_and_sky())
+    row = _chevs(p)[0].parentWidget()
+    QTest.mouseClick(row, _Qt.MouseButton.LeftButton, pos=QPoint(5, 5))
+    pump()
+    assert "Netflix" in {lab._full for lab in p.findChildren(m._IEElide)}
+
+
+def test_q3_it_stays_open_through_an_update_and_closes_with_the_call():
+    L = _netflix_and_sky()
+    p = _opened(L)
+    p.toggle_parts("home_phone_internet_tv_package")
+    L.apply([{"kind": "figure", "side": E, "group": "communications_and_leisure",
+              "item": "home_phone_internet_tv_package", "amount": 10, "part": "Netflix",
+              "quote": "q"}])
+    p.apply(payload(L, view="expenditure"))
+    pump()
+    assert "Netflix" in {lab._full for lab in p.findChildren(m._IEElide)}
+    assert "£87" in texts(p)
+    p.clear()
+    assert p._open_parts == {}
+
+
+def test_OPPOSITE_a_line_with_one_amount_has_no_arrow():
+    L = P.Ledger()
+    L.apply([{"kind": "figure", "side": E, "group": "communications_and_leisure",
+              "item": "home_phone_internet_tv_package", "amount": 30, "part": "Sky",
+              "quote": "q"}])
+    assert _chevs(_opened(L)) == []
+    assert _chevs(panel("expenditure", stage="exp")) == []
+
+
+def test_OPPOSITE_closed_it_still_shows_the_grey_note_as_before():
+    L = _package([("Internet", 25), ("Netflix", 10), ("Xbox Live", 10.99)])
+    p = _opened(L)
+    assert "Internet £25 + Netflix £10 + Xbox Live £11" in texts(p)
+    p.toggle_parts("home_phone_internet_tv_package")
+    pump()
+    assert "Internet £25 + Netflix £10 + Xbox Live £11" not in texts(p)   # the rows say it
+
+
+def test_opening_the_parts_never_widens_the_window(win):
+    L = P.Ledger()
+    L.apply([{"kind": "figure", "side": E, "group": "communications_and_leisure",
+              "item": "hobbies_leisure_sport", "amount": a, "part": n, "quote": "q"}
+             for n, a in (("Gym membership at the leisure centre", 50),
+                          ("Takeaways on a Friday night with the family", 40),
+                          ("Swimming", 30))])
+    win._handle_server_message(payload(L, view="expenditure"))
+    win._ie_panel.toggle_group("exp.communications_and_leisure")
+    pump(ms=300)
+    width = win.width()
+    win._ie_panel.toggle_parts("hobbies_leisure_sport")
+    pump(ms=300)
+    assert win.width() == width
+
+
+def test_OPPOSITE_the_widget_itself_never_offers_one_part_to_open():
+    """Belt and braces: even a message carrying one part draws a plain row."""
+    L = P.Ledger()
+    L.apply([{"kind": "figure", "side": E, "group": "communications_and_leisure",
+              "item": "home_phone_internet_tv_package", "amount": 30, "quote": "q"}])
+    msg = payload(L, view="expenditure")
+    for g in msg["expenditure"]["groups"]:
+        for it in g.get("items") or []:
+            if it["key"] == "home_phone_internet_tv_package":
+                it["parts"] = [{"label": "Sky", "text": "£30", "flag": None}]
+    p = m.IEPanel()
+    p.apply(msg)
+    p.toggle_group("exp.communications_and_leisure")
+    p.resize(340, 900)
+    p.show()
+    pump()
+    assert _chevs(p) == []

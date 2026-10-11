@@ -268,7 +268,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.56"
+APP_VERSION = "2.9.57"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -5604,6 +5604,9 @@ class IEPanel(QFrame):
         # the advisor opens one. Kept across updates, so a new figure never
         # snaps a group shut under the advisor's eyes.
         self._open = {}
+        # Which lines' parts the advisor has opened - closed until opened,
+        # kept across updates like the groups.
+        self._open_parts = {}
         self._body = None
 
     # -- public --------------------------------------------------------------
@@ -5622,6 +5625,7 @@ class IEPanel(QFrame):
         was = self.isVisible()
         self._msg = None
         self._open = {}
+        self._open_parts = {}
         self.setVisible(False)
         return was
 
@@ -5882,9 +5886,27 @@ class IEPanel(QFrame):
             cl.addWidget(box)
         return card
 
+    def toggle_parts(self, key):
+        """Open or close one line's parts (Bilal, 11 Oct, Q3)."""
+        self._open_parts[key] = not self._open_parts.get(key, False)
+        self._rebuild()
+
     def _item(self, it, icon):
         off = it.get("state") == "pending"
-        w = QWidget()
+        # Bilal, 11 Oct (Q3): a line made of several amounts (Netflix and Sky,
+        # two phones, gym and swimming) opens to show them, each with its own
+        # state. Only where the server sends more than one - every other line
+        # is drawn exactly as before.
+        parts = it.get("parts") or []
+        expandable = len(parts) > 1
+        if expandable:
+            key = it.get("key") or it.get("label") or ""
+            is_open = self._open_parts.get(key, False)
+            w = _IEHeader()
+            w.setCursor(Qt.CursorShape.PointingHandCursor)
+            w.clicked.connect(lambda k=key: self.toggle_parts(k))
+        else:
+            w = QWidget()
         w.setStyleSheet("background:transparent;")
         v = QVBoxLayout(w)
         v.setContentsMargins(0, 6, 0, 6)
@@ -5903,6 +5925,14 @@ class IEPanel(QFrame):
             it.get("text") or "—",
             (f"font-size:12px; font-family:{FF}; color:{self.DIM};" if off else
              f"font-size:12px; font-family:{FF}; font-weight:600; color:{self.INK};")))
+        if expandable:
+            chev = QLabel()
+            chev.setObjectName("iePartsChev")
+            chev.setFixedSize(12, 12)
+            chev.setStyleSheet("background:transparent; border:none;")
+            chev.setPixmap(_ie_pixmap("chev_down" if is_open else "chev_right",
+                                      "#A0A0B8", 12, 2))
+            row.addWidget(chev)
         v.addLayout(row)
         if it.get("flag"):
             fl = QHBoxLayout()
@@ -5912,11 +5942,42 @@ class IEPanel(QFrame):
             fl.addWidget(self._label(it["flag"], f"font-size:11px; font-family:{FF};"
                                                  f" font-weight:600; color:{self.AMBER};"), 1)
             v.addLayout(fl)
-        if it.get("note"):
+        if expandable and is_open:
+            for p in parts:
+                v.addWidget(self._part(p))
+        elif it.get("note"):
             # Information, not a warning: "£100 of it paid from PIP/DLA".
             v.addWidget(self._label(it["note"], f"font-size:11px; font-family:{FF};"
                                                 f" color:{self.MUTED}; padding-left:23px;"))
         return w
+
+    def _part(self, p):
+        """One part under an opened line: its name, its figure, and - amber -
+        why it is not settled."""
+        box = QWidget()
+        box.setObjectName("iePart")
+        box.setStyleSheet("background:transparent;")
+        pv = QVBoxLayout(box)
+        pv.setContentsMargins(23, 2, 0, 0)
+        pv.setSpacing(1)
+        pr = QHBoxLayout()
+        pr.setSpacing(8)
+        pr.addWidget(_IEElide(p.get("label") or "",
+                              f"background:transparent; border:none; font-size:11px;"
+                              f" font-family:{FF}; color:#55556E;"), 1)
+        pr.addWidget(self._label(
+            p.get("text") or "—",
+            f"font-size:11px; font-family:{FF}; font-weight:600;"
+            f" color:{self.AMBER if p.get('flag') else self.INK};"))
+        pv.addLayout(pr)
+        if p.get("flag"):
+            fl = QHBoxLayout()
+            fl.setSpacing(5)
+            fl.addWidget(self._dot(self.AMBER, 6), 0, Qt.AlignmentFlag.AlignVCenter)
+            fl.addWidget(self._label(p["flag"], f"font-size:11px; font-family:{FF};"
+                                                f" font-weight:600; color:{self.AMBER};"), 1)
+            pv.addLayout(fl)
+        return box
 
 
 class _DraggableWidget(QWidget):
