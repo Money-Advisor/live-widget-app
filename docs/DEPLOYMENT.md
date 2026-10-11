@@ -113,10 +113,12 @@ recording at all.
 dead:
 
 ```python
-RETIRED_HOSTS = ("192.168.80.52",)
+RETIRED_HOSTS: tuple = ()
 ```
 
-On launch, a saved address naming one of those is rewritten to the current default.
+It is **empty now**: 192.168.80.52 was the retired box in August, and is staging
+again since it was rebuilt - Bilal's test widget points at it, so listing it
+would silently repoint him at production. On launch, a saved address naming one of those is rewritten to the current default.
 Anyone who has deliberately set something else — a test box, a future move — is left
 alone. **Add the old host to `RETIRED_HOSTS` before every server move**, or the
 migration does nothing.
