@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Focus harness</title>
+<link rel="stylesheet" href="../focus/app.css">
+<style>html,body{background:#2A2742}</style>
+<script src="../focus/model.js"></script>
+</head>
+<body class="still">
+<div id="app" class="dock-right"></div>
+<script src="../focus/app.js"></script>
+<script src="scenarios.js"></script>
+<script>
+/* Plays one scenario into the panel through a fake bridge, exactly as the
+ * Python side would: harness.html?s=<name>. Clicks run after the messages,
+ * `later` messages after the clicks (a card arriving while a sheet is open).
+ * window.__log keeps what the panel sent back, for the checks. */
+(function () {
+  var name = (location.search.match(/[?&]s=([^&]+)/) || [])[1] || 'live-three';
+  var sc = window.FocusScenarios[decodeURIComponent(name)];
+  window.__log = [];
+  var fn = null;
+  var bridge = {
+    push: { connect: function (f) { fn = f; } },
+    call: function (a, p) { window.__log.push([a, JSON.parse(p || '{}')]); },
+    ready: function () {}
+  };
+  FocusApp.connect(bridge);
+  // Headless Edge will not open a window narrower than ~500px, so the app is
+  // held at the scenario's real width at the left and the shot is cropped.
+  if (sc) { var a = document.getElementById('app'); a.style.width = sc.size[0] + 'px'; a.style.height = sc.size[1] + 'px'; }
+  if (!sc) { document.body.insertAdjacentHTML('beforeend', '<p style="color:#fff">No scenario ' + name + '</p>'); return; }
+  sc.steps.forEach(function (s) { fn(JSON.stringify(s)); });
+  setTimeout(function () {
+    Object.keys(sc.fill || {}).forEach(function (id) { var e = document.getElementById(id); if (e) e.value = sc.fill[id]; });
+    var i = 0;
+    (function next() {
+      if (i < (sc.clicks || []).length) {
+        var el = document.querySelector(sc.clicks[i++]);
+        if (el) el.click(); else window.__log.push(['MISSING', sc.clicks[i - 1]]);
+        setTimeout(next, 120);
+      } else {
+        (sc.later || []).forEach(function (s) { fn(JSON.stringify(s)); });
+        setTimeout(function () { document.title = 'ready:' + name; }, 200);
+      }
+    }());
+  }, 150);
+}());
+</script>
+</body>
+</html>
