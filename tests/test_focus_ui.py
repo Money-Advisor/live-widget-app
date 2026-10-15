@@ -449,6 +449,39 @@ def test_a_reset_email_confirmation_is_info_not_an_error(app, monkeypatch):
     assert s["error"] == "Incorrect email or password." and not s["info"]
 
 
+def test_signing_in_does_not_blink_the_window(app):
+    """The classic sign-in drops "on top", Focus put it back: two native window
+    rebuilds, a visible double blink every time the widget opened (15 Oct)."""
+    from PyQt6.QtCore import QObject, QEvent
+
+    class Count(QObject):
+        n = 0
+
+        def eventFilter(self, obj, ev):
+            if obj is win and ev.type() in (QEvent.Type.Hide, QEvent.Type.WinIdChange):
+                Count.n += 1
+            return False
+
+    win = make(app)
+    win._token = "stand-in"
+    win._user = {}                               # no agent id: no dialer connection opened
+    win._stack.setCurrentWidget(win._page_main)
+    win._focus.push_state(force=True)            # signed in: Focus pins itself on top
+    app.processEvents()
+    c = Count()
+    app.installEventFilter(c)
+    try:
+        win._on_validate_ok({}, "", {}, "", "", 0)   # the stored session comes back valid
+        win._focus.push_state(force=True)
+        app.processEvents()
+    finally:
+        app.removeEventFilter(c)
+        win._token = ""
+    assert Count.n == 0
+    from PyQt6.QtCore import Qt
+    assert win.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+
+
 def test_the_page_files_exist_where_the_widget_looks(app):
     for name in ("index.html", "app.js", "app.css", "model.js", "logo.png",
                  "fonts/PlusJakartaSans-latin.woff2", "fonts/JetBrainsMono-latin.woff2"):

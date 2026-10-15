@@ -650,6 +650,25 @@ class FocusWindow(main.MainWindow):
     def focus_active(self):
         return self._focus is not None and self._focus.active
 
+    def _exit_logged_out_mode(self):
+        """Signed in: as the classic method, but without dropping "on top".
+
+        The classic one removes WindowStaysOnTopHint, and Focus puts it straight
+        back (a signed-in Focus panel is always on top, as the classic panel
+        is). Changing that flag destroys and rebuilds the native window on
+        Windows, so the two changes were two visible blinks a third of a
+        second apart every time the widget opened (Faseeh, 15 Oct; measured
+        with focus_dev/startup_blinks.py). Leaving the flag alone is the same
+        end state with no rebuild.
+        """
+        if not self.focus_active():
+            return super()._exit_logged_out_mode()
+        self._logged_out_sticky = False
+        if getattr(self, "_resurface_timer", None):
+            self._resurface_timer.stop()
+        if getattr(self, "_tray", None):
+            self._tray.setToolTip("Spark Flow – idle")
+
     # ---- the window, while Focus shows ----
     def set_compliance_on_top(self, on):
         if self.focus_active():
