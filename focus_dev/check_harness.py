@@ -54,7 +54,9 @@ EXPECT = {
     "live-transcript-failed": (["Live checking unavailable", "still being recorded"], ["On track"]),
     "live-recording-only": (["Live checking is off for this call"], ["Checklist"]),
     "live-all-clear": (["Everything in Income is done", "\u00a3412", "nothing to put right"], ["1 thing to put right", "things to put right"]),
-    "sheet-checklist": (["Still to do from earlier", "Creditor Check", "SAY NEXT", "Take-home pay asked"], []),
+    # The tag sits on the same line as the label, never under it.
+    "sheet-checklist": (["Still to do from earlier", "Creditor Check", "Take-home pay asked",
+                         'household income</span><span class="tagnow">Say next</span></span>'], []),
     "sheet-ie-income": (["Child Benefit", "Universal Credit", "\u00a31,840"], []),
     "sheet-ie-exp": (["Son\u2019s phone", "Hide the parts", "Unresolved", "\u00a3412", "Communications and leisure"],
                      ["UNRESOLVED</span>"]),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 build_focus.py
 --------------
 Builds the Focus widget (focus_main.py) into dist/SparkFlowFocus/ with
@@ -114,9 +114,39 @@ def _classic_fingerprint():
     return out
 
 
-def check_installer() -> bool:
+def _focus_installed():
+    """Is Spark Flow Focus REALLY installed on this PC (same AppId as the test)?"""
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Uninstall") as k:
+            i = 0
+            while True:
+                try:
+                    name = winreg.EnumKey(k, i)
+                except OSError:
+                    return False
+                if "FOCUSPREVIEW" in name:
+                    return True
+                i += 1
+    except OSError:
+        return False
+
+
+def check_installer():
     """Install silently into a throwaway folder (no shortcuts), self-test the
-    INSTALLED exe, uninstall - and prove the normal widget was not touched."""
+    INSTALLED exe, uninstall - and prove the normal widget was not touched.
+
+    Refuses (returns None) when Spark Flow Focus is really installed on this
+    PC: it shares the AppId, so the test's install would land on the real one
+    and its uninstall could remove the real one's entry. Found 15 Oct, when
+    Faseeh had installed it and the test's setup failed against his copy.
+    """
+    if _focus_installed():
+        print("INSTALLER TEST SKIPPED: Spark Flow Focus is installed on this PC - testing the "
+              "installer here would touch that installation. Run --check on a PC without it, "
+              "or uninstall it first.")
+        return None
     import shutil
     before = _classic_fingerprint()
     target = tempfile.mkdtemp(prefix="sf-focus-install-")
@@ -165,8 +195,10 @@ def main():
             sys.exit(1)
         print(f"OK  {SETUP}  ({os.path.getsize(SETUP) / 1e6:.0f} MB)")
         if "--check" in sys.argv:
-            ok = check_installer()
-            print("INSTALLER TEST " + ("PASSED" if ok else "FAILED"))
+            res = check_installer()
+            if res is not None:
+                ok = res
+                print("INSTALLER TEST " + ("PASSED" if ok else "FAILED"))
     sys.exit(0 if ok else 1)
 
 

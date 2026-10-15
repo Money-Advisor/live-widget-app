@@ -84,7 +84,8 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .focus.clear{background:var(--white);border:1.5px solid var(--grnLine)}
 .focus.quiet{background:var(--white);border:1px solid var(--line);align-items:center;text-align:center;padding:26px 18px}
 .f-top{display:flex;align-items:center;gap:8px;min-width:0}
-.kind{font-size:10px;font-weight:800;letter-spacing:1.1px;text-transform:uppercase;border-radius:7px;padding:4px 8px;white-space:nowrap}
+/* One pill everywhere (card label, checklist tag): fixed height, text centred. */
+.kind{display:inline-flex;align-items:center;height:22px;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;border-radius:7px;padding:0 9px;white-space:nowrap;line-height:1}
 .next .kind{background:var(--brand);color:#FFFFFF}
 .critical .kind,.missed .kind,.urgent .kind{background:var(--red);color:#FFFFFF}
 .high .kind,.cue .kind{background:#F2D49B;color:#5A3A00}
@@ -186,13 +187,15 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .ck.ok .o{background:var(--grn);border-color:var(--grn)}
 .ck.now .o{border:2px solid var(--brand);background:var(--brandSoft)}
 .ck.urg .o{border:2px solid var(--red);background:var(--redBg)}
-.ck .tx{display:flex;flex-direction:column;gap:3px;font-size:13.5px;line-height:1.4;color:var(--ink2);min-width:0}
-.ck.ok .tx > span:first-child{font-weight:600;color:var(--ink)}
-.ck.now .tx > span:first-child{font-weight:800;color:var(--brand2)}
-.ck.urg .tx > span:first-child{font-weight:800;color:var(--redInk)}
+.ck .tx{flex:1;display:flex;flex-direction:column;gap:3px;font-size:13.5px;line-height:1.4;color:var(--ink2);min-width:0}
+.ck .line{display:flex;align-items:flex-start;gap:10px}
+.ck .lb{flex:1;min-width:0;padding-top:1px}
+.ck.ok .tx > span:first-child,.ck.ok .lb{font-weight:600;color:var(--ink)}
+.ck.now .lb{font-weight:800;color:var(--brand2)}
+.ck.urg .lb{font-weight:800;color:var(--redInk)}
 .ck .q{font-size:12px;font-style:italic;color:var(--mute);overflow-wrap:anywhere}
-.ck .tagnow{align-self:flex-start;font-size:9.5px;font-weight:800;letter-spacing:1px;color:#FFFFFF;background:var(--brand);border-radius:6px;padding:2px 6px}
-.ck .tagurg{align-self:flex-start;font-size:9.5px;font-weight:800;letter-spacing:1px;color:#FFFFFF;background:var(--red);border-radius:6px;padding:2px 6px}
+.ck .tagnow,.ck .tagurg{flex:0 0 auto;display:inline-flex;align-items:center;height:20px;margin-top:0;font-size:9.5px;font-weight:800;letter-spacing:1px;text-transform:uppercase;line-height:1;color:#FFFFFF;background:var(--brand);border-radius:6px;padding:0 8px;white-space:nowrap}
+.ck .tagurg{background:var(--red)}
 .ck .miss{font-size:12px;color:var(--mute)}
 .sec-name{font-size:12px;font-weight:800;color:var(--ink2);margin-top:4px}
 .dlist{display:flex;flex-direction:column;gap:10px}

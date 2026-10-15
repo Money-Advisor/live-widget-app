@@ -400,9 +400,10 @@
       c.rows.forEach(function (x) {
         var r = x.row, ok = !!r.done, urg = !!r.urgent && !ok;
         var cls = ok ? ' ok' : urg ? ' urg' : x.now ? ' now' : '';
-        var tx = '<span>' + esc(r.label) + '</span>';
-        if (urg) tx += '<span class="tagurg">ASK NOW</span>';
-        else if (x.now) tx += '<span class="tagnow">SAY NEXT</span>';
+        // The tag sits BESIDE the label, top-aligned on the right - under it, it
+        // read as a second, squashed line (Faseeh, 15 Oct).
+        var tag = urg ? '<span class="tagurg">Ask now</span>' : (x.now ? '<span class="tagnow">Say next</span>' : '');
+        var tx = '<span class="line"><span class="lb">' + esc(r.label) + '</span>' + tag + '</span>';
         if (ok && r.evidence) tx += '<span class="q">\u201c' + esc(String(r.evidence).slice(0, 110)) + '\u201d</span>';
         if (!ok) {
           var parts = M.liveParts(r);
