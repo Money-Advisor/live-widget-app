@@ -25,7 +25,7 @@ import os
 import sys
 
 from PyQt6.QtCore import QObject, QSize, QTimer, Qt, QUrl, pyqtSignal, pyqtSlot, QEvent
-from PyQt6.QtGui import QAction, QGuiApplication, QColor
+from PyQt6.QtGui import QGuiApplication, QColor
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
 
 import main
@@ -41,7 +41,6 @@ except Exception as exc:          # noqa: BLE001 - any import failure means "no 
     WEBENGINE_ERROR = f"{type(exc).__name__}: {exc}"
 
 
-LAYOUT_KEY = "ui/layout"          # "focus" | "classic"
 DOCK_KEY = "ui/focus_dock"        # "right" | "left"
 
 PANEL_W = 360                     # the panel, as drawn by focus/app.css
@@ -597,9 +596,6 @@ class FocusController:
             win._logout()
         elif action == "hide":
             win.close()
-        elif action == "classic":
-            win.use_layout("classic")
-            return
         else:
             print(f"[focus] unknown action {action!r}")
             return
@@ -638,55 +634,21 @@ class FocusWindow(main.MainWindow):
 
     _focus = None    # class default: the overrides below run during MainWindow.__init__
 
-    def __init__(self, view_factory=None, start=None):
+    def __init__(self, view_factory=None, start=True):
+        # Focus ONLY. Faseeh, 15 Oct: two exes are two widgets - SparkFlow.exe
+        # is the classic one, SparkFlowFocus.exe the new one, and neither offers
+        # the other. There is no tray item, button or start option to switch.
+        # The one way the classic screen still appears here is the automatic
+        # fallback (FocusController._fail) when the page cannot start at all -
+        # a widget that records with the old screen beats one that shows nothing.
+        # `start=False` exists for the tests only.
         super().__init__()
         self._focus = FocusController(self, view_factory=view_factory)
-        self._layout_action = None
-        self._add_layout_action()
-        if start is None:
-            start = (self._settings.value(LAYOUT_KEY, "focus") or "focus") == "focus"
         if start:
             self._focus.start()
-        self._sync_layout_action()
 
-    # ---- which layout ----
     def focus_active(self):
         return self._focus is not None and self._focus.active
-
-    def use_layout(self, which):
-        """Switch layouts, any time - mid-call included. Remembered on this PC."""
-        ctl = self._focus
-        if which == "focus":
-            if ctl.view is None and not ctl.failed:
-                ok = ctl.start()
-            else:
-                ok = ctl.activate()
-            if ok:
-                self._settings.setValue(LAYOUT_KEY, "focus")
-        else:
-            ctl.deactivate()
-            self._settings.setValue(LAYOUT_KEY, "classic")
-        self._sync_layout_action()
-
-    def _add_layout_action(self):
-        tray = getattr(self, "_tray", None)
-        menu = tray.contextMenu() if tray is not None else None
-        if menu is None:
-            return
-        act = QAction("", self)
-        act.triggered.connect(self._toggle_layout)
-        acts = menu.actions()
-        menu.insertAction(acts[-1] if acts else None, act)
-        menu.insertSeparator(acts[-1] if acts else None)
-        self._layout_action = act
-
-    def _toggle_layout(self):
-        self.use_layout("classic" if self.focus_active() else "focus")
-
-    def _sync_layout_action(self):
-        if self._layout_action is not None:
-            self._layout_action.setText(
-                "Use the classic layout" if self.focus_active() else "Use the new Focus layout")
 
     # ---- the window, while Focus shows ----
     def set_compliance_on_top(self, on):

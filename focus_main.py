@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """Spark Flow with the Focus screen.
 
-    python focus_main.py                 # Focus (or the layout last chosen on this PC)
-    python focus_main.py --classic       # start on the classic layout
-    python focus_main.py --minimized     # as the installer's auto-start entry
+    python focus_main.py                 # the Focus widget
+    python focus_main.py --minimized     # quietly into the tray (if signed in)
 
 The SAME widget as main.py - same sign-in, recording, dialer, tray and update
 code, imported unchanged - started as FocusWindow, which lays the Focus page
-over it. main.py itself is not touched and still runs exactly as before.
+over it. Focus only: this exe offers no way to the classic screen (that is
+SparkFlow.exe, built from main.py, which is not touched).
 """
 import os
 import sys
@@ -15,7 +15,7 @@ import sys
 from PyQt6.QtCore import Qt, QCoreApplication
 
 # Qt WebEngine has to be loaded before the QApplication exists, or created
-# with shared GL contexts. Both, so a later switch to Focus still works.
+# with shared GL contexts. Both, belt and braces.
 QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
 import main            # noqa: E402 - the widget, unchanged
@@ -64,10 +64,7 @@ def run():
     font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
     app.setFont(font)
 
-    start = None
-    if "--classic" in sys.argv:
-        start = False
-    win = focus_ui.FocusWindow(start=start)
+    win = focus_ui.FocusWindow()
     if "--minimized" in sys.argv and win._token:
         pass
     else:

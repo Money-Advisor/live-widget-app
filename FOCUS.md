@@ -41,8 +41,10 @@ installer/installer_focus.iss   the Focus installer (installer.iss untouched)
   to the classic method whenever Focus is not showing.
 * **Falls back to classic by itself** if WebEngine is missing, the page fails to
   load, or it does not say "ready" within 10 s — with a tray message.
-* **Switch any time, mid-call included**: tray menu → "Use the classic layout",
-  or Settings on the Focus page. Remembered per PC (`ui/layout`).
+* **Two exes, two widgets** (Faseeh, 15 Oct): `SparkFlowFocus.exe` is Focus only —
+  no tray item, Settings button or start option leads to the classic screen;
+  that is `SparkFlow.exe`. The classic screen appears here only as the
+  automatic fallback above.
 * Same single-instance lock as classic: the two can never run together.
 
 ## Run it
@@ -50,7 +52,6 @@ installer/installer_focus.iss   the Focus installer (installer.iss untouched)
 ```powershell
 # from Spark Flow\live-widget-app-focus, with the Focus venv (has PyQt6-WebEngine 6.11.0)
 ..\..\.venv-focus\Scripts\python.exe focus_main.py            # Focus
-..\..\.venv-focus\Scripts\python.exe focus_main.py --classic  # start on classic
 ```
 
 `focus_main.py` uses the real widget settings — the signed-in session on that
@@ -79,10 +80,10 @@ opening Spark Flow Focus — it says so if you forget. Build output goes to
 | What | Result |
 | --- | --- |
 | `node --test focus/tests/*.test.cjs` — the rules | 22 pass; **10/10** deliberate rule breaks go red |
-| `pytest tests/test_focus_ui.py` — the wiring | 43 pass; **10/10** deliberate breaks go red |
+| `pytest tests/test_focus_ui.py` — the wiring | 44 pass; **10/10** deliberate breaks go red |
 | `focus_dev/check_harness.py` — every screen rendered in Edge | **42/42**; 4/4 drawing breaks go red |
 | `build_focus.py --installer --check` — the installer | installs, installed exe self-test **OK**, uninstalls clean, normal widget untouched |
-| `focus_dev/qt_e2e.py` — real widget + real WebEngine | **25/25** (load, bridge, buttons → classic methods, widths 360/720/64/416, slide-out, safety, classic↔Focus mid-call, summary, reload replay) |
+| `focus_dev/qt_e2e.py` — real widget + real WebEngine | **29/29** (load, bridge, buttons → classic methods, dropdown keeps the sheet still, widths 360/720/64/416, slide-out, safety, no layout switch, summary, reload replay) |
 | `build_focus.py --check` — the packaged exe | builds; self-test **OK** (page loads from the package, bridge connects) |
 | `main.py` / `build_all.py` / conftest | unchanged (git diff) |
 

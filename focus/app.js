@@ -128,6 +128,7 @@
       ui.newKey = null; ui.pinIE = false; ui.lastFocusKey = null; ui.ieSeen = 0;
     }
     if (was.phase !== host.phase) {
+      note('phase:' + was.phase + '>' + host.phase);
       ui.settings = false;
       if (host.phase !== 'live') { ui.sheet = null; ui.collapsed = false; ui.pinIE = false; }
       if (host.phase === 'idle') { ui.manual = false; }
@@ -169,7 +170,16 @@
     var scrollers = {};
     el.querySelectorAll('[data-scroll]').forEach(function (s) { scrollers[s.getAttribute('data-scroll')] = s.scrollTop; });
     if (el.hasAttribute('data-scroll')) scrollers.__self = el.scrollTop;
+    // Elements already on screen must not animate in again when their region
+    // is redrawn: opening a dropdown redrew the Settings sheet and replayed its
+    // slide-up, so the whole sheet looked as if it closed and reopened (Faseeh,
+    // 15 Oct). Only something genuinely new - a new data-anim key - animates.
+    var shown = {};
+    el.querySelectorAll('[data-anim]').forEach(function (a) { shown[a.getAttribute('data-anim')] = 1; });
     el.innerHTML = html;
+    el.querySelectorAll('[data-anim]').forEach(function (a) {
+      if (shown[a.getAttribute('data-anim')]) a.classList.add('calm');
+    });
     regions[name] = html;
     Object.keys(keep).forEach(function (id) { var i = document.getElementById(id); if (i) i.value = keep[id]; });
     el.querySelectorAll('[data-scroll]').forEach(function (s) {
@@ -499,9 +509,9 @@
     var nb = '';
     if (ui.newKey && Date.now() < ui.newUntil) {
       var it = M.attention(call).filter(function (i) { return i.key === ui.newKey; })[0];
-      if (it) nb = '<div class="newbar" role="alert"><span class="qdot" style="background:var(--red)"></span><span class="t">New: ' + esc(it.label || 'card') + '</span><button data-act="closeSheet">View</button></div>';
+      if (it) nb = '<div class="newbar" role="alert" data-anim="newbar-' + esc(it.key) + '"><span class="qdot" style="background:var(--red)"></span><span class="t">New: ' + esc(it.label || 'card') + '</span><button data-act="closeSheet">View</button></div>';
     }
-    return '<div class="scrim" data-act="closeSheet"></div><div class="sheet" role="dialog" aria-label="' + esc(titles[ui.sheet]) + '"><div class="grab"></div><div class="sh-h"><h3>' + esc(titles[ui.sheet]) + '</h3>' +
+    return '<div class="scrim" data-anim="scrim-live" data-act="closeSheet"></div><div class="sheet" data-anim="sheet-' + ui.sheet + '" role="dialog" aria-label="' + esc(titles[ui.sheet]) + '"><div class="grab"></div><div class="sh-h"><h3>' + esc(titles[ui.sheet]) + '</h3>' +
       (ui.sheet === 'ie' && call.ie && call.ie.visible ? '<button class="pinbtn" data-act="pin" title="Keep the I&amp;E open beside the panel">' + I.pin + 'Pin</button>' : '') +
       '<button class="sh-x" data-act="closeSheet" aria-label="Close">' + I.x + '</button></div>' + nb +
       '<div class="sh-b" data-scroll="sheet">' + body + '</div></div>';
@@ -509,7 +519,7 @@
 
   function pinHtml() {
     if (!(ui.pinIE && host.phase === 'live' && !ui.collapsed)) return '';
-    return '<div class="pin"><div class="sh-h" style="padding-top:12px" data-drag><h3>Income &amp; expenditure</h3><button class="sh-x" data-act="unpin" aria-label="Unpin">' + I.x + '</button></div><div class="sh-b" data-scroll="pin">' + ieBody() + '</div></div>';
+    return '<div class="pin" data-anim="pin"><div class="sh-h" style="padding-top:12px" data-drag><h3>Income &amp; expenditure</h3><button class="sh-x" data-act="unpin" aria-label="Unpin">' + I.x + '</button></div><div class="sh-b" data-scroll="pin">' + ieBody() + '</div></div>';
   }
 
   /* ---------- strip ---------- */
@@ -535,7 +545,7 @@
     var it = M.attention(call).filter(function (i) { return i.key === ui.peekKey; })[0];
     if (!it) return '';
     var r = it.row || {};
-    return '<div class="peekwrap"><div class="peek ' + it.kind + '" role="alert"><div class="focus ' + it.kind + '"><div class="f-top"><span class="kind">New \u00b7 put right</span><span class="when">just now</span></div>' +
+    return '<div class="peekwrap"><div data-anim="peek-' + esc(it.key) + '" class="peek ' + it.kind + '" role="alert"><div class="focus ' + it.kind + '"><div class="f-top"><span class="kind">New \u00b7 put right</span><span class="when">just now</span></div>' +
       '<div class="eyebrow">' + esc(it.label) + '</div><h2>' + esc(it.message || '') + '</h2>' +
       (r.script ? '<div class="quote"><span class="cap">Say this</span><p>' + esc(r.script) + '</p></div>' : '') +
       '<div class="pa"><button class="go" data-act="expand">Open the panel</button><button class="kp" data-act="keep">Keep as count</button></div></div><div class="pb"><i></i></div></div></div>';
@@ -598,7 +608,7 @@
     if (host.micGate) {
       var mics = host.mics || [];
       var sel = ui.gateIndex == null ? 0 : ui.gateIndex;
-      return '<div class="overlay"><div class="card" role="dialog" aria-label="Choose your microphone"><span class="cap" style="color:var(--brand)">One-time setup</span><span style="font-size:20px;font-weight:800">Choose your microphone</span>' +
+      return '<div class="overlay" data-anim="gate"><div class="card" role="dialog" aria-label="Choose your microphone"><span class="cap" style="color:var(--brand)">One-time setup</span><span style="font-size:20px;font-weight:800">Choose your microphone</span>' +
         '<span style="font-size:13px;color:var(--mute);line-height:1.45">Pick your headset so we record your voice clearly. You only do this once on this PC.</span>' +
         '<div role="radiogroup" aria-label="Microphone" style="display:flex;flex-direction:column;gap:8px">' +
         (mics.length ? mics.map(function (n, i) { return '<button class="opt' + (i === sel ? ' on' : '') + '" role="radio" aria-checked="' + (i === sel) + '" data-act="gatePick" data-v="' + i + '"><span class="radio"></span><span>' + esc(n) + '</span></button>'; }).join('')
@@ -617,17 +627,17 @@
       var open = ui.dd === name;
       var current = list[cur] != null ? list[cur] : (list.length ? list[0] : empty);
       var h = '<div class="fld"><span class="lbl" id="dd-' + name + '-l">' + label + '</span>' +
-        '<div class="dd' + (open ? ' open' : '') + '"><button class="dd-btn" data-act="dd" data-v="' + name + '" aria-haspopup="listbox" aria-expanded="' + open + '" aria-labelledby="dd-' + name + '-l"' + (list.length ? '' : ' disabled') + '>' +
+        '<div class="dd' + (open ? ' open' : '') + (ui.ddShut === name ? ' shut' : '') + '" data-anim="ddw-' + name + (open ? '-o' : '-c') + '"><button class="dd-btn" data-act="dd" data-v="' + name + '" aria-haspopup="listbox" aria-expanded="' + open + '" aria-labelledby="dd-' + name + '-l"' + (list.length ? '' : ' disabled') + '>' +
         '<span class="v" title="' + esc(current) + '">' + esc(current) + '</span><span class="chev">' + I.down + '</span></button>';
       if (open) {
-        h += '<div class="dd-list" role="listbox" aria-labelledby="dd-' + name + '-l">' + list.map(function (n, i) {
+        h += '<div class="dd-list" data-anim="dd-' + name + '" role="listbox" aria-labelledby="dd-' + name + '-l">' + list.map(function (n, i) {
           return '<button class="dd-opt' + (i === cur ? ' on' : '') + '" role="option" aria-selected="' + (i === cur) + '" data-act="ddPick" data-v="' + name + '" data-k="' + i + '">' +
             '<span class="tk">' + (i === cur ? I.tickB : '') + '</span><span class="t">' + esc(n) + '</span></button>';
         }).join('') + '</div>';
       }
       return h + '</div></div>';
     }
-    return '<div class="scrim" data-act="settings"></div><div class="sheet" role="dialog" aria-label="Settings"><div class="grab"></div><div class="sh-h"><h3>Settings</h3><button class="sh-x" data-act="settings" aria-label="Close">' + I.x + '</button></div>' +
+    return '<div class="scrim" data-anim="scrim-settings" data-act="settings"></div><div class="sheet" data-anim="sheet-settings" role="dialog" aria-label="Settings"><div class="grab"></div><div class="sh-h"><h3>Settings</h3><button class="sh-x" data-act="settings" aria-label="Close">' + I.x + '</button></div>' +
       '<div class="sh-b" data-scroll="settings"><span class="cap" style="color:var(--mute)">Audio</span>' +
       dropdown('mic', 'Your voice', host.mics, mi, 'No microphone found') +
       dropdown('spk', 'Customer voice', host.spks, si, 'No speaker found') +
@@ -636,8 +646,6 @@
       '<div class="fld"><label for="s-api">API base URL</label><div class="inp"><input id="s-api" value="' + esc(host.apiBase || '') + '"></div></div>' +
       '<div class="fld"><label for="s-ws">Recording server URL</label><div class="inp"><input id="s-ws" value="' + esc(host.wsUrl || '') + '"></div></div>' +
       '<button class="cta" data-act="saveServers">Save settings</button>' +
-      '<div class="hr"></div><span class="cap" style="color:var(--mute)">Layout</span>' +
-      '<button class="cta ghost" data-act="classic">Switch to the classic layout</button>' +
       '<div class="hr"></div><button class="cta danger" data-act="logout">Log out</button></div></div>';
   }
 
@@ -760,7 +768,13 @@
   /* ---------- events ---------- */
   function val(id) { var e = document.getElementById(id); return e ? e.value : ''; }
 
+  // The last few things the advisor pressed and phase changes, for support and
+  // the end-to-end test (FocusApp.debug). Names only - never what was typed.
+  var trail = [];
+  function note(what) { trail.push(what); if (trail.length > 20) trail.shift(); }
+
   function act(a, v, k) {
+    note('act:' + a);
     switch (a) {
       case 'login': {
         var em = val('f-email').trim(), pw = val('f-pw');
@@ -772,11 +786,10 @@
       case 'eye': ui.showPw = !ui.showPw; break;
       case 'manual': ui.manual = !ui.manual; break;
       case 'start': send('start', { name: val('f-name').trim(), ref: val('f-ref').trim() }); break;
-      case 'settings': ui.settings = !ui.settings; if (ui.settings) send('rescan'); break;
+      case 'settings': ui.settings = !ui.settings; ui.dd = null; ui.ddShut = null; if (ui.settings) send('rescan'); break;
       case 'hide': send('hide'); break;
       case 'rescan': send('rescan'); break;
       case 'saveServers': send('saveServers', { api: val('s-api').trim(), ws: val('s-ws').trim() }); ui.settings = false; break;
-      case 'classic': send('classic'); break;
       case 'logout': ui.settings = false; send('logout'); break;
       case 'gatePick': ui.gateIndex = Number(v); break;
       case 'gateConfirm': send('gateMic', { index: ui.gateIndex == null ? 0 : ui.gateIndex }); break;
@@ -796,11 +809,12 @@
       case 'parts': ui.parts[k] = !ui.parts[k]; break;
       case 'newcall': summary = null; send('newcall'); break;
       case 'sumAll': ui.summaryAll = !ui.summaryAll; break;
-      case 'dd': ui.dd = ui.dd === v ? null : v; break;
+      case 'dd': ui.ddShut = ui.dd === v ? v : (ui.dd || null); ui.dd = ui.dd === v ? null : v; break;
       case 'ddPick': {
         var i = Number(k);
         // Shown at once; the widget confirms it on its next state.
         if (v === 'mic') host.micIndex = i; else host.spkIndex = i;
+        ui.ddShut = v;
         ui.dd = null;
         send(v, { index: i });
         break;
@@ -812,7 +826,7 @@
 
   document.addEventListener('click', function (ev) {
     // A click anywhere outside an open dropdown closes it.
-    if (ui.dd && !ev.target.closest('.dd')) { ui.dd = null; schedule(); }
+    if (ui.dd && !ev.target.closest('.dd')) { ui.ddShut = ui.dd; ui.dd = null; schedule(); }
     var b = ev.target.closest('[data-act]');
     if (!b || b.disabled) return;
     act(b.getAttribute('data-act'), b.getAttribute('data-v'), b.getAttribute('data-k'));
@@ -824,7 +838,7 @@
   });
   document.addEventListener('keydown', function (ev) {
     if (ev.key === 'Escape') {
-      if (ui.dd) { ui.dd = null; schedule(); }
+      if (ui.dd) { ui.ddShut = ui.dd; ui.dd = null; schedule(); }
       else if (ui.sheet) { ui.sheet = null; schedule(); } else if (ui.settings) { ui.settings = false; schedule(); }
     } else if (ev.key === 'Enter') {
       var id = ev.target && ev.target.id;
@@ -858,7 +872,7 @@
       if (b.ready) b.ready();
     },
     push: onPush,          // the dev harness feeds messages through here
-    debug: function () { return { host: host, call: call, ui: ui, summary: summary }; }
+    debug: function () { return { host: host, call: call, ui: ui, summary: summary, trail: trail.slice() }; }
   };
   schedule();
 }());

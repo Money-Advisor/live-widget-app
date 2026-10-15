@@ -97,22 +97,36 @@ def test_with_focus_off_the_window_is_the_classic_window(app):
     assert win.sizeHint() == main.MainWindow.sizeHint(win)
 
 
-def test_switching_layouts_mid_call_keeps_the_recording_state(app):
+def test_the_focus_exe_offers_no_way_to_the_classic_layout(app):
+    # Faseeh, 15 Oct: two exes, two widgets. The tray menu is exactly the
+    # classic widget's own, with nothing added.
+    win = make(app)
+    texts = [a.text() for a in win._tray.contextMenu().actions() if a.text()]
+    assert not any("layout" in t.lower() or "classic" in t.lower() for t in texts), texts
+    classic = main.MainWindow()
+    assert texts == [a.text() for a in classic._tray.contextMenu().actions() if a.text()]
+    assert not hasattr(win, "use_layout")
+
+
+def test_the_page_cannot_ask_for_the_classic_layout(app):
+    win = make(app)
+    win._focus.on_action("classic", "{}")
+    assert win.focus_active() and win._stack.isHidden()
+
+
+def test_a_saved_classic_choice_from_an_older_build_is_ignored(app):
+    win = make(app, start=False)
+    win._settings.setValue("ui/layout", "classic")
+    win2 = make(app)
+    assert win2.focus_active()
+
+
+def test_a_failure_keeps_recording_while_showing_the_classic_screen(app):
     win = make(app)
     win._recording = True
-    win.use_layout("classic")
+    win._focus._fail("test")
     assert not win.focus_active() and not win._stack.isHidden() and win._recording
-    win.use_layout("focus")
-    assert win.focus_active() and win._stack.isHidden() and win._recording
     win._recording = False
-
-
-def test_the_choice_of_layout_is_remembered(app):
-    win = make(app)
-    win.use_layout("classic")
-    assert win._settings.value(focus_ui.LAYOUT_KEY) == "classic"
-    win.use_layout("focus")
-    assert win._settings.value(focus_ui.LAYOUT_KEY) == "focus"
 
 
 def test_a_page_that_never_says_ready_falls_back_to_classic(app):
@@ -376,9 +390,9 @@ def test_classic_panels_cannot_resize_the_window_while_focus_shows(app):
     assert win.geometry() == before
 
 
-def test_classic_window_sizing_is_restored_when_switching_back(app):
+def test_the_fallback_gives_the_classic_screen_its_full_size(app):
     win = make(app)
-    win.use_layout("classic")
+    win._focus._fail("test")
     assert win.width() >= 460 and win.height() >= 600
 
 
@@ -433,13 +447,6 @@ def test_a_reset_email_confirmation_is_info_not_an_error(app, monkeypatch):
     win._on_login_failed("Incorrect email or password.")
     s = win._focus.snapshot()["login"]
     assert s["error"] == "Incorrect email or password." and not s["info"]
-
-
-def test_the_tray_offers_the_other_layout(app):
-    win = make(app)
-    assert win._layout_action.text() == "Use the classic layout"
-    win.use_layout("classic")
-    assert win._layout_action.text() == "Use the new Focus layout"
 
 
 def test_the_page_files_exist_where_the_widget_looks(app):

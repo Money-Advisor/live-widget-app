@@ -22,6 +22,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+try:   # the tray's "⏺ Start Recording" is not in the console's code page
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:  # noqa: BLE001
+    pass
 HERE = Path(__file__).resolve().parent
 APP = HERE.parent
 sys.path.insert(0, str(APP))
@@ -43,6 +47,32 @@ OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "qt_shots"
 OUT.mkdir(parents=True, exist_ok=True)
 app = QApplication(sys.argv)
 results = []
+
+from PyQt6.QtCore import QObject, QEvent  # noqa: E402
+
+
+class RealInput(QObject):
+    """Counts REAL mouse presses and key presses reaching this app.
+
+    The test window appears on the right edge of a PC someone may be using; a
+    click meant for their own window lands on it (15 Oct: three runs failed
+    with an "Open the panel" press the script never made). The script's own
+    presses go through JavaScript and never produce Qt input events, so any
+    count here is a person - and a step it disturbed is repeated, not failed.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.count = 0
+
+    def eventFilter(self, obj, ev):
+        if ev.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.KeyPress):
+            self.count += 1
+        return False
+
+
+real_input = RealInput()
+app.installEventFilter(real_input)
 
 
 def pump(ms):
@@ -128,6 +158,33 @@ check("the page shows Ready between calls",
       wait_for(lambda: (js(win, "document.body.innerText") or "").find("Ready for your next call") >= 0, 3000))
 shot(win, "02-idle")
 
+# --- Settings: the dropdown opens without redrawing the sheet ---
+win._mic_devices = [{"name": "Microphone Array (Intel® Smart Sound Technology for Digital Microphones)"},
+                    {"name": "Headset Microphone (Jabra Evolve2 30)"}]
+win._mic_combo.clear()
+win._mic_combo.addItems([d["name"] for d in win._mic_devices])
+win._rescan_devices = lambda: None          # keep the stand-in device list
+ctl.push_state(force=True)
+js(win, "document.querySelector('[data-act=settings]').click(); true")
+check("Settings opens", wait_for(lambda: js(win, "!!document.querySelector('.sheet')") is True, 3000))
+pump(500)
+js(win, "window.__sheet = document.querySelector('.sheet'); document.querySelector('[data-act=dd][data-v=mic]').click(); true")
+check("the device list opens inside the panel",
+      wait_for(lambda: js(win, "!!document.querySelector('.dd-list')") is True, 3000))
+check("the sheet stays still (not slid in again)",
+      js(win, "document.querySelector('.sheet').classList.contains('calm') && "
+              "getComputedStyle(document.querySelector('.sheet')).animationName === 'none'") is True)
+check("the list itself animates in",
+      js(win, "getComputedStyle(document.querySelector('.dd-list')).animationName") == "ddIn")
+shot(win, "02b-dropdown")
+picked = []
+win._on_mic_selected = lambda i: picked.append(i)
+js(win, "document.querySelector('[data-act=ddPick][data-k=\"1\"]').click(); true")
+check("picking a device selects it in the widget", wait_for(lambda: picked == [1], 2000) and win._mic_combo.currentIndex() == 1,
+      str(picked))
+js(win, "document.querySelector('.sh-x').click(); true")
+pump(300)
+
 # --- a call ---
 win._reference_edit.setText("REF-48213")
 win._live_pipeline = True
@@ -156,17 +213,39 @@ shot(win, "05-pinned")
 js(win, "document.querySelector('[data-act=unpin]').click(); true")
 check("unpinning gives the width back", wait_for(lambda: win.width() == 360, 3000), str(win.width()))
 
-js(win, "document.querySelector('[data-act=collapse]').click(); true")
-check("folding to the strip makes the window 64px", wait_for(lambda: win.width() == 64, 3000), str(win.width()))
-shot(win, "06-strip")
-folded = dict(msgs("strip-peek")[0])          # a full checklist state, as the server sends
-assert folded["type"] == "compliance_alert"
-folded["trigger_actions"] = [{"id": "Q17.NEW", "label": "New card", "severity": "high",
-                              "message": "A new card while folded.", "script": "Say this.", "occurrence": 1}]
-win.server_message.emit(folded)
-check("a new card slides out of the strip (window grows to 416px)", wait_for(lambda: win.width() == 416, 3000), str(win.width()))
-shot(win, "07-strip-peek")
-check("the slide-out goes back after 8 seconds", wait_for(lambda: win.width() == 64, 11000), str(win.width()))
+def fold_and_peek(n):
+    """Fold, let a new card slide out, let it go back. Returns the three results."""
+    js(win, "var b = document.querySelector('[data-act=collapse]'); if (b) b.click(); true")
+    folded_ok = wait_for(lambda: win.width() == 64, 3000)
+    if n == 0:
+        shot(win, "06-strip")
+    folded = dict(msgs("strip-peek")[0])          # a full checklist state, as the server sends
+    assert folded["type"] == "compliance_alert"
+    folded["trigger_actions"] = [{"id": f"Q17.NEW{n}", "label": "New card", "severity": "high",
+                                  "message": "A new card while folded.", "script": "Say this.", "occurrence": 1}]
+    win.server_message.emit(folded)
+    peek_ok = wait_for(lambda: win.width() == 416, 3000)
+    if n == 0:
+        shot(win, "07-strip-peek")
+    back_ok = wait_for(lambda: win.width() == 64, 11000)
+    trail = js(win, "JSON.stringify(FocusApp.debug().trail.slice(-4))")
+    return folded_ok, peek_ok, back_ok, trail
+
+
+for attempt in range(3):
+    before = real_input.count
+    folded_ok, peek_ok, back_ok, trail = fold_and_peek(attempt)
+    touched = real_input.count - before
+    if folded_ok and peek_ok and back_ok:
+        break
+    if not touched:
+        break                                  # nobody touched it: a real failure, report it
+    print(f"(retrying the strip steps: {touched} real click/key press reached the window - {trail})")
+    js(win, "var b = document.querySelector('.strip [data-act=expand]:last-child'); if (b) b.click(); true")
+    wait_for(lambda: win.width() == 360, 3000)
+check("folding to the strip makes the window 64px", folded_ok, str(win.width()))
+check("a new card slides out of the strip (window grows to 416px)", peek_ok)
+check("the slide-out goes back after 8 seconds", back_ok, f"{win.width()} {trail}")
 js(win, "document.querySelector('.strip [data-act=expand]:last-child').click(); true")
 check("opening the panel again", wait_for(lambda: win.width() == 360, 3000), str(win.width()))
 
@@ -177,15 +256,11 @@ win.server_message.emit({"type": "crisis_alert", "line": "Approved support wordi
 check("the safety card takes the front", wait_for(lambda: js(win, "!!document.querySelector('.focus.safety')") is True, 3000))
 shot(win, "08-safety")
 
-# --- switch to classic mid-call and back ---
-win.use_layout("classic")
-pump(400)
-check("switching to classic mid-call shows the classic window", not win.focus_active() and not win._stack.isHidden()
-      and win.width() >= 460, f"{win.width()}x{win.height()}")
-shot(win, "09-classic-midcall")
-win.use_layout("focus")
-check("and back to Focus", wait_for(lambda: win.focus_active() and win.width() == 360, 3000))
-check("the page still shows the call after switching", js(win, "!!document.querySelector('.focus.safety')") is True)
+# --- Focus only: no way to the classic layout ---
+tray_texts = [a.text() for a in win._tray.contextMenu().actions() if a.text()]
+check("the tray menu has no layout switch", not any("layout" in t.lower() for t in tray_texts), str(tray_texts))
+check("Focus is still showing mid-call", win.focus_active() and win._stack.isHidden()
+      and js(win, "!!document.querySelector('.focus.safety')") is True)
 
 # --- end of call: the classic summary path ---
 win._recording = False

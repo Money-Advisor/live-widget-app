@@ -286,6 +286,12 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .dd-btn .chev{flex:0 0 32px;width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:var(--mute);background:var(--surf);transition:transform .22s var(--ease),background .15s,color .15s}
 .dd.open .dd-btn{border-color:var(--brand);box-shadow:0 0 0 3px rgba(91,61,245,.16)}
 .dd.open .dd-btn .chev{transform:rotate(180deg);background:var(--brandSoft);color:var(--brand)}
+/* The arrow turns on each change only (the wrapper's data-anim key holds the state). */
+.dd.open .dd-btn .chev{animation:chevOpen .22s var(--ease)}
+.dd.shut .dd-btn .chev{animation:chevShut .22s var(--ease)}
+.calm .dd-btn .chev{animation:none!important}
+@keyframes chevOpen{from{transform:rotate(0)}to{transform:rotate(180deg)}}
+@keyframes chevShut{from{transform:rotate(180deg)}to{transform:rotate(0)}}
 .dd-list{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:8;background:var(--white);border:1px solid var(--line);border-radius:14px;box-shadow:0 16px 40px rgba(20,18,42,.18);padding:6px;max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;transform-origin:top center;animation:ddIn .18s var(--ease)}
 .dd-opt{width:100%;min-height:44px;display:flex;gap:10px;align-items:center;padding:9px 10px;border:none;background:transparent;border-radius:10px;text-align:left;font-size:13px;line-height:1.35;color:var(--ink2);transition:background .12s}
 .dd-opt:hover{background:var(--surf)}
@@ -344,5 +350,6 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 @keyframes eq{0%,100%{height:3px}50%{height:12px}}
 @keyframes ripple{0%{transform:scale(1);opacity:1}100%{transform:scale(1.55);opacity:0}}
 @keyframes spin{to{transform:rotate(360deg)}}
+.calm{animation:none!important}
 body.still *{animation:none!important;transition:none!important}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
