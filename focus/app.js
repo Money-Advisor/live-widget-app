@@ -377,19 +377,18 @@
     var fresh = ie && call.ieVersion > ui.ieSeen && ui.sheet !== 'ie' && !ui.pinIE;
     return '<div class="dock">' +
       '<button class="dk" data-act="sheet" data-v="list" aria-label="Open the checklist"><span class="ringm" style="background:conic-gradient(var(--brand) 0 ' + pct + '%,#E3DFF3 ' + pct + '% 100%)"><i></i></span><span class="dt"><span>Checklist</span><span>' + (c.total ? done + ' of ' + total : (total ? total + ' to do' : '\u2014')) + '</span></span>' +
-      (c.earlierCount ? '<span class="early" title="Still to do from earlier stages">+' + c.earlierCount + ' earlier</span>' : '') + '</button>' +
+      (c.earlierCount ? '<span class="early" title="' + c.earlierCount + ' still to do from earlier stages">+' + c.earlierCount + '</span>' : '') + '</button>' +
       '<button class="dk" data-act="sheet" data-v="ie" aria-label="Open the income and expenditure"><span class="tile" style="background:#E9F7EF;color:var(--grnInk)">' + I.coins + '</span><span class="dt"><span>I&amp;E \u00b7 DI</span><span class="' + (diOk ? 'mono' : '') + '" style="font-size:14px;' + (diOk ? '' : 'color:var(--amb)') + '">' + esc(di) + '</span></span>' + (fresh ? '<span class="new" aria-label="New figures"></span>' : '') + '</button></div>';
   }
 
   function footLive() {
-    var dockTxt = 'Docked ' + (host.dock === 'left' ? 'left' : 'right');
-    if (call.conn === 'buffering') return '<div class="ft warn"><span class="dotc" style="background:var(--ambDot)"></span>Reconnecting \u2014 audio is saved on this PC<span class="r">' + dockTxt + '</span></div>';
-    if (call.conn === 'failed') return '<div class="ft bad"><span class="dotc" style="background:var(--red)"></span>Saved on this PC \u2014 will not upload<span class="r">' + dockTxt + '</span></div>';
-    if (host.paused) return '<div class="ft warn"><span class="dotc" style="background:var(--ambDot)"></span>Paused \u2014 nothing is being recorded<span class="r">' + dockTxt + '</span></div>';
-    if (!host.livePipeline) return '<div class="ft"><span class="dotc" style="background:var(--grn)"></span>Recording<span class="r">' + dockTxt + '</span></div>';
-    if (call.transcription === 'failed') return '<div class="ft bad"><span class="dotc" style="background:var(--red)"></span>Live checking stopped \u2014 still recording<span class="r">' + dockTxt + '</span></div>';
-    if (call.transcription === 'degraded') return '<div class="ft warn"><span class="dotc" style="background:var(--ambDot)"></span>Live checking reconnecting<span class="r">' + dockTxt + '</span></div>';
-    return '<div class="ft"><span class="dotc" style="background:var(--grn)"></span>Listening \u00b7 live checking on<span class="r">' + dockTxt + '</span></div>';
+    if (call.conn === 'buffering') return '<div class="ft warn"><span class="dotc" style="background:var(--ambDot)"></span>Reconnecting \u2014 audio is saved on this PC</div>';
+    if (call.conn === 'failed') return '<div class="ft bad"><span class="dotc" style="background:var(--red)"></span>Saved on this PC \u2014 will not upload</div>';
+    if (host.paused) return '<div class="ft warn"><span class="dotc" style="background:var(--ambDot)"></span>Paused \u2014 nothing is being recorded</div>';
+    if (!host.livePipeline) return '<div class="ft"><span class="dotc" style="background:var(--grn)"></span>Recording</div>';
+    if (call.transcription === 'failed') return '<div class="ft bad"><span class="dotc" style="background:var(--red)"></span>Live checking stopped \u2014 still recording</div>';
+    if (call.transcription === 'degraded') return '<div class="ft warn"><span class="dotc" style="background:var(--ambDot)"></span>Live checking reconnecting</div>';
+    return '<div class="ft"><span class="dotc" style="background:var(--grn)"></span>Listening \u00b7 live checking on</div>';
   }
 
   function checklistSheet() {

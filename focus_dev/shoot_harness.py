@@ -33,7 +33,9 @@ def shoot(name, w, h, out_dir):
     if png.exists():
         png.unlink()
     cmd = [str(EDGE), "--headless=new", "--disable-gpu", "--hide-scrollbars",
-           "--force-device-scale-factor=1", f"--window-size={max(w, 800)},{h}",
+           # Taller than the panel: headless Edge's visible area is a little
+           # shorter than the window, which clipped the panel's last rows.
+           "--force-device-scale-factor=1", f"--window-size={max(w, 800)},{h + 120}",
            "--virtual-time-budget=3000", "--allow-file-access-from-files",
            f"--screenshot={png}", url]
     subprocess.run(cmd, capture_output=True, timeout=60)
