@@ -30,7 +30,7 @@ EXPECT = {
                            "Jabra Evolve2 30", 'aria-selected="true"',
                            'class="scrim calm"', 'class="sheet calm"', 'class="dd-list" data-anim="dd-mic"'],
                           ["<select", 'class="dd-list calm"']),
-    "settings-dropdown-picked": (['title="Headset Microphone (Jabra Evolve2 30)"', 'class="sheet calm"',
+    "settings-dropdown-picked": (['data-tip="Headset Microphone (Jabra Evolve2 30)"', 'class="sheet calm"',
                                   'class="dd shut"'], ['class="dd open"', 'role="listbox"']),
     "idle-settings": (["Your voice", "Customer voice", "Log out", "Save settings"],
                       ['class="sheet calm"', "shut", "classic layout", 'data-act="classic"']),
@@ -92,6 +92,10 @@ def main():
         html = dom(name)
         missing = [m for m in must if m not in html]
         present = [n for n in never if n in html]
+        # No browser hover hint, anywhere: inside the widget Qt draws it as an
+        # empty black box (15 Oct). The page's own data-tip hint replaces it.
+        if ' title="' in html:
+            present.append('title="..." (a browser hint - use data-tip)')
         if "ready:" + name not in html:
             missing.append("(scenario did not finish)")
         ok = not missing and not present

@@ -638,6 +638,30 @@ def _left_button_down():
     return bool(QGuiApplication.mouseButtons() & Qt.MouseButton.LeftButton)
 
 
+class _QuietComplianceAlertPanel(main.ComplianceAlertPanel):
+    """The classic checklist panel, minus a flash at startup.
+
+    Its constructor ends with show_idle(), which shows the panel while it has
+    no parent yet - so for ~20ms it is a small window of its own (356x317) on
+    the desktop, before MainWindow adds it to its layout. The classic widget
+    covers it straight away; Focus opens transparent, so it was the square
+    seen on every double-click (Faseeh, 15 Oct; measured from outside the
+    process with focus_dev/startup_windows.py). Here that parentless show is
+    kept - the same visible/hidden state as classic - but never reaches the
+    screen; the attribute is dropped the moment the panel gets its parent.
+    """
+
+    def setVisible(self, visible):
+        if visible and self.parentWidget() is None:
+            self.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        super().setVisible(visible)
+
+    def event(self, ev):
+        if ev.type() == QEvent.Type.ParentChange and self.parentWidget() is not None:
+            self.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, False)
+        return super().event(ev)
+
+
 class FocusWindow(main.MainWindow):
     """The classic widget with the Focus screen over it.
 
@@ -653,6 +677,8 @@ class FocusWindow(main.MainWindow):
     # page loaded and docked it (Faseeh, 15 Oct). A class default because the
     # classic sign-out code can show the window from INSIDE MainWindow.__init__.
     _veiled = True
+    _building = False         # True only while MainWindow.__init__ runs
+    _show_after_build = False
 
     def __init__(self, view_factory=None, start=True):
         # Focus ONLY. Faseeh, 15 Oct: two exes are two widgets - SparkFlow.exe
@@ -662,7 +688,17 @@ class FocusWindow(main.MainWindow):
         # fallback (FocusController._fail) when the page cannot start at all -
         # a widget that records with the old screen beats one that shows nothing.
         # `start=False` exists for the tests only.
-        super().__init__()
+        # MainWindow.__init__ builds its panel by the name in main's globals;
+        # point that name at the quiet panel for this one construction only, so
+        # nothing else that imports main (the classic widget, its tests) sees it.
+        classic_panel = main.ComplianceAlertPanel
+        main.ComplianceAlertPanel = _QuietComplianceAlertPanel
+        self._building = True
+        try:
+            super().__init__()
+        finally:
+            main.ComplianceAlertPanel = classic_panel
+            self._building = False
         self._focus = FocusController(self, view_factory=view_factory)
         # Belt and braces: whatever happens to the page, the window is never
         # left invisible past the ready timeout (plus a margin for the fallback).
@@ -674,11 +710,22 @@ class FocusWindow(main.MainWindow):
             self._focus.start()
         else:
             self._unveil()
+        if self._show_after_build and not self.isVisible():
+            self.setVisible(True)           # the show the classic code asked for
 
     def setVisible(self, visible):
         # Every show - show(), showNormal(), the sign-out resurfacing - comes
         # through here; while veiled it shows at zero opacity, so the page can
         # load and draw (a hidden window would not) without being seen.
+        if self._building:
+            # Signed out, the classic code shows the window from inside
+            # MainWindow.__init__ - before the page exists. A window shown then
+            # is a plain one, and Windows drew it SOLID at its classic size for
+            # ~180ms whatever opacity Qt was given (layered, but no alpha set;
+            # measured from outside the process, 15 Oct). So the request is
+            # held and carried out once the page is in place (see __init__).
+            self._show_after_build = visible
+            return
         if visible and self._veiled:
             self.setWindowOpacity(0.0)
         super().setVisible(visible)

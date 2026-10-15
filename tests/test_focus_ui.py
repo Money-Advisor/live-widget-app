@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from PyQt6.QtCore import QObject
 from PyQt6.QtWidgets import QApplication, QWidget
 
 import main
@@ -539,3 +540,75 @@ def test_the_page_files_exist_where_the_widget_looks(app):
     for name in ("index.html", "app.js", "app.css", "model.js", "logo.png",
                  "fonts/PlusJakartaSans-latin.woff2", "fonts/JetBrainsMono-latin.woff2"):
         assert (Path(focus_ui.focus_dir()) / name).exists(), name
+
+
+class _Shows(QObject):
+    """An event filter recording Show events."""
+
+    def __init__(self, keep):
+        super().__init__()
+        self.keep, self.seen = keep, []
+
+    def eventFilter(self, obj, ev):
+        from PyQt6.QtCore import QEvent
+        if ev.type() == QEvent.Type.Show and self.keep(obj):
+            # (Qt sends Show just BEFORE the native window appears, so ask
+            # whether it is allowed on screen rather than whether it is yet.)
+            from PyQt6.QtCore import Qt
+            self.seen.append((obj, obj.isWindow(),
+                              not obj.testAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen),
+                              getattr(obj, "_focus", "n/a")))
+        return False
+
+
+def _watch_shows(app, keep):
+    f = _Shows(keep)
+    app.installEventFilter(f)
+    return f
+
+
+def test_the_classic_checklist_panel_never_appears_as_a_window_of_its_own(app):
+    """Its constructor shows it before it has a parent: a 356x317 window on the
+    desktop for ~20ms - the square on every double-click (15 Oct)."""
+    f = _watch_shows(app, lambda o: isinstance(o, main.ComplianceAlertPanel))
+    try:
+        win = focus_ui.FocusWindow(view_factory=lambda: FakeView(), start=False)
+        app.processEvents()
+    finally:
+        app.removeEventFilter(f)
+    assert f.seen, "the panel was never shown at all - the test saw nothing"
+    on_screen_alone = [s for s in f.seen if s[1] and s[2]]
+    assert not on_screen_alone
+    from PyQt6.QtCore import Qt
+    panel = win._compliance_panel
+    assert not panel.testAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)   # dropped once parented
+    assert panel.parentWidget() is not None
+
+
+def test_only_the_focus_window_gets_the_quiet_panel(app):
+    focus_ui.FocusWindow(view_factory=lambda: FakeView(), start=False)
+    assert main.ComplianceAlertPanel is not focus_ui._QuietComplianceAlertPanel
+    classic = main.MainWindow()
+    assert type(classic._compliance_panel) is main.ComplianceAlertPanel
+
+
+def test_the_checklist_panel_ends_in_the_same_state_as_classic(app):
+    focus = focus_ui.FocusWindow(view_factory=lambda: FakeView(), start=False)
+    classic = main.MainWindow()
+    app.processEvents()
+    a, b = focus._compliance_panel, classic._compliance_panel
+    assert (a.isHidden(), a.size(), a._ready.isHidden()) == (b.isHidden(), b.size(), b._ready.isHidden())
+
+
+def test_a_show_asked_for_while_building_waits_until_the_page_is_there(app):
+    """Signed out, the classic code shows the window inside MainWindow.__init__,
+    before the page exists - and Windows drew that window solid (15 Oct)."""
+    f = _watch_shows(app, lambda o: isinstance(o, focus_ui.FocusWindow))
+    try:
+        win = focus_ui.FocusWindow(view_factory=lambda: FakeView(), start=True)
+        app.processEvents()
+    finally:
+        app.removeEventFilter(f)
+    assert not win._token                       # signed out: the classic code asked for the show
+    assert win.isVisible()                      # ... and it still happened
+    assert f.seen and all(s[3] is not None for s in f.seen)   # but only once Focus existed

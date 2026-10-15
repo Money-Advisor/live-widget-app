@@ -348,6 +348,9 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 
 .toast{position:absolute;left:14px;right:14px;bottom:108px;z-index:5;background:var(--night);color:#FFFFFF;border-radius:14px;padding:12px 14px;display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;box-shadow:0 14px 34px rgba(20,18,42,.3);animation:rise .3s var(--ease)}
 
+.tip{position:fixed;left:0;top:0;z-index:20;max-width:240px;padding:6px 10px;border-radius:8px;background:var(--night);color:#FFFFFF;font-size:12px;font-weight:600;line-height:1.35;box-shadow:0 6px 18px rgba(20,18,42,.24);pointer-events:none;opacity:0;transform:translateY(-2px);transition:opacity .12s,transform .12s;overflow-wrap:anywhere}
+.tip.show{opacity:1;transform:none}
+
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 @keyframes fade{from{opacity:0}to{opacity:1}}

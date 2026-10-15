@@ -200,7 +200,7 @@
   function stageBar() {
     var s = M.stageInfo(call);
     if (!s.total) return '';
-    return '<div class="prog"><b title="' + esc(s.label) + '">' + esc(s.label) + '</b><div class="segs" aria-hidden="true" style="grid-template-columns:repeat(' + s.total + ',minmax(0,1fr))">' +
+    return '<div class="prog"><b data-tip="' + esc(s.label) + '">' + esc(s.label) + '</b><div class="segs" aria-hidden="true" style="grid-template-columns:repeat(' + s.total + ',minmax(0,1fr))">' +
       s.segments.map(function (x) { return '<i class="' + x + '"></i>'; }).join('') + '</div>' +
       '<span class="of">' + (s.index + 1) + ' of ' + s.total + '</span></div>';
   }
@@ -215,9 +215,9 @@
     var fold = host.dock === 'left' ? I.foldL : I.foldR;
     return '<div class="hd' + (p ? ' paused' : '') + '" data-drag><div class="hd-top"><div class="hd-id"><div class="l1"><span class="rec' + (p ? ' pa' : '') + '"></span><span class="tm" data-t></span></div>' + sub + '</div>' +
       (p ? '<button class="ib resume" data-act="pause" aria-label="Resume recording">' + I.play + '</button>'
-         : '<button class="ib pause" data-act="pause" aria-label="Pause for card payment" title="Pause for card payment">' + I.pause + '</button>') +
-      '<button class="ib stop" data-act="stop" aria-label="Stop recording" title="Stop recording">' + I.stop + '</button>' +
-      '<button class="ib ghost" data-act="collapse" aria-label="Fold to the strip" title="Fold to the strip">' + fold + '</button></div>' +
+         : '<button class="ib pause" data-act="pause" aria-label="Pause for card payment" data-tip="Pause for card payment">' + I.pause + '</button>') +
+      '<button class="ib stop" data-act="stop" aria-label="Stop recording" data-tip="Stop recording">' + I.stop + '</button>' +
+      '<button class="ib ghost" data-act="collapse" aria-label="Fold to the strip" data-tip="Fold to the strip">' + fold + '</button></div>' +
       (host.livePipeline ? stageBar() : '') + '</div>';
   }
 
@@ -378,7 +378,7 @@
     var fresh = ie && call.ieVersion > ui.ieSeen && ui.sheet !== 'ie' && !ui.pinIE;
     return '<div class="dock">' +
       '<button class="dk" data-act="sheet" data-v="list" aria-label="Open the checklist"><span class="ringm" style="background:conic-gradient(var(--brand) 0 ' + pct + '%,#E3DFF3 ' + pct + '% 100%)"><i></i></span><span class="dt"><span>Checklist</span><span>' + (c.total ? done + ' of ' + total : (total ? total + ' to do' : '\u2014')) + '</span></span>' +
-      (c.earlierCount ? '<span class="early" title="' + c.earlierCount + ' still to do from earlier stages">+' + c.earlierCount + '</span>' : '') + '</button>' +
+      (c.earlierCount ? '<span class="early" data-tip="' + c.earlierCount + ' still to do from earlier stages">+' + c.earlierCount + '</span>' : '') + '</button>' +
       '<button class="dk" data-act="sheet" data-v="ie" aria-label="Open the income and expenditure"><span class="tile" style="background:#E9F7EF;color:var(--grnInk)">' + I.coins + '</span><span class="dt"><span>I&amp;E \u00b7 DI</span><span class="' + (diOk ? 'mono' : '') + '" style="font-size:14px;' + (diOk ? '' : 'color:var(--amb)') + '">' + esc(di) + '</span></span>' + (fresh ? '<span class="new" aria-label="New figures"></span>' : '') + '</button></div>';
   }
 
@@ -513,7 +513,7 @@
       if (it) nb = '<div class="newbar" role="alert" data-anim="newbar-' + esc(it.key) + '"><span class="qdot" style="background:var(--red)"></span><span class="t">New: ' + esc(it.label || 'card') + '</span><button data-act="closeSheet">View</button></div>';
     }
     return '<div class="scrim" data-anim="scrim-live" data-act="closeSheet"></div><div class="sheet" data-anim="sheet-' + ui.sheet + '" role="dialog" aria-label="' + esc(titles[ui.sheet]) + '"><div class="grab"></div><div class="sh-h"><h3>' + esc(titles[ui.sheet]) + '</h3>' +
-      (ui.sheet === 'ie' && call.ie && call.ie.visible ? '<button class="pinbtn" data-act="pin" title="Keep the I&amp;E open beside the panel">' + I.pin + 'Pin</button>' : '') +
+      (ui.sheet === 'ie' && call.ie && call.ie.visible ? '<button class="pinbtn" data-act="pin" data-tip="Keep the I&amp;E open beside the panel">' + I.pin + 'Pin</button>' : '') +
       '<button class="sh-x" data-act="closeSheet" aria-label="Close">' + I.x + '</button></div>' + nb +
       '<div class="sh-b" data-scroll="sheet">' + body + '</div></div>';
   }
@@ -574,8 +574,8 @@
   function idleHeader() {
     var u = host.user || {};
     return '<div class="hd row" data-drag><img class="logo" src="' + ASSET + 'logo.png" alt=""><div class="hd-id"><span class="name">' + esc(host.company || 'Spark Flow') + '</span><span class="sub">' + esc([u.name || u.email || '', u.dept || ''].filter(Boolean).join(' \u00b7 ')) + '</span></div>' +
-      '<button class="ib ghost" data-act="settings" aria-label="Settings" title="Settings">' + I.gear + '</button>' +
-      '<button class="ib ghost" data-act="hide" aria-label="Hide to the tray" title="Hide to the tray">' + I.minus + '</button></div>';
+      '<button class="ib ghost" data-act="settings" aria-label="Settings" data-tip="Settings">' + I.gear + '</button>' +
+      '<button class="ib ghost" data-act="hide" aria-label="Hide to the tray" data-tip="Hide to the tray">' + I.minus + '</button></div>';
   }
 
   function idleBody() {
@@ -629,7 +629,7 @@
       var current = list[cur] != null ? list[cur] : (list.length ? list[0] : empty);
       var h = '<div class="fld"><span class="lbl" id="dd-' + name + '-l">' + label + '</span>' +
         '<div class="dd' + (open ? ' open' : '') + (ui.ddShut === name ? ' shut' : '') + '" data-anim="ddw-' + name + (open ? '-o' : '-c') + '"><button class="dd-btn" data-act="dd" data-v="' + name + '" aria-haspopup="listbox" aria-expanded="' + open + '" aria-labelledby="dd-' + name + '-l"' + (list.length ? '' : ' disabled') + '>' +
-        '<span class="v" title="' + esc(current) + '">' + esc(current) + '</span><span class="chev">' + I.down + '</span></button>';
+        '<span class="v" data-tip="' + esc(current) + '">' + esc(current) + '</span><span class="chev">' + I.down + '</span></button>';
       if (open) {
         h += '<div class="dd-list" data-anim="dd-' + name + '" role="listbox" aria-labelledby="dd-' + name + '-l">' + list.map(function (n, i) {
           return '<button class="dd-opt' + (i === cur ? ' on' : '') + '" role="option" aria-selected="' + (i === cur) + '" data-act="ddPick" data-v="' + name + '" data-k="' + i + '">' +
@@ -772,7 +772,7 @@
     queued = true;
     // A timer, not requestAnimationFrame: rAF does not run in a hidden or
     // minimised window, and the panel must be current the instant it is shown.
-    setTimeout(function () { queued = false; render(); }, 16);
+    setTimeout(function () { queued = false; render(); tipCheck(); }, 16);
   }
 
   /* ---------- events ---------- */
@@ -863,6 +863,43 @@
     if (ev.target.closest('button,input,select,a,[data-act]')) return;
     if (ev.target.closest('[data-drag]')) { send('move'); }
   });
+
+  /* ---------- hover hints ---------- */
+  // Drawn here, not with the browser's title="" hint: inside this window Qt
+  // drew that one as a black box with black text - an empty black label under
+  // the gear (Faseeh, 15 Oct). One element, outside #app so a redraw never
+  // wipes it; shown after a pause, kept inside the panel, gone on any click,
+  // key, scroll or redraw that removes what it points at.
+  var tip = { el: null, on: null, timer: 0 };
+  function tipHide() {
+    clearTimeout(tip.timer); tip.timer = 0; tip.on = null;
+    if (tip.el) tip.el.classList.remove('show');
+  }
+  function tipShow(target) {
+    if (!target.isConnected || !target.matches(':hover')) return;
+    if (!tip.el) { tip.el = document.createElement('div'); tip.el.className = 'tip'; tip.el.setAttribute('role', 'tooltip'); document.body.appendChild(tip.el); }
+    tip.el.textContent = target.getAttribute('data-tip');
+    var r = target.getBoundingClientRect(), w = tip.el.offsetWidth, h = tip.el.offsetHeight;
+    var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+    var x = Math.round(Math.max(8, Math.min(vw - w - 8, r.left + r.width / 2 - w / 2)));
+    var y = r.bottom + 8 + h <= vh - 8 ? r.bottom + 8 : r.top - 8 - h;
+    tip.el.style.left = x + 'px'; tip.el.style.top = Math.round(Math.max(8, y)) + 'px';
+    tip.el.classList.add('show');
+  }
+  function tipCheck() {
+    if (tip.on && !tip.on.isConnected) tipHide();
+  }
+  document.addEventListener('mouseover', function (ev) {
+    var t = ev.target.closest && ev.target.closest('[data-tip]');
+    if (t === tip.on) return;
+    tipHide();
+    if (!t || !t.getAttribute('data-tip')) return;
+    tip.on = t;
+    tip.timer = setTimeout(function () { tip.timer = 0; if (tip.on === t) tipShow(t); }, 450);
+  });
+  document.addEventListener('mouseleave', tipHide);
+  ['mousedown', 'keydown', 'wheel'].forEach(function (e) { document.addEventListener(e, tipHide, true); });
+  document.addEventListener('scroll', tipHide, true);
 
   /* ---------- clock ---------- */
   setInterval(function () {

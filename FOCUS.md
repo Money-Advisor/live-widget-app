@@ -46,6 +46,16 @@ installer/installer_focus.iss   the Focus installer (installer.iss untouched)
   that is `SparkFlow.exe`. The classic screen appears here only as the
   automatic fallback above.
 * Same single-instance lock as classic: the two can never run together.
+* **Nothing flashes on opening** (15 Oct). The window stays fully transparent
+  until the page has drawn, then appears already docked. Two classic startup
+  shows are kept from the screen: the checklist panel's constructor shows it
+  before it has a parent (a small window of its own for ~20 ms) - Focus builds
+  it as `_QuietComplianceAlertPanel` for its own window only; and signed out,
+  the classic code shows the window inside `MainWindow.__init__`, before the
+  page exists, where Windows drew it solid - Focus holds that show until the
+  page is in place.
+* **Hover hints are the page's own** (`data-tip`, never `title=""`): inside the
+  widget Qt draws a browser hint as a black box with black text.
 
 ## Run it
 
@@ -80,11 +90,13 @@ opening Spark Flow Focus — it says so if you forget. Build output goes to
 | What | Result |
 | --- | --- |
 | `node --test focus/tests/*.test.cjs` — the rules | 22 pass; **10/10** deliberate rule breaks go red |
-| `pytest tests/test_focus_ui.py` — the wiring | 44 pass; **10/10** deliberate breaks go red |
-| `focus_dev/check_harness.py` — every screen rendered in Edge | **42/42**; 4/4 drawing breaks go red |
+| `pytest tests/test_focus_ui.py` — the wiring | 54 pass; deliberate breaks go red (incl. 6/6 startup rules) |
+| `focus_dev/check_harness.py` — every screen rendered in Edge | **43/43**; drawing breaks go red; a browser `title` hint anywhere fails it |
 | `build_focus.py --installer --check` — the installer | installs, installed exe self-test **OK**, uninstalls clean, normal widget untouched |
-| `focus_dev/qt_e2e.py` — real widget + real WebEngine | **29/29** (load, bridge, buttons → classic methods, dropdown keeps the sheet still, widths 360/720/64/416, slide-out, safety, no layout switch, summary, reload replay) |
+| `focus_dev/qt_e2e.py` — real widget + real WebEngine | **32/32** (hover hint, load, bridge, buttons → classic methods, dropdown keeps the sheet still, widths 360/720/64/416, slide-out, safety, no layout switch, summary, reload replay) |
 | `build_focus.py --check` — the packaged exe | builds; self-test **OK** (page loads from the package, bridge connects) |
+| `focus_dev/startup_windows.py` — what Windows shows on opening, watched from outside | signed in, signed out and the built exe: **one window, first seen already docked**; FAILs with either startup fix removed |
+| `focus_dev/startup_blinks.py` — the same from inside Qt | 0 visible blinks, 0 early frames |
 | `main.py` / `build_all.py` / conftest | unchanged (git diff) |
 
 Screens to look at: `python focus_dev/shoot_harness.py <dir>` (all 40 at real size).

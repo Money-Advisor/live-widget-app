@@ -158,6 +158,36 @@ check("the page shows Ready between calls",
       wait_for(lambda: (js(win, "document.body.innerText") or "").find("Ready for your next call") >= 0, 3000))
 shot(win, "02-idle")
 
+# --- hover hints are the page's own, never Qt's black box (15 Oct) ---
+from PyQt6.QtCore import QPointF  # noqa: E402
+from PyQt6.QtGui import QMouseEvent  # noqa: E402
+
+
+def hover(x, y):
+    """A mouse move delivered to the page - the real cursor is not touched."""
+    target = win._focus.view.focusProxy() or win._focus.view
+    pos = QPointF(x, y)
+    ev = QMouseEvent(QEvent.Type.MouseMove, pos, target.mapToGlobal(pos), Qt.MouseButton.NoButton,
+                     Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier)
+    QApplication.sendEvent(target, ev)
+
+
+def qt_tips():
+    return [w for w in QApplication.topLevelWidgets()
+            if w.isVisible() and w.metaObject().className() == "QTipLabel"]
+
+
+box = js(win, "var r=document.querySelector('[data-act=settings]').getBoundingClientRect();[r.left+r.width/2,r.top+r.height/2]")
+for dx in (0, 1, 2, 3):                 # as a real mouse arrives: a few small moves
+    hover(box[0] + dx, box[1])
+    pump(80)
+check("hovering the gear shows the page's own hint",
+      wait_for(lambda: js(win, "(function(){var t=document.querySelector('.tip.show');return t?t.textContent:null})()") == "Settings", 3000))
+check("and no Qt hint window (the black box) appears", not qt_tips(), str(qt_tips()))
+shot(win, "02b-hint")
+hover(20, 400)
+check("moving away hides the hint", wait_for(lambda: js(win, "!document.querySelector('.tip.show')") is True, 2000))
+
 # --- Settings: the dropdown opens without redrawing the sheet ---
 win._mic_devices = [{"name": "Microphone Array (Intel® Smart Sound Technology for Digital Microphones)"},
                     {"name": "Headset Microphone (Jabra Evolve2 30)"}]
