@@ -165,6 +165,11 @@
   S['summary-all'] = { size: [360, 900], steps: S['summary-score'].steps, clicks: ['[data-act="sumAll"]'] };
   S['summary-saved'] = { size: [360, 900], steps: [st({ phase: 'summary' }), { kind: 'summary', data: { mode: 'saved_only', duration: 312, saved: true } }] };
   S['summary-saving'] = { size: [360, 900], steps: [st({ phase: 'summary' }), { kind: 'summary', data: { mode: 'score', duration: 1456, score: 0.64, saved: false, covered: [{ label: 'a', section: 'x' }], missed: [{ label: 'Fees explained', section: 'Fees' }] } }] };
+  // A manager marks the front card a false positive on the live dashboard: the
+  // server's next state simply no longer carries it.
+  S['false-positive'] = { size: [360, 900], steps: [live({ elapsed: 790 }), stage({ trigger_actions: [CARD_AFFORD] }),
+      stage({ trigger_actions: [CARD_AFFORD, CARD_CTAX] })],
+      later: [stage({ trigger_actions: [CARD_AFFORD] })], laterDelay: 2300 };
   S['dock-left'] = { size: [360, 900], steps: [live({ dock: 'left' }), stage({ trigger_actions: [CARD_AFFORD] })] };
 
   root.FocusScenarios = S;

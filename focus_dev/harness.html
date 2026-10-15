@@ -42,8 +42,12 @@
         if (el) el.click(); else window.__log.push(['MISSING', sc.clicks[i - 1]]);
         setTimeout(next, 120);
       } else {
-        (sc.later || []).forEach(function (s) { fn(JSON.stringify(s)); });
-        setTimeout(function () { document.title = 'ready:' + name; }, 200);
+        // `laterDelay` holds the later messages back, so something brief they
+        // cause (a 1.6s flash) is still on screen when the page is read at 3s.
+        setTimeout(function () {
+          (sc.later || []).forEach(function (s) { fn(JSON.stringify(s)); });
+          setTimeout(function () { document.title = 'ready:' + name; }, 200);
+        }, sc.laterDelay || 0);
       }
     }());
   }, 150);

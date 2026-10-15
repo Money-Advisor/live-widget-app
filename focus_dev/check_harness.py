@@ -69,6 +69,9 @@ EXPECT = {
     "summary-all": (["Show the top three", "Call closed properly", "Missed \u00b7 9"], []),
     "summary-saved": (["Call saved", "Recording saved"], ["%</div>"]),
     "summary-saving": (["Saving the recording", "64%"], ["Recording saved"]),
+    # The card a manager dismissed is gone, and the advisor is NOT told they put it right.
+    "false-positive": (["Affordability steering", "1 thing to put right"],
+                       ["Council tax: two amounts", "Put right<", "Moving to the next thing"]),
     "dock-left": (['class="dock-left"'], []),
 }
 

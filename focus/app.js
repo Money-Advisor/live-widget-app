@@ -139,14 +139,15 @@
   }
 
   function applyServer(msg) {
-    var before = call.actions.map(M.cardKey);
     var crisisBefore = !!call.crisis;
     var r = M.applyMessage(call, msg, Date.now(), host.elapsed || 0);
     if (!r.changed) return;
-    var after = call.actions.map(M.cardKey);
-    var gone = before.filter(function (k) { return after.indexOf(k) < 0 && !call.expired[k]; });
     var now = Date.now();
-    if (gone.length && !r.newCard) { ui.flash = 'Put right'; ui.flashUntil = now + 1600; }
+    // No "Put right" flash when a card leaves. The server takes a card off for
+    // more than one reason - the advisor repaired it, OR a manager marked it a
+    // false positive on the live dashboard (15 Oct) - and the message does not
+    // say which. Telling the advisor they put right a breach that was never one
+    // would be untrue, so a card simply goes, as on the classic screen.
     if (crisisBefore && !call.crisis) { ui.flash = 'Support signposted'; ui.flashUntil = now + 1600; }
     if (r.newCard) {
       var top = M.attention(call)[0];
