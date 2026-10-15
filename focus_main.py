@@ -111,9 +111,18 @@ def selftest(result_path):
             if box.get("r") is True:
                 drawn["login"] = True
                 break
-    ok = bool(win._focus.ready and drawn.get("login") and win.focus_active())
+    # Once drawn the window must have become visible (it is held transparent
+    # until then so no empty frame is ever seen).
+    for _ in range(20):
+        if win.windowOpacity() == 1.0:
+            break
+        loop = QEventLoop()
+        QTimer.singleShot(100, loop.quit)
+        loop.exec()
+    shown = win.windowOpacity() == 1.0 and not win._veiled
+    ok = bool(win._focus.ready and drawn.get("login") and win.focus_active() and shown)
     lines += [f"ready={win._focus.ready}", f"failed={win._focus.failed}",
-              f"sign_in_drawn={drawn.get('login')}", f"width={win.width()}",
+              f"sign_in_drawn={drawn.get('login')}", f"shown_after_drawn={shown}", f"width={win.width()}",
               f"waited_ms={waited}", "RESULT=" + ("OK" if ok else "FAIL")]
     with open(result_path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")

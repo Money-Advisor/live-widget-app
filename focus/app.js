@@ -734,7 +734,16 @@
       setRegion('pin', pinHtml());
     }
     dynamic();
+    // Tell the widget once the first real screen is in the page, so it can
+    // show the window then - already docked - instead of an empty frame.
+    // A timer, not requestAnimationFrame: rAF does not run while the window is
+    // minimised to the tray, and then the window would never be shown.
+    if (!drawnSent && ph !== 'boot') {
+      drawnSent = true;
+      setTimeout(function () { send('drawn'); }, 50);
+    }
   }
+  var drawnSent = false;
 
   /* Text that changes every second, updated in place - never by rebuilding. */
   function dynamic() {

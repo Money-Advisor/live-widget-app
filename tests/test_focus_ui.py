@@ -482,6 +482,59 @@ def test_signing_in_does_not_blink_the_window(app):
     assert win.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
 
 
+def _veiled_window(app):
+    """A window as a real start has it: shown, page not drawn yet."""
+    win = make(app, start=False)
+    win._veiled = True
+    win.setVisible(False)
+    win._focus._waits_for_drawn = True
+    win._focus.start()
+    win.show()
+    app.processEvents()
+    return win
+
+
+def test_the_window_is_invisible_until_the_page_has_drawn(app):
+    """Opening the widget flashed an empty square: the window at the classic
+    default size and place before the page had drawn (15 Oct)."""
+    win = _veiled_window(app)
+    assert win.isVisible() and win.windowOpacity() == 0.0
+    win._focus.on_action("drawn", "{}")
+    assert win.windowOpacity() == 1.0
+    avail = win.screen().availableGeometry()
+    g = win.geometry()
+    assert (g.width(), g.height()) == (360, avail.height())
+
+
+def test_drawn_twice_changes_nothing(app):
+    win = _veiled_window(app)
+    win._focus.on_action("drawn", "{}")
+    win.setWindowOpacity(1.0)
+    win._focus.on_action("drawn", "{}")
+    assert win.windowOpacity() == 1.0 and not win._veiled
+
+
+def test_a_failed_page_never_leaves_the_window_invisible(app):
+    win = _veiled_window(app)
+    win._focus._fail("test")
+    assert win.windowOpacity() == 1.0 and not win._stack.isHidden()
+
+
+def test_the_window_is_shown_even_if_the_page_never_answers(app):
+    win = _veiled_window(app)
+    win._veil_guard.timeout.emit()
+    assert win.windowOpacity() == 1.0
+
+
+def test_the_veil_guard_is_no_longer_than_the_fallback_needs(app):
+    win = make(app)
+    win._veiled = True
+    win._veil_guard.start(focus_ui.READY_TIMEOUT_MS + 2000)
+    assert win._veil_guard.interval() <= focus_ui.READY_TIMEOUT_MS + 2000
+    win._unveil()
+    assert not win._veil_guard.isActive()
+
+
 def test_the_page_files_exist_where_the_widget_looks(app):
     for name in ("index.html", "app.js", "app.css", "model.js", "logo.png",
                  "fonts/PlusJakartaSans-latin.woff2", "fonts/JetBrainsMono-latin.woff2"):

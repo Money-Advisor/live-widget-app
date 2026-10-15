@@ -119,6 +119,9 @@ class FocusController:
         self.view = None
         self.bridge = FocusBridge(self)
         self._view_factory = view_factory or self._make_web_view
+        # Only a real page says "drawn" (FocusWindow._unveil); a stand-in view
+        # (the tests) has nothing to wait for.
+        self._waits_for_drawn = view_factory is None
 
         # The page can be told nothing before it says it is ready; anything
         # sent earlier would be lost, so the first push is a full replay.
@@ -181,6 +184,8 @@ class FocusController:
             self._ready_timer.start(READY_TIMEOUT_MS)
             self._poll.start()
             self.activate()
+            if not self._waits_for_drawn:
+                self.win._unveil()
             return True
         except Exception as exc:  # noqa: BLE001
             self._fail(f"could not start ({type(exc).__name__}: {exc})")
@@ -198,6 +203,10 @@ class FocusController:
         self.failed = why
         print(f"[focus] falling back to the classic layout: {why}")
         self.deactivate()
+        # Whatever else happens, the window must not stay invisible.
+        unveil = getattr(self.win, "_unveil", None)
+        if callable(unveil):
+            unveil()
         tray = getattr(self.win, "_tray", None)
         if tray is not None:
             tray.showMessage("Spark Flow", "The new layout could not start, so the classic "
@@ -544,6 +553,11 @@ class FocusController:
             if self.active:
                 self.place()
             return
+        if action == "drawn":
+            # The page has painted its first real screen: show the window now,
+            # already at its edge, so the first frame anyone sees is the panel.
+            win._unveil()
+            return
         if action == "move":
             handle = win.windowHandle()
             if handle is not None:
@@ -633,6 +647,12 @@ class FocusWindow(main.MainWindow):
     """
 
     _focus = None    # class default: the overrides below run during MainWindow.__init__
+    # Veiled (fully transparent) from the window's first show until the page has
+    # drawn. Without it, opening the widget flashed an empty square for a split
+    # second - the window at the classic default size and place, before the
+    # page loaded and docked it (Faseeh, 15 Oct). A class default because the
+    # classic sign-out code can show the window from INSIDE MainWindow.__init__.
+    _veiled = True
 
     def __init__(self, view_factory=None, start=True):
         # Focus ONLY. Faseeh, 15 Oct: two exes are two widgets - SparkFlow.exe
@@ -644,8 +664,37 @@ class FocusWindow(main.MainWindow):
         # `start=False` exists for the tests only.
         super().__init__()
         self._focus = FocusController(self, view_factory=view_factory)
+        # Belt and braces: whatever happens to the page, the window is never
+        # left invisible past the ready timeout (plus a margin for the fallback).
+        self._veil_guard = QTimer(self)
+        self._veil_guard.setSingleShot(True)
+        self._veil_guard.timeout.connect(self._unveil)
         if start:
+            self._veil_guard.start(READY_TIMEOUT_MS + 2000)
             self._focus.start()
+        else:
+            self._unveil()
+
+    def setVisible(self, visible):
+        # Every show - show(), showNormal(), the sign-out resurfacing - comes
+        # through here; while veiled it shows at zero opacity, so the page can
+        # load and draw (a hidden window would not) without being seen.
+        if visible and self._veiled:
+            self.setWindowOpacity(0.0)
+        super().setVisible(visible)
+
+    def _unveil(self):
+        """Show what has been drawn: dock it, then make it visible. Once only."""
+        if not self._veiled:
+            return
+        self._veiled = False
+        guard = getattr(self, "_veil_guard", None)
+        if guard is not None:
+            guard.stop()
+        if self.focus_active():
+            self._focus.place()
+        self.setWindowOpacity(1.0)
+        print("[focus] first frame drawn - window shown")
 
     def focus_active(self):
         return self._focus is not None and self._focus.active
