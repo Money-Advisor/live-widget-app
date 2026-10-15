@@ -35,6 +35,7 @@
     x: svg('<path d="M6 6l12 12M18 6 6 18"/>', 18, 2.4),
     xr: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#B3170B" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
     tick: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg>',
+    tickB: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5B3DF5" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg>',
     tickG: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#13803D" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg>',
     bigTick: '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg>',
     bang: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M12 6v8M12 18h.01"/></svg>',
@@ -76,6 +77,8 @@
   };
   function ieIcon(name) { return svg(IE_ICON[name] || IE_ICON.box, 16, 1.8); }
 
+  // Where the page's own images are; the dev harness lives in another folder.
+  var ASSET = window.FOCUS_ASSETS || '';
   var EQ = '<span class="eq"><i></i><i></i><i></i><i></i></span>';
   function esc(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -544,7 +547,7 @@
     var out = host.signedOut;
     var h = '';
     if (out) h += '<div class="out" role="alert"><span class="cap" style="color:#FFD9D4">Signed out</span><span class="big">Calls are NOT being recorded</span><span class="sm">Sign in to start recording again. This window stays on screen until you do.</span></div>';
-    h += '<div class="hero" data-drag' + (out ? ' style="padding:22px 28px"' : '') + '><div class="bigLogo">' + I.boltBig + '</div><h2>Spark Flow</h2><p>Sign in to record and coach your calls</p></div>';
+    h += '<div class="hero" data-drag' + (out ? ' style="padding:22px 28px"' : '') + '><img class="bigLogo" src="' + ASSET + 'logo.png" alt="Spark Flow"><h2>Spark Flow</h2><p>Sign in to record and coach your calls</p></div>';
     h += '<div class="pad">';
     if (L.error) h += '<div class="msg red" role="alert">' + I.alertR + '<span>' + esc(L.error) + '</span></div>';
     if (L.info) h += '<div class="msg green" role="status">' + I.tickG + '<span>' + esc(L.info) + '</span></div>';
@@ -559,7 +562,7 @@
 
   function idleHeader() {
     var u = host.user || {};
-    return '<div class="hd row" data-drag><div class="logo">' + I.bolt + '</div><div class="hd-id"><span class="name">' + esc(host.company || 'Spark Flow') + '</span><span class="sub">' + esc([u.name || u.email || '', u.dept || ''].filter(Boolean).join(' \u00b7 ')) + '</span></div>' +
+    return '<div class="hd row" data-drag><img class="logo" src="' + ASSET + 'logo.png" alt=""><div class="hd-id"><span class="name">' + esc(host.company || 'Spark Flow') + '</span><span class="sub">' + esc([u.name || u.email || '', u.dept || ''].filter(Boolean).join(' \u00b7 ')) + '</span></div>' +
       '<button class="ib ghost" data-act="settings" aria-label="Settings" title="Settings">' + I.gear + '</button>' +
       '<button class="ib ghost" data-act="hide" aria-label="Hide to the tray" title="Hide to the tray">' + I.minus + '</button></div>';
   }
@@ -605,11 +608,29 @@
     }
     if (!ui.settings) return '';
     var mi = host.micIndex, si = host.spkIndex;
-    function opts(list, cur) { return (list || []).map(function (n, i) { return '<option value="' + i + '"' + (i === cur ? ' selected' : '') + '>' + esc(n) + '</option>'; }).join(''); }
+    // Our own dropdown, not a <select>. Windows draws a native select's list as
+    // a separate popup: outside the panel, in another font, cut-off device
+    // names on one line (Faseeh, 15 Oct). This one opens inside the panel,
+    // wraps long names, ticks the current device and closes on Esc or a click away.
+    function dropdown(name, label, list, cur, empty) {
+      list = list || [];
+      var open = ui.dd === name;
+      var current = list[cur] != null ? list[cur] : (list.length ? list[0] : empty);
+      var h = '<div class="fld"><span class="lbl" id="dd-' + name + '-l">' + label + '</span>' +
+        '<div class="dd' + (open ? ' open' : '') + '"><button class="dd-btn" data-act="dd" data-v="' + name + '" aria-haspopup="listbox" aria-expanded="' + open + '" aria-labelledby="dd-' + name + '-l"' + (list.length ? '' : ' disabled') + '>' +
+        '<span class="v" title="' + esc(current) + '">' + esc(current) + '</span><span class="chev">' + I.down + '</span></button>';
+      if (open) {
+        h += '<div class="dd-list" role="listbox" aria-labelledby="dd-' + name + '-l">' + list.map(function (n, i) {
+          return '<button class="dd-opt' + (i === cur ? ' on' : '') + '" role="option" aria-selected="' + (i === cur) + '" data-act="ddPick" data-v="' + name + '" data-k="' + i + '">' +
+            '<span class="tk">' + (i === cur ? I.tickB : '') + '</span><span class="t">' + esc(n) + '</span></button>';
+        }).join('') + '</div>';
+      }
+      return h + '</div></div>';
+    }
     return '<div class="scrim" data-act="settings"></div><div class="sheet" role="dialog" aria-label="Settings"><div class="grab"></div><div class="sh-h"><h3>Settings</h3><button class="sh-x" data-act="settings" aria-label="Close">' + I.x + '</button></div>' +
       '<div class="sh-b" data-scroll="settings"><span class="cap" style="color:var(--mute)">Audio</span>' +
-      '<div class="fld"><label for="s-mic">Your voice</label><select class="sel" id="s-mic" data-change="mic">' + (opts(host.mics, mi) || '<option>No microphone found</option>') + '</select></div>' +
-      '<div class="fld"><label for="s-spk">Customer voice</label><select class="sel" id="s-spk" data-change="spk">' + (opts(host.spks, si) || '<option>No speaker found</option>') + '</select></div>' +
+      dropdown('mic', 'Your voice', host.mics, mi, 'No microphone found') +
+      dropdown('spk', 'Customer voice', host.spks, si, 'No speaker found') +
       '<button class="linkb" style="align-self:flex-start;display:flex;align-items:center;gap:6px" data-act="rescan">' + I.refresh + 'Rescan devices</button>' +
       '<div class="hr"></div><span class="cap" style="color:var(--mute)">Servers</span>' +
       '<div class="fld"><label for="s-api">API base URL</label><div class="inp"><input id="s-api" value="' + esc(host.apiBase || '') + '"></div></div>' +
@@ -775,12 +796,23 @@
       case 'parts': ui.parts[k] = !ui.parts[k]; break;
       case 'newcall': summary = null; send('newcall'); break;
       case 'sumAll': ui.summaryAll = !ui.summaryAll; break;
+      case 'dd': ui.dd = ui.dd === v ? null : v; break;
+      case 'ddPick': {
+        var i = Number(k);
+        // Shown at once; the widget confirms it on its next state.
+        if (v === 'mic') host.micIndex = i; else host.spkIndex = i;
+        ui.dd = null;
+        send(v, { index: i });
+        break;
+      }
       default: return;
     }
     schedule();
   }
 
   document.addEventListener('click', function (ev) {
+    // A click anywhere outside an open dropdown closes it.
+    if (ui.dd && !ev.target.closest('.dd')) { ui.dd = null; schedule(); }
     var b = ev.target.closest('[data-act]');
     if (!b || b.disabled) return;
     act(b.getAttribute('data-act'), b.getAttribute('data-v'), b.getAttribute('data-k'));
@@ -792,7 +824,8 @@
   });
   document.addEventListener('keydown', function (ev) {
     if (ev.key === 'Escape') {
-      if (ui.sheet) { ui.sheet = null; schedule(); } else if (ui.settings) { ui.settings = false; schedule(); }
+      if (ui.dd) { ui.dd = null; schedule(); }
+      else if (ui.sheet) { ui.sheet = null; schedule(); } else if (ui.settings) { ui.settings = false; schedule(); }
     } else if (ev.key === 'Enter') {
       var id = ev.target && ev.target.id;
       if (id === 'f-pw' || id === 'f-email') act('login');

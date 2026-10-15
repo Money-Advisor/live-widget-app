@@ -56,7 +56,8 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .ib:hover{filter:brightness(1.15)}
 .ib.pause{background:#3B2F12;color:#FFC24D}.ib.resume{background:#FFC24D;color:#3B2F12}
 .ib.stop{background:#E5372A;color:#FFFFFF}.ib.ghost{background:var(--night2);color:#D6D2EE}
-.logo{width:30px;height:30px;border-radius:9px;background:var(--brand);display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+/* The original Spark Flow logo (assets/icon.ico, 256px), as on the classic sign-in. */
+.logo{width:32px;height:32px;flex:0 0 32px;object-fit:contain;display:block}
 .prog{display:flex;align-items:center;gap:10px}
 .prog b{font-size:12.5px;font-weight:700;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis}
 .prog .segs{flex:1;display:grid;gap:2px}
@@ -262,7 +263,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .hero{background:var(--night);padding:42px 28px 30px;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center;flex:0 0 auto}
 .hero h2{margin:4px 0 0;font-size:26px;font-weight:800;color:#FFFFFF}
 .hero p{margin:0;font-size:13.5px;color:#BDB8DC}
-.bigLogo{width:56px;height:56px;border-radius:16px;background:var(--brand);display:flex;align-items:center;justify-content:center;box-shadow:0 10px 30px rgba(91,61,245,.45)}
+.bigLogo{width:72px;height:72px;object-fit:contain;display:block}
 .out{background:var(--redDeep);padding:18px 20px;display:flex;flex-direction:column;gap:6px;color:#FFFFFF;flex:0 0 auto}
 .out .big{font-size:19px;font-weight:800;line-height:1.25}
 .out .sm{font-size:13px;color:#FFE4E0;line-height:1.45}
@@ -275,6 +276,23 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .inp input:focus-visible{outline:none}
 .inp input::placeholder{color:#9894B0}
 .eye{width:36px;height:36px;border:none;background:transparent;border-radius:9px;display:flex;align-items:center;justify-content:center;color:var(--mute);padding:0;flex:0 0 36px}
+/* dropdown (Settings: devices) - drawn by the page, never a native popup */
+.fld .lbl{font-size:12.5px;font-weight:700;color:var(--ink2)}
+.dd{position:relative}
+.dd-btn{width:100%;height:48px;border:1px solid #DCD9E8;border-radius:12px;background:var(--white);display:flex;align-items:center;gap:8px;padding:0 8px 0 14px;text-align:left;font-size:13.5px;font-weight:500;color:var(--ink);transition:border-color .15s,box-shadow .15s}
+.dd-btn:hover{border-color:#C7C1E0}
+.dd-btn:disabled{color:var(--faint);background:var(--surf)}
+.dd-btn .v{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dd-btn .chev{flex:0 0 32px;width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:var(--mute);background:var(--surf);transition:transform .22s var(--ease),background .15s,color .15s}
+.dd.open .dd-btn{border-color:var(--brand);box-shadow:0 0 0 3px rgba(91,61,245,.16)}
+.dd.open .dd-btn .chev{transform:rotate(180deg);background:var(--brandSoft);color:var(--brand)}
+.dd-list{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:8;background:var(--white);border:1px solid var(--line);border-radius:14px;box-shadow:0 16px 40px rgba(20,18,42,.18);padding:6px;max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;transform-origin:top center;animation:ddIn .18s var(--ease)}
+.dd-opt{width:100%;min-height:44px;display:flex;gap:10px;align-items:center;padding:9px 10px;border:none;background:transparent;border-radius:10px;text-align:left;font-size:13px;line-height:1.35;color:var(--ink2);transition:background .12s}
+.dd-opt:hover{background:var(--surf)}
+.dd-opt.on{background:var(--brandSoft);color:var(--brand2);font-weight:700}
+.dd-opt .tk{flex:0 0 16px;width:16px;height:16px;display:flex;align-items:center;justify-content:center}
+.dd-opt .t{flex:1;min-width:0;overflow-wrap:anywhere}
+@keyframes ddIn{from{opacity:0;transform:translateY(-6px) scale(.98)}to{opacity:1;transform:none}}
 .sel{height:48px;border:1px solid #DCD9E8;border-radius:12px;background:var(--white);padding:0 12px;font-family:inherit;font-size:13.5px;color:var(--ink);width:100%}
 .cta{height:50px;width:100%;border:none;border-radius:14px;background:var(--brand);color:#FFFFFF;font-size:14.5px;font-weight:800;display:flex;align-items:center;justify-content:center;gap:10px;transition:background .15s;flex:0 0 auto}
 .cta:hover{background:#4A2EE0}

@@ -25,7 +25,8 @@ focus_main.py      entry point: the SAME widget started as FocusWindow
 focus_ui.py        FocusWindow(main.MainWindow) + FocusController + the bridge
 focus/             the page: index.html, app.js (drawing), model.js (rules), app.css, fonts/ (OFL)
 focus_dev/         harness.html + scenarios.js (40 states), screenshot + check scripts, qt_e2e.py
-build_focus.py     PyInstaller recipe -> dist/SparkFlowFocus/ (build_all.py untouched)
+build_focus.py     PyInstaller -> build/focus-dist/SparkFlowFocus/ (+ installer); build_all.py untouched
+installer/installer_focus.iss   the Focus installer (installer.iss untouched)
 ```
 
 * `FocusWindow` **is** the classic `MainWindow`. Every worker, the recording,
@@ -56,13 +57,31 @@ build_focus.py     PyInstaller recipe -> dist/SparkFlowFocus/ (build_all.py unto
 PC — exactly like the installed widget. Don't run it beside an installed
 widget you don't want to share a session with (the lock stops a second copy).
 
+## Give it to someone (Bilal) — one file
+
+```powershell
+..\..\.venv-focus\Scripts\python.exe build_focus.py --installer --check
+```
+
+makes `installer\Output\SparkFlowFocusSetup.exe` (~145 MB). It installs as
+**"Spark Flow Focus"** beside the normal widget — own folder, Start Menu entry and
+desktop icon, **no auto-start** (the normal widget keeps that), and uninstalling it
+removes only its own files. `--check` installs it into a throwaway folder,
+self-tests the installed exe, uninstalls it and proves the normal widget's
+program, start-up entry and settings are identical before and after.
+
+Only one Spark Flow runs at a time: quit the normal one (tray → Quit) before
+opening Spark Flow Focus — it says so if you forget. Build output goes to
+`build\focus-dist\` so a rebuild never fights a copy someone has open.
+
 ## Proof (15 Oct)
 
 | What | Result |
 | --- | --- |
 | `node --test focus/tests/*.test.cjs` — the rules | 22 pass; **10/10** deliberate rule breaks go red |
 | `pytest tests/test_focus_ui.py` — the wiring | 43 pass; **10/10** deliberate breaks go red |
-| `focus_dev/check_harness.py` — every screen rendered in Edge | **40/40**; 4/4 drawing breaks go red |
+| `focus_dev/check_harness.py` — every screen rendered in Edge | **42/42**; 4/4 drawing breaks go red |
+| `build_focus.py --installer --check` — the installer | installs, installed exe self-test **OK**, uninstalls clean, normal widget untouched |
 | `focus_dev/qt_e2e.py` — real widget + real WebEngine | **25/25** (load, bridge, buttons → classic methods, widths 360/720/64/416, slide-out, safety, classic↔Focus mid-call, summary, reload replay) |
 | `build_focus.py --check` — the packaged exe | builds; self-test **OK** (page loads from the package, bridge connects) |
 | `main.py` / `build_all.py` / conftest | unchanged (git diff) |

@@ -443,6 +443,6 @@ def test_the_tray_offers_the_other_layout(app):
 
 
 def test_the_page_files_exist_where_the_widget_looks(app):
-    for name in ("index.html", "app.js", "app.css", "model.js",
+    for name in ("index.html", "app.js", "app.css", "model.js", "logo.png",
                  "fonts/PlusJakartaSans-latin.woff2", "fonts/JetBrainsMono-latin.woff2"):
         assert (Path(focus_ui.focus_dir()) / name).exists(), name

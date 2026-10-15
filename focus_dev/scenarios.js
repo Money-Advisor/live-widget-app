@@ -115,6 +115,12 @@
   S['idle'] = { size: [360, 900], steps: [st({})] };
   S['idle-manual'] = { size: [360, 900], steps: [st({})], clicks: ['[data-act="manual"]'] };
   S['idle-settings'] = { size: [360, 900], steps: [st({})], clicks: ['[data-act="settings"]'] };
+  var LONG_MICS = ['Microphone Array (Intel® Smart Sound Technology for Digital Microphones)',
+    'Headset Microphone (Jabra Evolve2 30)', 'Microphone (Realtek(R) Audio)'];
+  S['settings-dropdown'] = { size: [360, 900], steps: [st({ mics: LONG_MICS, micIndex: 0 })],
+    clicks: ['[data-act="settings"]', '[data-act="dd"][data-v="mic"]'] };
+  S['settings-dropdown-picked'] = { size: [360, 900], steps: [st({ mics: LONG_MICS, micIndex: 0 })],
+    clicks: ['[data-act="settings"]', '[data-act="dd"][data-v="mic"]', '[data-act="ddPick"][data-k="1"]'] };
   S['mic-gate'] = { size: [360, 900], steps: [st({ micGate: true })] };
   S['starting'] = { size: [360, 900], steps: [st({ phase: 'starting' })] };
   S['live-listening'] = { size: [360, 900], steps: [live({ elapsed: 4 })] };

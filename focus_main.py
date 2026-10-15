@@ -39,6 +39,16 @@ def run():
     # must never both run, or one call would be recorded twice.
     if not main.acquire_single_instance():
         print("[startup] Spark Flow is already running - exiting this copy")
+        # Classic exits silently here (a second copy at login is normal). For
+        # Focus the usual cause is the normal widget still running, and a
+        # double-click that does nothing reads as "it's broken" - so say why.
+        if "--minimized" not in sys.argv:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                None, "Spark Flow is already running",
+                "Spark Flow is already open on this PC.\n\n"
+                "To use Spark Flow Focus, right-click the Spark Flow icon near the "
+                "clock, choose Quit, then open Spark Flow Focus again.")
         return 0
     app.setApplicationName("Spark Flow")
     app.setOrganizationName(main.ORG)

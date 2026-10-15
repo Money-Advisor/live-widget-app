@@ -16,14 +16,18 @@ EDGE = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
 
 # scenario: (must contain, must NOT contain)
 EXPECT = {
-    "login": (["Sign in", "Forgot password?", "Work email"], ["Calls are NOT being recorded"]),
+    "login": (["Sign in", "Forgot password?", "Work email", 'class="bigLogo" src="../focus/logo.png"'],
+              ["Calls are NOT being recorded"]),
     "login-busy": (["Signing in"], []),
     "login-error": (["Incorrect email or password."], []),
     "login-forgot": (["reset link is on its way"], ["msg red"]),
     "signed-out": (["Calls are NOT being recorded", "Sign in"], []),
-    "idle": (["Ready for your next call", "Start a call manually", "This shift", "84%"], []),
+    "idle": (["Ready for your next call", "Start a call manually", "This shift", "84%", 'class="logo" src="../focus/logo.png"'], []),
     "idle-manual": (["Customer name", "Reference ID", "Start recording"], []),
     "idle-settings": (["Your voice", "Customer voice", "Switch to the classic layout", "Log out", "Save settings"], []),
+    "settings-dropdown": (['class="dd open"', 'role="listbox"', "Smart Sound Technology for Digital Microphones",
+                           "Jabra Evolve2 30", 'aria-selected="true"'], ["<select"]),
+    "settings-dropdown-picked": (['title="Headset Microphone (Jabra Evolve2 30)"'], ['class="dd open"', 'role="listbox"']),
     "mic-gate": (["Choose your microphone", "Headset Microphone", "Use this microphone"], []),
     "starting": (["Connecting"], ["Start a call manually"]),
     "live-listening": (["Listening", "Your checklist appears"], ["Put right"]),
