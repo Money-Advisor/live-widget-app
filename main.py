@@ -268,7 +268,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.57"
+APP_VERSION = "2.9.58"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -4100,7 +4100,12 @@ class AdvisorAlertsPanel(QFrame):
         col.setContentsMargins(14, 12, 14, 13)
         col.setSpacing(8)
 
-        cap = QLabel("PUT THIS RIGHT NOW" if critical else "PUT THIS RIGHT")
+        # The I&E panel's clarification popups (Bilal, 15 Oct) carry their
+        # own title - "Income clarification required" - in the same place
+        # and style; every other card reads exactly as before.
+        title = str(row.get("title") or "").strip()
+        cap = QLabel(title.upper() if title else
+                     ("PUT THIS RIGHT NOW" if critical else "PUT THIS RIGHT"))
         cap.setStyleSheet(
             f"background:transparent; font-family:{FF}; font-size:10px;"
             f" font-weight:800; color:{edge}; letter-spacing:1.4px;")
@@ -4181,7 +4186,8 @@ class AdvisorAlertsPanel(QFrame):
                 f"background:transparent; font-family:{FF}; font-size:11.5px;"
                 f" font-weight:500; color:{quiet}; line-height:140%;"
                 " font-style:italic;"))
-        else:
+        elif not (title and not str(row.get("action") or "").strip()):
+            # A popup is its message alone: no empty line under it.
             col.addWidget(wrapped_label(
                 str(row.get("action") or ""),
                 f"background:transparent; font-family:{FF}; font-size:11.5px;"
