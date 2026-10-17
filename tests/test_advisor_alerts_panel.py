@@ -965,3 +965,38 @@ def test_a_new_call_starts_the_order_again(panel):
     settle(panel)
     assert _order(panel) == ["Correction number 2.", "Correction number 1."]
     _quiesce(panel)
+
+
+# -- the I&E panel's clarification popups (Bilal, 15 Oct) -------------------
+
+POPUP = {"id": "ie.prompt.category.transport_and_travel.car_insurance",
+         "title": "Expenditure category needs confirming",
+         "label": "Expenditure category needs confirming", "severity": "high",
+         "message": "The customer mentioned £15 for Central service, but what the payment "
+                    "covers is unclear. Ask the customer to clarify before assigning it to "
+                    "an expenditure category.",
+         "action": None, "script": None, "coaching_only": False, "occurrence": 1,
+         "about": "car_insurance", "source": "panel"}
+
+
+def test_a_popup_carries_its_own_title_and_its_message(panel):
+    panel.set_trigger_actions([POPUP])
+    settle(panel)
+    text = [l.text() for l in labels(panel)]
+    assert "EXPENDITURE CATEGORY NEEDS CONFIRMING" in text
+    assert POPUP["message"] in text
+    assert not any("PUT THIS RIGHT" in t for t in text)
+
+
+def test_a_popup_has_no_empty_line_under_its_message():
+    card = m.AdvisorAlertsPanel()._action_card(POPUP)
+    assert len(card.findChildren(QLabel)) == 2
+
+
+def test_OPPOSITE_a_card_with_no_title_keeps_put_this_right_and_its_action():
+    row = dict(CORRECTIONS[0], action="Do it now.", script=None, coaching_only=False)
+    row.pop("title", None)
+    card = m.AdvisorAlertsPanel()._action_card(row)
+    texts = [l.text() for l in card.findChildren(QLabel)]
+    assert texts[0] in ("PUT THIS RIGHT", "PUT THIS RIGHT NOW")
+    assert "Do it now." in texts

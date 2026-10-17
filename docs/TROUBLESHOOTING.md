@@ -116,6 +116,13 @@ correction card laid out at exactly the right height came out with its top
 border and last line cut off on most runs, and stayed that way until something
 else repainted the column. The effect is now on only while the column fades in.
 
+**A card titled "Income clarification required", "Expenditure category needs
+confirming" or "Household expenditure needs confirming" (2.9.58).** Not a
+breach: the live I&E panel holds a figure it cannot place and asks the advisor to
+clarify it. It goes when the customer answers (asking is not enough). On a
+widget older than 2.9.58 the same card reads "PUT THIS RIGHT" over the same
+message.
+
 **Card order (2.9.53, Bilal 1 Oct).** The newest correction card is always at
 the top, and when a new one fires the column scrolls back to the top so it is
 seen at once; it still scrolls by hand as before. Cards that arrived in the
