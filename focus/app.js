@@ -221,9 +221,15 @@
       (host.livePipeline ? stageBar() : '') + '</div>';
   }
 
+  function onlyAsks(items, fixes) {
+    return items.filter(function (i) { return i.title; }).length === fixes;
+  }
+
   function stateLine(items) {
     var fixes = M.fixCount(items);
     if (call.crisis) return '<div class="state-line" style="color:var(--redDeep)"><span class="ic" style="background:var(--redDeep)">' + I.bang + '</span>Customer safety \u2014 follow the card</div>';
+    // Only I&E clarification popups showing: something to ask, not a breach.
+    if (fixes && onlyAsks(items, fixes)) return '<div class="state-line" style="color:var(--ambInk)"><span class="ic" style="background:var(--ambDot)">' + I.bang + '</span>' + fixes + ' thing' + (fixes > 1 ? 's' : '') + ' to clarify</div>';
     if (fixes) return '<div class="state-line" style="color:var(--red)"><span class="ic" style="background:var(--red)">' + I.bang + '</span>' + fixes + ' thing' + (fixes > 1 ? 's' : '') + ' to put right</div>';
     // Never "on track" while something critical is still owed: a disclosure's
     // questions, or a critical check skipped in an earlier stage.
@@ -269,10 +275,15 @@
     }
     if (it.kind === 'critical' || it.kind === 'high') {
       var r = it.row || {};
-      var h = '<div class="focus ' + it.kind + cls + '" role="alert"><div class="f-top"><span class="kind">' + (it.kind === 'critical' ? 'Put right now' : 'Put right') + '</span>' +
+      // A titled card (an I&E clarification popup) shows its title where the
+      // others say "Put right" - as classic 2.9.58 does - and not twice.
+      var h = '<div class="focus ' + it.kind + cls + '" role="alert"><div class="f-top">' +
+        (it.title ? '<span class="kind ttl">' + esc(it.title) + '</span>'
+                  : '<span class="kind">' + (it.kind === 'critical' ? 'Put right now' : 'Put right') + '</span>') +
         (it.at != null ? '<span class="when" data-ago="' + it.at + '"></span>' : '') + '</div>' +
-        (it.forbidden ? '' : '<div class="eyebrow">' + esc(it.label) + '</div>') +
-        '<h2>' + esc(it.message) + '</h2>';
+        (it.forbidden || it.title ? '' : '<div class="eyebrow">' + esc(it.label) + '</div>') +
+        // A popup's message is a paragraph of guidance, not a headline.
+        '<h2' + (it.title ? ' class="gtext"' : '') + '>' + esc(it.message) + '</h2>';
       if (it.forbidden) {
         h += '<p class="detail">This phrase must not be used. Carry on, and don\u2019t repeat it.</p>';
       } else if (r.script) {
@@ -285,7 +296,7 @@
         h += listenLine('Clears itself when you say it');
       } else if (r.coaching_only) {
         h += '<div class="coach">There is nothing to say to undo this. Carry on, and do not repeat it \u2014 it is recorded for coaching.</div>';
-      } else if (r.action) {
+      } else if (String(r.action || '').trim()) {
         h += '<p class="detail">' + esc(r.action) + '</p>' + listenLine('Clears itself when it\u2019s put right');
       }
       if (r.auto_clear_seconds != null) {
@@ -323,7 +334,7 @@
     return '<div class="queue"><div class="q-h"><span class="cap" style="color:var(--mute)">Then</span><span class="cap" style="color:var(--faint)">' + rest.length + '</span></div>' +
       rest.map(function (it) {
         var t = it.kind === 'urgent' ? 'Questions to ask now' : it.kind === 'safety' ? 'Customer safety' : it.label;
-        return '<button class="qrow" data-act="focus" data-k="' + esc(it.key) + '"><span class="qdot" style="background:' + col[it.kind] + '"></span><span class="qt">' + esc(t) + '</span><span class="qk" style="color:' + col[it.kind] + '">' + lab[it.kind] + '</span><span style="display:flex;color:var(--faint)">' + I.chev + '</span></button>';
+        return '<button class="qrow" data-act="focus" data-k="' + esc(it.key) + '"><span class="qdot" style="background:' + col[it.kind] + '"></span><span class="qt">' + esc(t) + '</span><span class="qk" style="color:' + col[it.kind] + '">' + (it.title ? 'Clarify' : lab[it.kind]) + '</span><span style="display:flex;color:var(--faint)">' + I.chev + '</span></button>';
       }).join('') + '</div>';
   }
 
@@ -532,7 +543,7 @@
     var di = ie && ie.di && ie.di.shown && ie.di.value != null ? ie.di.text : '\u2026';
     var open = host.dock === 'left' ? I.openL : I.openR;
     return '<div class="strip" data-drag><span class="rec' + (host.paused ? ' pa' : '') + '"></span><span class="tm mono" data-t></span><div class="sep"></div>' +
-      (fixes ? '<button class="sb r" data-act="expand" aria-label="' + fixes + ' to put right"><span class="mono">' + fixes + '</span><span class="cap">Fix</span></button>'
+      (fixes ? '<button class="sb r" data-act="expand" aria-label="' + fixes + (onlyAsks(items, fixes) ? ' to clarify' : ' to put right') + '"><span class="mono">' + fixes + '</span><span class="cap">' + (onlyAsks(items, fixes) ? 'Ask' : 'Fix') + '</span></button>'
              : '<button class="sb ' + (hasNext ? 'v' : 'z') + '" data-act="expand" aria-label="Open the panel"><span class="mono">' + (hasNext ? '1' : '0') + '</span><span class="cap">Next</span></button>') +
       (host.livePipeline ? '<button class="sb g" data-act="openSheet" data-v="ie" aria-label="Disposable income"><span class="mono">' + esc(di) + '</span><span class="cap">DI</span></button>' : '') +
       '<div class="grow"></div>' +
@@ -546,8 +557,10 @@
     var it = M.attention(call).filter(function (i) { return i.key === ui.peekKey; })[0];
     if (!it) return '';
     var r = it.row || {};
-    return '<div class="peekwrap"><div data-anim="peek-' + esc(it.key) + '" class="peek ' + it.kind + '" role="alert"><div class="focus ' + it.kind + '"><div class="f-top"><span class="kind">New \u00b7 put right</span><span class="when">just now</span></div>' +
-      '<div class="eyebrow">' + esc(it.label) + '</div><h2>' + esc(it.message || '') + '</h2>' +
+    return '<div class="peekwrap"><div data-anim="peek-' + esc(it.key) + '" class="peek ' + it.kind + '" role="alert"><div class="focus ' + it.kind + '"><div class="f-top">' +
+      (it.title ? '<span class="kind ttl">New \u00b7 ' + esc(it.title) + '</span>' : '<span class="kind">New \u00b7 put right</span>') +
+      '<span class="when">just now</span></div>' +
+      (it.title ? '' : '<div class="eyebrow">' + esc(it.label) + '</div>') + '<h2' + (it.title ? ' class="gtext"' : '') + '>' + esc(it.message || '') + '</h2>' +
       (r.script ? '<div class="quote"><span class="cap">Say this</span><p>' + esc(r.script) + '</p></div>' : '') +
       '<div class="pa"><button class="go" data-act="expand">Open the panel</button><button class="kp" data-act="keep">Keep as count</button></div></div><div class="pb"><i></i></div></div></div>';
   }

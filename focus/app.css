@@ -90,12 +90,16 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .critical .kind,.missed .kind,.urgent .kind{background:var(--red);color:#FFFFFF}
 .high .kind,.cue .kind{background:#F2D49B;color:#5A3A00}
 .clear .kind{background:var(--grn);color:#FFFFFF}
+/* A card's own title (I&E clarification popups) can be long: it wraps in the
+   pill rather than pushing "2m ago" out or being cut off. */
+.kind.ttl{white-space:normal;height:auto;min-height:22px;padding:5px 9px;line-height:1.3;min-width:0}
 .f-top .when{margin-left:auto;font-size:11.5px;font-weight:700;white-space:nowrap}
 .next .when{color:var(--mute)}.critical .when,.missed .when,.urgent .when{color:#93372E}.high .when,.cue .when{color:#7A5A22}
 .eyebrow{font-size:12px;font-weight:700;margin-top:-4px}
 .next .eyebrow{color:var(--mute)}.critical .eyebrow,.missed .eyebrow,.urgent .eyebrow{color:#93372E}.high .eyebrow,.cue .eyebrow{color:#7A5A22}
 .focus h2{margin:0;font-size:17px;font-weight:800;line-height:1.32;letter-spacing:-.2px;overflow-wrap:anywhere}
 .critical h2,.missed h2,.urgent h2{color:var(--redInk)}.high h2,.cue h2{color:var(--ambInk)}
+.focus h2.gtext{font-size:14.5px;font-weight:600;line-height:1.5;letter-spacing:0}
 .focus .detail{font-size:13.5px;line-height:1.5;margin:0}
 .next .detail{color:var(--ink2)}.critical .detail,.missed .detail{color:#6B2A22}.high .detail,.cue .detail{color:#5A4520}
 .quote{background:var(--white);border-radius:14px;padding:13px 14px;display:flex;flex-direction:column;gap:6px}

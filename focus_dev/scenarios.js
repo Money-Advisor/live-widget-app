@@ -67,6 +67,14 @@
   var CARD_GUIDE = { id: 'Q17.GUIDELINE_SAID', label: 'Guideline figure said aloud', severity: 'high',
     message: 'A guideline amount was quoted to the client as a target.', action: '', script: null,
     coaching_only: true, auto_clear_seconds: 60, alternatives: [], occurrence: 1, quote: '', about: '' };
+  // 2.9.58: the I&E panel's clarification popup, exactly as
+  // live_rulebook_call._prompt_rows sends it - a card with its own title.
+  var CARD_POPUP = { id: 'ie.prompt.income.Income.Wages', title: 'Income clarification required', label: 'Income clarification required',
+    severity: 'high', message: 'The customer mentioned wages of £1,840, but whether this is weekly or monthly still needs confirming. Clarify the correct amount, frequency and whether this is household income or already included elsewhere. Do not include, exclude or duplicate it based on an assumption.',
+    action: null, script: null, coaching_only: false, occurrence: 1, about: 'Wages', source: 'panel' };
+  var CARD_POPUP_LONG = { id: 'ie.prompt.payer.Expenditure.Rent', title: 'Household expenditure needs confirming', label: 'Household expenditure needs confirming',
+    severity: 'high', message: 'The customer indicated that someone else pays or reimburses some of rent. Clarify what amount the household actually pays before including or excluding it.',
+    action: null, script: null, coaching_only: false, occurrence: 1, about: 'Rent', source: 'panel' };
   var CRISIS = { type: 'crisis_alert', line: 'I’m really sorry you’re feeling this way. You don’t have to deal with this on your own, and there are people you can talk to right now, any time of day.',
     resources: [{ name: 'Samaritans', detail: '116 123 — free, 24/7' }, { name: 'Shout', detail: 'text 85258' }, { name: 'Mind', detail: '0300 123 3393' }],
     immediate: true, escalation: 'IMMEDIATE RISK TO LIFE — stay with them and call 999 now.', evidence: 'I just don’t see the point any more', audio_ts: 812.4 };
@@ -128,6 +136,10 @@
   S['live-critical'] = { size: [360, 900], steps: [live({ elapsed: 760 }), stage({ trigger_actions: [CARD_AFFORD] }), ieMsg('income')] };
   S['live-critical-alt'] = { size: [360, 900], steps: [live({ elapsed: 760 }), stage({ trigger_actions: [CARD_AFFORD] })], clicks: ['[data-act="alt"]'] };
   S['live-three'] = { size: [360, 900], steps: [live({ elapsed: 790 }), stage({ trigger_actions: [CARD_AFFORD] }), stage({ trigger_actions: [CARD_AFFORD, CARD_CTAX, CARD_GUIDE] }), ieMsg('expenditure')] };
+  S['popup-front'] = { size: [360, 900], steps: [live({ elapsed: 790 }), stage({ trigger_actions: [CARD_POPUP] })] };
+  S['popup-long-title'] = { size: [360, 900], steps: [live({ elapsed: 790 }), stage({ trigger_actions: [CARD_POPUP_LONG] })] };
+  S['popup-queued'] = { size: [360, 900], steps: [live({ elapsed: 790 }), stage({ trigger_actions: [CARD_POPUP] }), stage({ trigger_actions: [CARD_POPUP, CARD_CTAX] })] };
+  S['popup-peek'] = { size: [416, 900], steps: [live({}), stage(), ieMsg('expenditure')], clicks: ['[data-act="collapse"]'], later: [stage({ trigger_actions: [CARD_POPUP] })] };
   S['live-queue-pick'] = { size: [360, 900], steps: [live({ elapsed: 790 }), stage({ trigger_actions: [CARD_AFFORD] }), stage({ trigger_actions: [CARD_AFFORD, CARD_CTAX, CARD_GUIDE] })], clicks: ['.qrow:nth-of-type(2)'] };
   S['live-safety'] = { size: [360, 900], steps: [live({ elapsed: 815 }), stage(), { kind: 'msg', data: CRISIS }, stage({ section_checks: INCOME_CHECKS.concat([
       { id: 'vul.safe', label: 'Ask whether they feel safe right now', done: false, urgent: true, urgent_reason: 'A vulnerability has been disclosed - ask these now', parts: [], missing_parts: [] },

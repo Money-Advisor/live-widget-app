@@ -54,6 +54,12 @@ installer/installer_focus.iss   the Focus installer (installer.iss untouched)
   the classic code shows the window inside `MainWindow.__init__`, before the
   page exists, where Windows drew it solid - Focus holds that show until the
   page is in place.
+* **I&E clarification popups (2.9.58).** A card the server sends with a
+  `title` ("Income clarification required" …) shows that title where other
+  cards say "Put right" — in the card, the queue ("Clarify"), the slide-out
+  and the folded strip ("Ask") — with its message as plain text and no
+  "put right" promise under it. When only popups are showing, the line above
+  reads "N things to clarify". Every other card is unchanged.
 * **Hover hints are the page's own** (`data-tip`, never `title=""`): inside the
   widget Qt draws a browser hint as a black box with black text.
 
@@ -89,9 +95,9 @@ opening Spark Flow Focus — it says so if you forget. Build output goes to
 
 | What | Result |
 | --- | --- |
-| `node --test focus/tests/*.test.cjs` — the rules | 22 pass; **10/10** deliberate rule breaks go red |
+| `node --test focus/tests/*.test.cjs` — the rules | 23 pass; **10/10** deliberate rule breaks go red |
 | `pytest tests/test_focus_ui.py` — the wiring | 54 pass; deliberate breaks go red (incl. 6/6 startup rules) |
-| `focus_dev/check_harness.py` — every screen rendered in Edge | **43/43**; drawing breaks go red; a browser `title` hint anywhere fails it |
+| `focus_dev/check_harness.py` — every screen rendered in Edge | **47/47** (4 popup screens); drawing breaks go red (3/3 popup rules); every non-popup screen pixel-identical to before except the animated ring, which differs run to run; a browser `title` hint anywhere fails it |
 | `build_focus.py --installer --check` — the installer | installs, installed exe self-test **OK**, uninstalls clean, normal widget untouched |
 | `focus_dev/qt_e2e.py` — real widget + real WebEngine | **32/32** (hover hint, load, bridge, buttons → classic methods, dropdown keeps the sheet still, widths 360/720/64/416, slide-out, safety, no layout switch, summary, reload replay) |
 | `build_focus.py --check` — the packaged exe | builds; self-test **OK** (page loads from the package, bridge connects) |

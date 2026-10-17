@@ -12,7 +12,7 @@
 ; (or ISCC.exe installer\installer_focus.iss after build_focus.py has made build\focus-dist\SparkFlowFocus)
 
 #define AppName "Spark Flow Focus"
-#define AppVersion "2.9.57-focus"
+#define AppVersion "2.9.58-focus"
 #define AppPublisher "Spark Flow"
 #define AppExe "SparkFlowFocus.exe"
 

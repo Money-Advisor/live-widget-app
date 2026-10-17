@@ -203,3 +203,17 @@ test('timer and age text', () => {
   assert.equal(M.ago(30), 'just now');
   assert.equal(M.ago(125), '2 min ago');
 });
+
+test('a card the server sends with a title keeps it (2.9.58 I&E popups); others have none', () => {
+  // The popup exactly as live_rulebook_call._prompt_rows builds it.
+  const popup = { id: 'ie.prompt.income.Income.Wages', title: '  Income clarification required ', label: 'Income clarification required',
+    severity: 'high', message: 'The customer mentioned wages, but the frequency still needs confirming.',
+    action: null, script: null, coaching_only: false, occurrence: 1, about: 'Wages', source: 'panel' };
+  const m = M.newCall();
+  M.applyMessage(m, stageMsg({ trigger_actions: [card('A'), popup] }), 0, 10);
+  const byId = {};
+  M.attention(m).filter(i => i.row).forEach(i => { byId[i.row.id] = i; });
+  assert.equal(byId['ie.prompt.income.Income.Wages'].title, 'Income clarification required');
+  assert.equal(byId['ie.prompt.income.Income.Wages'].kind, 'high');
+  assert.equal(byId.A.title, '');
+});

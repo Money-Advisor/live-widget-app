@@ -173,8 +173,12 @@
     });
     m.actions.forEach(function (r) {
       var info = m.cards[cardKey(r)] || {};
+      // A card may carry its own title (2.9.58: the I&E panel's clarification
+      // popups - "Income clarification required"). Not a breach, so it is
+      // shown under that title instead of "Put right".
       items.push({ key: 'card:' + cardKey(r), kind: isCritical(r.severity) ? 'critical' : 'high',
-                   row: r, label: r.label || r.message, message: r.message, at: info.at });
+                   row: r, label: r.label || r.message, message: r.message, at: info.at,
+                   title: String(r.title || '').trim() });
     });
     var urgent = m.checks.filter(function (c) { return c && c.urgent && !c.done; });
     if (urgent.length) {
