@@ -370,6 +370,7 @@ class FocusController:
                      else (win._active_department or "").replace("-", " ").title()},
             "company": win._company_name or "Spark Flow",
             "recording": rec,
+            "hideLocked": win.call_in_progress(),
             "paused": bool(win._paused),
             "elapsed": int(win._elapsed or 0),
             "callSeq": self.call_seq,
@@ -609,7 +610,12 @@ class FocusController:
         elif action == "logout":
             win._logout()
         elif action == "hide":
-            win.close()
+            # Never during a call (19 Oct: an advisor pressed "-" mid-call by
+            # mistake). The page greys the button out; this is the second lock.
+            if win.call_in_progress():
+                print("[focus] hide refused - a call is in progress")
+            else:
+                win.close()
         else:
             print(f"[focus] unknown action {action!r}")
             return
@@ -681,9 +687,8 @@ class FocusWindow(main.MainWindow):
     _show_after_build = False
 
     def __init__(self, view_factory=None, start=True):
-        # Focus ONLY. Faseeh, 15 Oct: two exes are two widgets - SparkFlow.exe
-        # is the classic one, SparkFlowFocus.exe the new one, and neither offers
-        # the other. There is no tray item, button or start option to switch.
+        # The panel ONLY (2.9.59: it replaced the old screen in SparkFlow.exe).
+        # There is no tray item, button or start option to switch back.
         # The one way the classic screen still appears here is the automatic
         # fallback (FocusController._fail) when the page cannot start at all -
         # a widget that records with the old screen beats one that shows nothing.
@@ -712,6 +717,28 @@ class FocusWindow(main.MainWindow):
             self._unveil()
         if self._show_after_build and not self.isVisible():
             self.setVisible(True)           # the show the classic code asked for
+        # The old screen's own "-" (shown only if the panel cannot start): locked
+        # during a call exactly like the panel's. Checked twice a second - cheap,
+        # and it cannot miss a start or stop whichever path made it.
+        self._classic_minimise = next(
+            (b for b in self.findChildren(main.QPushButton) if b.text() == "\u2014"), None)
+        self._hide_lock_timer = QTimer(self)
+        self._hide_lock_timer.timeout.connect(self._sync_hide_lock)
+        self._hide_lock_timer.start(500)
+        self._sync_hide_lock()
+
+    def call_in_progress(self):
+        """True from the moment a call starts connecting until it has stopped."""
+        return bool(self._recording or self._starting)
+
+    def _sync_hide_lock(self):
+        btn = getattr(self, "_classic_minimise", None)
+        if btn is None:
+            return
+        locked = self.call_in_progress()
+        if btn.isEnabled() == locked:
+            btn.setEnabled(not locked)
+            btn.setToolTip("Can't hide during a call" if locked else "")
 
     def setVisible(self, visible):
         # Every show - show(), showNormal(), the sign-out resurfacing - comes

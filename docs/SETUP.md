@@ -30,6 +30,7 @@ Dependencies are deliberately few:
 
 ```
 PyQt6>=6.6              the UI
+PyQt6-WebEngine         the panel (2.9.59+) - pinned to PyQt6's Qt version
 pyaudiowpatch>=0.2.12   WASAPI loopback capture
 websocket-client>=1.7   the audio socket
 requests>=2.31          REST
@@ -39,7 +40,7 @@ pyinstaller>=6.0        packaging
 ## Run
 
 ```powershell
-python main.py
+python focus_main.py          # the widget (python main.py runs the old screen alone)
 ```
 
 **Then point it at your own machine.** Open Settings (the gear icon) and set:
@@ -125,7 +126,7 @@ All Qt runs offscreen, so no window appears and nothing needs a display.
 ## Building
 
 ```powershell
-python build_all.py
+python build_all.py --check   # build, then self-test the built exe
 ```
 
 Output is `dist\SparkFlow\SparkFlow.exe` — a **folder** build, deliberately not

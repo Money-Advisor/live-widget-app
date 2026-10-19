@@ -29,9 +29,12 @@ cd "Spark Flow\live-widget-app"
 # 2. Test
 python -m pytest tests\ -q
 python smoke_test.py
+node --test focus\tests                # the panel's rules
+python focus_dev\check_harness.py      # every panel screen, rendered
+python focus_dev\qt_e2e.py <out_dir>   # the real window
 
-# 3. Build the executable
-python build_all.py                    # -> dist\SparkFlow\SparkFlow.exe
+# 3. Build the executable (the build Python needs PyQt6-WebEngine - requirements.txt)
+python build_all.py --check            # -> dist\SparkFlow\SparkFlow.exe, then its self-test
 
 # 4. Build the installer
 # Inno Setup is installed USER-SCOPE on this machine - no administrator
@@ -44,6 +47,17 @@ python build_all.py                    # -> dist\SparkFlow\SparkFlow.exe
 git add -A && git commit -m "x.y.z: <what changed>"
 git push origin main
 ```
+
+**Upgrading the fleet in place (2.9.59 onwards).** The installer keeps the AppId,
+folder, exe name and Run entry of every earlier Spark Flow, so it lands over
+the old widget - silently from the auto-updater, or by hand - keeps its tasks and
+never touches `HKCU\Software\Spark Flow`. `python focus_dev\upgrade_test.py
+<old dist\SparkFlow> <old installer.iss>` proves it end to end with a throwaway
+identity (the real install on the build PC is never touched): old installed ->
+new run with the updater's own command line -> same folder, exact new file set,
+auto-start kept, one entry at the new version, installed exe self-test -> clean
+uninstall. Run it before publishing any release that changes the installer.
+The installer is ~145 MB; the updater accepts up to 300 MB.
 
 **Bump the version in both files.** During the August 2026 move two different
 binaries briefly shipped under one version number, which made it impossible to tell

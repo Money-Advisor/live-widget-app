@@ -54,6 +54,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .sub.bad{color:#FF9D94}
 .ib{width:44px;height:44px;flex:0 0 44px;border-radius:12px;border:none;display:flex;align-items:center;justify-content:center;padding:0;transition:filter .15s}
 .ib:hover{filter:brightness(1.15)}
+.ib:disabled{opacity:.35;filter:none}
 .ib.pause{background:#3B2F12;color:#FFC24D}.ib.resume{background:#FFC24D;color:#3B2F12}
 .ib.stop{background:#E5372A;color:#FFFFFF}.ib.ghost{background:var(--night2);color:#D6D2EE}
 /* The original Spark Flow logo (assets/icon.ico, 256px), as on the classic sign-in. */

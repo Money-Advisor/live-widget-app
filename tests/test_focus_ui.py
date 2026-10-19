@@ -76,11 +76,36 @@ def test_these_tests_never_read_or_write_the_real_widget_settings(app):
     assert not win._token                       # nobody is signed in, so nothing calls a server
 
 
-def test_main_py_is_byte_for_byte_unchanged_on_this_branch():
-    r = subprocess.run(["git", "diff", "--quiet", "main...HEAD", "--", "main.py", "build_all.py"],
-                       cwd=APP, capture_output=True)
-    w = subprocess.run(["git", "diff", "--quiet", "--", "main.py", "build_all.py"], cwd=APP, capture_output=True)
-    assert r.returncode == 0 and w.returncode == 0
+def test_main_py_differs_from_main_only_by_its_version():
+    """The panel replaced the old SCREEN (2.9.59), not the widget: every line
+    of main.py - recording, sign-in, dialer, tray, updates - is main's, bar
+    the version the auto-updater compares."""
+    r = subprocess.run(["git", "diff", "-U0", "main", "--", "main.py"], cwd=APP,
+                       capture_output=True, text=True, encoding="utf-8")
+    changed = [ln for ln in r.stdout.splitlines()
+               if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
+    assert r.returncode == 0
+    assert all(ln[1:].startswith("APP_VERSION = ") for ln in changed), changed
+
+
+def test_the_installer_ships_the_version_the_widget_reports():
+    """The auto-updater compares APP_VERSION with the release; an installer
+    built with a different number would reinstall on every start."""
+    import re
+    iss = (APP / "installer" / "installer.iss").read_text(encoding="utf-8")
+    assert re.search(r'#define AppVersion "([^"]+)"', iss).group(1) == main.APP_VERSION
+
+
+def test_the_installer_replaces_the_old_widget_in_place():
+    """Same AppId, exe, folder and Run entry as every earlier Spark Flow - so
+    the update lands over the old widget instead of beside it."""
+    iss = (APP / "installer" / "installer.iss").read_text(encoding="utf-8")
+    assert "AppId={{8E2F1B40-7C2A-4E91-9D3A-NEXCALL00001}" in iss
+    assert '#define AppExe "SparkFlow.exe"' in iss and '#define AppName "Spark Flow"' in iss
+    assert 'Source: "..\\dist\\SparkFlow\\*"' in iss
+    assert 'ValueName: "SparkFlow"' in iss
+    build = (APP / "build_all.py").read_text(encoding="utf-8")
+    assert 'APP_NAME = "SparkFlow"' in build and '"focus_main.py"' in build
 
 
 def test_focus_lays_over_the_classic_window_and_hides_it(app):
@@ -612,3 +637,44 @@ def test_a_show_asked_for_while_building_waits_until_the_page_is_there(app):
     assert not win._token                       # signed out: the classic code asked for the show
     assert win.isVisible()                      # ... and it still happened
     assert f.seen and all(s[3] is not None for s in f.seen)   # but only once Focus existed
+
+
+def test_hide_is_refused_while_a_call_is_in_progress(app):
+    """19 Oct: an advisor pressed "-" mid-call by mistake. The page greys it
+    out; the widget refuses it too, whatever the page sends."""
+    win = make(app)
+    win._logged_out_sticky = False              # signed in (signed out it never hides)
+    for flag in ("_recording", "_starting"):
+        setattr(win, flag, True)
+        win._focus.on_action("hide", "{}")
+        app.processEvents()
+        assert win.isVisible(), flag
+        setattr(win, flag, False)
+    win._focus.on_action("hide", "{}")
+    app.processEvents()
+    assert not win.isVisible()                  # between calls it still hides
+
+
+def test_the_page_is_told_when_hide_is_locked(app):
+    win = make(app)
+    assert win._focus.snapshot()["hideLocked"] is False
+    win._starting = True
+    assert win._focus.snapshot()["hideLocked"] is True
+    win._starting, win._recording = False, True
+    assert win._focus.snapshot()["hideLocked"] is True
+    win._recording = False
+
+
+def test_the_old_screens_minimise_is_locked_during_a_call_too(app):
+    """The old screen shows only if the panel cannot start - and then its "-"
+    must be locked the same way."""
+    win = make(app)
+    btn = win._classic_minimise
+    assert btn is not None and btn.text() == "\u2014"
+    assert win._hide_lock_timer.isActive()
+    win._recording = True
+    win._sync_hide_lock()
+    assert not btn.isEnabled()
+    win._recording = False
+    win._sync_hide_lock()
+    assert btn.isEnabled()

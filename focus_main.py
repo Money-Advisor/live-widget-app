@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Spark Flow with the Focus screen.
+"""Spark Flow - the desktop widget (since 2.9.59).
 
-    python focus_main.py                 # the Focus widget
+    python focus_main.py                 # the widget
     python focus_main.py --minimized     # quietly into the tray (if signed in)
 
 The SAME widget as main.py - same sign-in, recording, dialer, tray and update
-code, imported unchanged - started as FocusWindow, which lays the Focus page
-over it. Focus only: this exe offers no way to the classic screen (that is
-SparkFlow.exe, built from main.py, which is not touched).
+code, imported unchanged - started as FocusWindow, which lays the one-panel
+screen (focus/) over it. This is what build_all.py builds into SparkFlow.exe;
+the old screen appears only as the automatic fallback when the panel cannot
+start (FocusController._fail).
 """
 import os
 import sys
@@ -27,7 +28,7 @@ from PyQt6.QtWidgets import QApplication      # noqa: E402
 
 def run():
     lp = main.setup_logging()
-    print(f">>> Spark Flow widget {main.APP_VERSION} (Focus) <<<")
+    print(f">>> Spark Flow widget {main.APP_VERSION} <<<")
     if lp:
         print(f"[startup] logging to {lp}")
     if focus_ui.WEBENGINE_ERROR:
@@ -35,20 +36,11 @@ def run():
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
-    # The SAME single-instance key as main.py: the classic and Focus builds
-    # must never both run, or one call would be recorded twice.
+    # The SAME single-instance key as main.py, so two copies (an old build
+    # still running during an update, say) can never record one call twice.
+    # Exits silently, exactly as main.main() does.
     if not main.acquire_single_instance():
         print("[startup] Spark Flow is already running - exiting this copy")
-        # Classic exits silently here (a second copy at login is normal). For
-        # Focus the usual cause is the normal widget still running, and a
-        # double-click that does nothing reads as "it's broken" - so say why.
-        if "--minimized" not in sys.argv:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.information(
-                None, "Spark Flow is already running",
-                "Spark Flow is already open on this PC.\n\n"
-                "To use Spark Flow Focus, right-click the Spark Flow icon near the "
-                "clock, choose Quit, then open Spark Flow Focus again.")
         return 0
     app.setApplicationName("Spark Flow")
     app.setOrganizationName(main.ORG)

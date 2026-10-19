@@ -18,7 +18,7 @@ Spark Flow is four repos. The system-wide documentation lives in
 | [live-widget-api](https://github.com/Money-Advisor/live-widget-api) | FastAPI backend, PostgreSQL, Firebase auth, scheduled jobs — **the hub** |
 | [live-widget-server](https://github.com/Money-Advisor/live-widget-server) | Recording server: audio capture, post-call audio, live AI pipeline |
 | [live-widget-frontend](https://github.com/Money-Advisor/live-widget-frontend) | Next.js admin/supervisor dashboard |
-| **live-widget-app** (this repo) | The PyQt6 desktop widget |
+| **live-widget-app** (this repo) | The desktop widget (PyQt6; its panel is a page in Qt WebEngine) |
 
 ## Documentation
 
@@ -37,8 +37,8 @@ Spark Flow is four repos. The system-wide documentation lives in
 ## Run it locally
 
 ```powershell
-pip install -r requirements.txt        # or use the shared venv one level above the repos
-python main.py
+pip install -r requirements.txt        # needs PyQt6-WebEngine for the panel
+python focus_main.py
 ```
 
 Then open Settings (the gear icon) and point it at your own machine: API base URL
@@ -51,6 +51,8 @@ The backend and the recording server both have to be running.
 ```powershell
 python -m pytest tests/ -q       # 430 tests, all offscreen — no window appears
 python smoke_test.py             # 21 headless checks
+node --test focus/tests          # the panel's rules
+python focus_dev/check_harness.py   # every panel screen, rendered in Edge
 ```
 
 Run both from the repo root so `import main` resolves, and scope pytest to
@@ -59,7 +61,7 @@ Run both from the repo root so `import main` resolves, and scope pytest to
 ## Build
 
 ```powershell
-python build_all.py                                              # -> dist\SparkFlow\SparkFlow.exe
+python build_all.py --check                                      # -> dist\SparkFlow\SparkFlow.exe + self-test
 "$env:USERPROFILE\tools\InnoSetup6\ISCC.exe" installer\installer.iss     # -> installer\Output\SparkFlowSetup.exe
 ```
 
@@ -74,8 +76,12 @@ the customer's side of the call is recorded.
 ## Layout
 
 ```
-main.py            the entire application, one file (~4,600 lines)
-build_all.py       PyInstaller build — a FOLDER build, deliberately not one-file
+main.py            the application - recording, sign-in, dialer, tray, updates
+focus_main.py      the entry point (2.9.59+): MainWindow with the panel over it
+focus_ui.py        FocusWindow + the bridge between the page and MainWindow
+focus/             the panel: index.html, app.js, model.js, app.css, fonts
+focus_dev/         panel harness, screenshot/check scripts, real-window and upgrade tests
+build_all.py       PyInstaller build (focus_main.py) — a FOLDER build, deliberately not one-file
 smoke_test.py      21 headless checks, including that no web view has crept back in
 installer/         Inno Setup script, per-user install, no admin prompt
 assets/            icons
@@ -87,6 +93,7 @@ tests/             13 test files
 
 ```
 PyQt6>=6.6
+PyQt6-WebEngine==6.11.0
 pyaudiowpatch>=0.2.12
 websocket-client>=1.7
 requests>=2.31

@@ -22,7 +22,7 @@ EXPECT = {
     "login-error": (["Incorrect email or password."], []),
     "login-forgot": (["reset link is on its way"], ["msg red"]),
     "signed-out": (["Calls are NOT being recorded", "Sign in"], []),
-    "idle": (["Ready for your next call", "Start a call manually", "This shift", "84%", 'class="logo" src="../focus/logo.png"'], []),
+    "idle": (['aria-label="Hide to the tray" data-tip="Hide to the tray">', "Ready for your next call", "Start a call manually", "This shift", "84%", 'class="logo" src="../focus/logo.png"'], ["Focus layout"]),
     "idle-manual": (["Customer name", "Reference ID", "Start recording"], []),
     # Opening a dropdown must not replay the sheet's slide-up: the sheet and its
     # backdrop are still on screen, so they are redrawn "calm"; only the list animates.
@@ -35,7 +35,9 @@ EXPECT = {
     "idle-settings": (["Your voice", "Customer voice", "Log out", "Save settings"],
                       ['class="sheet calm"', "shut", "classic layout", 'data-act="classic"']),
     "mic-gate": (["Choose your microphone", "Headset Microphone", "Use this microphone"], []),
-    "starting": (["Connecting"], ["Start a call manually"]),
+    # "-" is locked from the moment a call starts connecting (19 Oct).
+    "starting": (["Connecting", 'aria-label="Can\u2019t hide during a call"', "during a call\" disabled"],
+                 ["Start a call manually", 'aria-label="Hide to the tray"']),
     "live-listening": (["Listening", "Your checklist appears"], ["Put right"]),
     "live-next": (["Say next", "Ask about every source of household income", "4 things not to say", "On track"], []),
     "live-critical": (["Put right now", "You suggested a food figure", "Say this", "1 thing to put right",

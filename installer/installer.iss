@@ -8,9 +8,16 @@
 ;
 ; Build:  "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\installer.iss
 ; (run from the repo root, AFTER `python build_all.py` has produced dist\SparkFlow.exe)
+;
+; 2.9.59 replaced the old screen with the one-panel one. Nothing about the
+; install changed: the SAME AppId, folder, exe name and Run entry, so running
+; this over any earlier Spark Flow - by hand, or silently by the auto-updater -
+; upgrades it in place, keeps its tasks (auto-start, desktop icon) and leaves
+; the settings (sign-in, devices, server addresses: HKCU\Software\Spark Flow)
+; untouched. Keep it that way: a new AppId would install a SECOND widget.
 
 #define AppName "Spark Flow"
-#define AppVersion "2.9.58"
+#define AppVersion "2.9.59"
 #define AppPublisher "Spark Flow"
 #define AppExe "SparkFlow.exe"
 
@@ -45,6 +52,13 @@ Name: "startupicon"; Description: "Start Spark Flow automatically when I sign in
 ; Per-user auto-start on login (no admin). "--minimized" -> starts quietly in the
 ; system tray. Removed on uninstall. Only added if the Startup task is ticked.
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "SparkFlow"; ValueData: """{app}\{#AppExe}"" --minimized"; Flags: uninsdeletevalue; Tasks: startupicon
+
+[InstallDelete]
+; Start the runtime folder clean. Over an older build, files it had and this one
+; does not would otherwise stay behind in _internal; [Files] then lays down this
+; build's complete set. (The widget has quit before an update runs - the updater
+; waits for it - so nothing here is in use.)
+Type: filesandordirs; Name: "{app}\_internal"
 
 [Files]
 ; Folder (onedir) build: ship the exe AND its runtime next to it. A one-file

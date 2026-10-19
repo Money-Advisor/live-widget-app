@@ -1,4 +1,8 @@
 PyQt6>=6.6
+# The panel (2.9.59+) is drawn by Qt WebEngine. Must match PyQt6's Qt version;
+# these are the versions the widget is built and tested with.
+PyQt6-WebEngine==6.11.0
+PyQt6-WebEngine-Qt6==6.11.2
 pyaudiowpatch>=0.2.12
 websocket-client>=1.7
 requests>=2.31

@@ -8,7 +8,7 @@
 | | |
 | --- | --- |
 | Language | Python 3.12 |
-| UI | PyQt6 (widgets, not QML), with `QtSvg` for icons |
+| UI | The panel: a web page (`focus/`) in Qt WebEngine over PyQt6 (2.9.59+); the old PyQt6 screen is the fallback |
 | Audio | `pyaudiowpatch` — a PyAudio fork with WASAPI loopback support |
 | Networking | `websocket-client` for audio, `requests` for REST |
 | Packaging | PyInstaller (folder build) then Inno Setup |
@@ -17,11 +17,41 @@
 Windows only. WASAPI loopback is how the customer's side of a call is captured, and
 `pyaudiowpatch` is the only practical way to reach it from Python.
 
-Everything lives in one file, `main.py`, at roughly 4,600 lines. That is unusual and
+The widget's logic lives in one file, `main.py`. Since 2.9.59 the screen is
+`focus_main.py` + `focus_ui.py` + the page in `focus/` (see "The panel" below);
+`main.py` itself is unchanged by that. The one-file choice is unusual and
 deliberate: it is packaged as a single binary, there is no import graph to reason
 about at runtime, and a PyInstaller build with one module has one fewer thing to go
 wrong. It has held up, but see [HANDOVER.md](HANDOVER.md) for the argument on both
 sides.
+
+## The panel (2.9.59)
+
+Since 2.9.59 the widget's screen is one 360px panel docked to the screen edge,
+replacing the old four columns. It is a web page (`focus/`: `index.html`,
+`app.js`, `model.js`, `app.css`, local fonts) drawn by **Qt WebEngine** inside
+the same window, and `focus_main.py` is the entry point.
+
+The page is only a screen. `FocusWindow` (`focus_ui.py`) **is** the old
+`MainWindow`, unchanged: every worker, the recording, the dialer connection,
+sign-in, tray and auto-update run exactly as before, and the old panels are
+still built and fed every message, just hidden. The page talks to Python over
+`QWebChannel`, and every button ends in the same `MainWindow` method the old
+button called - the page has no recording, sign-in or network code of its own.
+Only window placement is overridden (docked full height; 360px, 720 with the
+I&E pinned, 64 folded).
+
+- **It falls back by itself.** If WebEngine is missing, the page fails to load,
+  or it is not ready within 10s, the old screen shows instead (tray message;
+  recording is not affected).
+- **Nothing flashes on opening.** The window stays transparent until the page
+  has drawn, then appears already docked.
+- **"-" is locked during a call** (19 Oct): greyed out from the moment a call
+  starts connecting until it stops, and refused in Python whatever the page
+  sends; the old screen's "-" is locked the same way.
+- The page's rules (card order, auto-clear, safety card) are tested in
+  `focus/tests/` (node); every screen state is rendered and checked in Edge by
+  `focus_dev/check_harness.py`; `focus_dev/qt_e2e.py` drives the real window.
 
 ## Threading model
 
@@ -236,13 +266,14 @@ distinguished from someone impersonating it. `safe_installer_filename()` sanitis
 the version string before it is interpolated into a temp path, so a crafted version
 cannot escape the directory with `../..`.
 
-### Native login, no web view
+### Login: the panel draws it; main.py stays web-free
 
-The login screen is plain PyQt6. An earlier design used a `QWebEngineView` loading
-`assets/login.html` with a `QWebChannel` bridge; it was removed. The smoke test
-asserts that neither `QWebEngineView` nor the bridge has come back, because
-reintroducing them would add a browser engine — tens of megabytes and its own
-update surface — to a call recorder.
+Since 2.9.59 the sign-in screen is drawn by the panel (a web page in Qt
+WebEngine), and its button calls the same `_attempt_login`. An earlier design
+had put a `QWebEngineView` inside `main.py` itself and it was removed; the smoke
+test still asserts `main.py` has none, so the old screen - the fallback - works
+with no browser engine at all. The cost of the engine is real: the package is
+~530 MB installed (WebEngine ~195 MB) against ~105 MB before.
 
 ### A log file, because there is no console
 

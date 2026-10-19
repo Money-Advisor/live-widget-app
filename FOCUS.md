@@ -1,8 +1,11 @@
-# Spark Flow Focus — the compact widget screen
+# The panel ("Focus") — Spark Flow's screen since 2.9.59
 
-Branch `focus-ui`, started 15 Oct 2026. **Nothing here changes the classic
-widget.** `main.py`, `build_all.py`, `tests/conftest.py` and every existing test
-are byte-for-byte as on `main` (`tests/test_focus_ui.py` checks it).
+Built on branch `focus-ui` from 15 Oct 2026 as a separate preview ("Spark Flow
+Focus"). **The company approved it on 19 Oct and it REPLACED the old screen:**
+since 2.9.59 `SparkFlow.exe` is `focus_main.py`, installed by the same
+installer over the old widget, and there is no separate Focus exe any more.
+`main.py` is unchanged apart from its version (`tests/test_focus_ui.py` checks
+it); the old screen survives only as the automatic fallback.
 
 ## What it is
 
@@ -25,8 +28,8 @@ focus_main.py      entry point: the SAME widget started as FocusWindow
 focus_ui.py        FocusWindow(main.MainWindow) + FocusController + the bridge
 focus/             the page: index.html, app.js (drawing), model.js (rules), app.css, fonts/ (OFL)
 focus_dev/         harness.html + scenarios.js (40 states), screenshot + check scripts, qt_e2e.py
-build_focus.py     PyInstaller -> build/focus-dist/SparkFlowFocus/ (+ installer); build_all.py untouched
-installer/installer_focus.iss   the Focus installer (installer.iss untouched)
+build_all.py       PyInstaller: focus_main.py -> dist/SparkFlow/SparkFlow.exe (--check self-tests it)
+installer/installer.iss   the one installer - same AppId/folder/exe/Run entry as every earlier Spark Flow
 ```
 
 * `FocusWindow` **is** the classic `MainWindow`. Every worker, the recording,
@@ -41,11 +44,14 @@ installer/installer_focus.iss   the Focus installer (installer.iss untouched)
   to the classic method whenever Focus is not showing.
 * **Falls back to classic by itself** if WebEngine is missing, the page fails to
   load, or it does not say "ready" within 10 s — with a tray message.
-* **Two exes, two widgets** (Faseeh, 15 Oct): `SparkFlowFocus.exe` is Focus only —
-  no tray item, Settings button or start option leads to the classic screen;
-  that is `SparkFlow.exe`. The classic screen appears here only as the
-  automatic fallback above.
-* Same single-instance lock as classic: the two can never run together.
+* **One widget** (19 Oct): no tray item, Settings button or start option leads
+  to the old screen; it appears only as the automatic fallback above.
+* Same single-instance lock as before, and a second copy exits silently as the
+  old widget did.
+* **"-" is locked during a call** (19 Oct, after an advisor pressed it mid-call
+  by mistake): greyed out from the moment a call starts connecting until it
+  stops, refused in Python whatever the page sends, and the old screen's "-"
+  is locked the same way.
 * **Nothing flashes on opening** (15 Oct). The window stays fully transparent
   until the page has drawn, then appears already docked. Two classic startup
   shows are kept from the screen: the checklist panel's constructor shows it
@@ -63,47 +69,41 @@ installer/installer_focus.iss   the Focus installer (installer.iss untouched)
 * **Hover hints are the page's own** (`data-tip`, never `title=""`): inside the
   widget Qt draws a browser hint as a black box with black text.
 
-## Run it
+## Run it / build it
 
 ```powershell
-# from Spark Flow\live-widget-app-focus, with the Focus venv (has PyQt6-WebEngine 6.11.0)
-..\..\.venv-focus\Scripts\python.exe focus_main.py            # Focus
+# a Python with PyQt6-WebEngine (requirements.txt) - on this PC <root>\.venv-focus
+python focus_main.py                 # uses the real widget settings, like the installed widget
+python build_all.py --check          # dist\SparkFlow\SparkFlow.exe + its self-test
+ISCC installer\installer.iss         # installer\Output\SparkFlowSetup.exe (~145 MB)
+python focus_dev\upgrade_test.py <old dist\SparkFlow> <old installer.iss>
 ```
 
-`focus_main.py` uses the real widget settings — the signed-in session on that
-PC — exactly like the installed widget. Don't run it beside an installed
-widget you don't want to share a session with (the lock stops a second copy).
+The upgrade test installs an old widget and runs the new installer over it with
+the auto-updater's own command line, under a throwaway identity (the real
+install on the PC is never touched), then uninstalls. 19 Oct, 2.9.58 -> 2.9.59:
+**16/16** - same folder, exactly the new file set, nothing old left behind,
+auto-start kept, one install entry at 2.9.59, installed exe self-test OK, clean
+uninstall; with the installer's clean-runtime step removed it fails 2.
 
-## Give it to someone (Bilal) — one file
+The old preview, "Spark Flow Focus" (own AppId, no auto-start), is not removed
+by the new installer: uninstall it by hand on the two PCs that have it.
 
-```powershell
-..\..\.venv-focus\Scripts\python.exe build_focus.py --installer --check
-```
-
-makes `installer\Output\SparkFlowFocusSetup.exe` (~145 MB). It installs as
-**"Spark Flow Focus"** beside the normal widget — own folder, Start Menu entry and
-desktop icon, **no auto-start** (the normal widget keeps that), and uninstalling it
-removes only its own files. `--check` installs it into a throwaway folder,
-self-tests the installed exe, uninstalls it and proves the normal widget's
-program, start-up entry and settings are identical before and after.
-
-Only one Spark Flow runs at a time: quit the normal one (tray → Quit) before
-opening Spark Flow Focus — it says so if you forget. Build output goes to
-`build\focus-dist\` so a rebuild never fights a copy someone has open.
-
-## Proof (15 Oct)
+## Proof (15-19 Oct)
 
 | What | Result |
 | --- | --- |
 | `node --test focus/tests/*.test.cjs` — the rules | 23 pass; **10/10** deliberate rule breaks go red |
-| `pytest tests/test_focus_ui.py` — the wiring | 54 pass; deliberate breaks go red (incl. 6/6 startup rules) |
+| `pytest tests/test_focus_ui.py` — the wiring | 59 pass; deliberate breaks go red (incl. 6/6 startup rules); "-" locked in a call; installer identity |
 | `focus_dev/check_harness.py` — every screen rendered in Edge | **47/47** (4 popup screens); drawing breaks go red (3/3 popup rules); every non-popup screen pixel-identical to before except the animated ring, which differs run to run; a browser `title` hint anywhere fails it |
-| `build_focus.py --installer --check` — the installer | installs, installed exe self-test **OK**, uninstalls clean, normal widget untouched |
+| `focus_dev/upgrade_test.py` — old widget upgraded in place | **16/16** (above) |
+| the existing suite (`pytest tests`) on throwaway settings | 549 pass; 2 fail, neither from this work: one fails on `main` too (I&E income view), one reads the sibling `live-widget-app` checkout's installer from inside this worktree |
+| `smoke_test.py` | ALL PASS |
 | `focus_dev/qt_e2e.py` — real widget + real WebEngine | **32/32** (hover hint, load, bridge, buttons → classic methods, dropdown keeps the sheet still, widths 360/720/64/416, slide-out, safety, no layout switch, summary, reload replay) |
-| `build_focus.py --check` — the packaged exe | builds; self-test **OK** (page loads from the package, bridge connects) |
+| `build_all.py --check` — the packaged exe | builds; self-test **OK** (version 2.9.59, page loads from the package, bridge connects, shown once drawn) |
 | `focus_dev/startup_windows.py` — what Windows shows on opening, watched from outside | signed in, signed out and the built exe: **one window, first seen already docked**; FAILs with either startup fix removed |
 | `focus_dev/startup_blinks.py` — the same from inside Qt | 0 visible blinks, 0 early frames |
-| `main.py` / `build_all.py` / conftest | unchanged (git diff) |
+| `main.py` | identical to `main` except `APP_VERSION` (test) |
 
 Screens to look at: `python focus_dev/shoot_harness.py <dir>` (all 40 at real size).
 
@@ -111,8 +111,10 @@ Screens to look at: `python focus_dev/shoot_harness.py <dir>` (all 40 at real si
 
 * **Bilal**: older correction cards wait in the "Then" queue (one tap each)
   rather than all showing at once. The newest is always in front.
-* **Size**: the package is ~530 MB on disk vs ~105 MB classic — Qt WebEngine is
-  195 MB of it. Trimming its language files would save ~50 MB.
+* **Size**: the package is ~530 MB on disk vs ~105 MB before — Qt WebEngine is
+  195 MB of it. Trimming its language files would save ~50 MB. The installer
+  (~145 MB) is under the updater's 300 MB cap, which every widget since the
+  updater was added (3 Aug) has.
 * **Not proved on a real call yet**: everything above uses real message shapes
   from the server code, not a live call. Next: Faseeh's and Bilal's PCs on staging.
 * **Found while testing, NOT fixed (pre-existing, outside this branch's

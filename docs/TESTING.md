@@ -52,6 +52,23 @@ Several of these are regression contracts for specific field failures rather tha
 ordinary unit tests — the sticky sign-out, the server migration, the mic filter, the
 buffering, and most of the auto-update suite. Treat them accordingly.
 
+## The panel (2.9.59+)
+
+| What | Run |
+| --- | --- |
+| The page's rules (card order, auto-clear, safety, popups) | `node --test focus/tests` |
+| How the page talks to MainWindow, window placement, "-" locked in a call | `python -m pytest tests/test_focus_ui.py` |
+| Every screen state rendered in Edge and checked | `python focus_dev/check_harness.py` (screenshots: `shoot_harness.py <dir>`) |
+| The real window + real WebEngine, buttons -> MainWindow methods | `python focus_dev/qt_e2e.py <out_dir>` |
+| Nothing flashes on opening (inside Qt / as Windows sees it) | `focus_dev/startup_blinks.py`, `focus_dev/startup_windows.py [--exe dist/SparkFlow/SparkFlow.exe]` |
+| The built exe | `python build_all.py --check` |
+| The installer upgrades an old widget in place | `python focus_dev/upgrade_test.py <old dist> <old installer.iss>` |
+
+All of these use throwaway settings. The existing suite does not (see the
+warning at the top of `tests/test_focus_ui.py`): `conftest.py`'s
+`setDefaultFormat` does not reach `QSettings(ORG, APP)`, so run it on a PC where
+nobody is signed in, or swap `main.QSettings` for a temp INI first.
+
 ## The smoke test
 
 `smoke_test.py` runs 21 assertions in a headless Qt application: icons render,

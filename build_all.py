@@ -2,12 +2,17 @@
 """
 build_all.py
 ------------
-Builds the Spark Flow desktop widget (main.py) into a standalone app with
-PyInstaller. Produces a Windows .exe or a macOS .app + .dmg depending on the
-host OS. The login web page (assets/login.html) is bundled alongside the binary.
+Builds the Spark Flow desktop widget into a standalone app with PyInstaller.
+Produces a Windows .exe or a macOS .app + .dmg depending on the host OS.
+
+Since 2.9.59 the widget is focus_main.py: the one-panel screen (focus/, drawn
+by Qt WebEngine) over the unchanged MainWindow in main.py. The exe keeps its
+name, so the installer and the auto-updater replace the old widget in place.
+The build Python needs PyQt6-WebEngine (requirements.txt).
 
 Usage:
-    python build_all.py
+    python build_all.py            # build
+    python build_all.py --check    # build, then self-test the built exe
 
 Output (Windows):  dist/SparkFlow/SparkFlow.exe  (folder build)
 Output (macOS):    dist/SparkFlow.app  +  dist/SparkFlow.dmg
@@ -17,6 +22,7 @@ import subprocess
 import sys
 import os
 import shutil
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PYTHON = sys.executable
@@ -24,9 +30,12 @@ IS_MAC = sys.platform == "darwin"
 
 APP_NAME = "SparkFlow"
 
-# Bundle the assets folder (icon.png). --add-data uses os.pathsep as the
-# SRC{sep}DEST separator (';' on Windows, ':' elsewhere).
-ADD_DATA = [f"{os.path.join(HERE, 'assets')}{os.pathsep}assets"]
+# Bundle the assets folder (icon.png) and the panel's page (focus/). --add-data
+# uses os.pathsep as the SRC{sep}DEST separator (';' on Windows, ':' elsewhere).
+ADD_DATA = [
+    f"{os.path.join(HERE, 'assets')}{os.pathsep}assets",
+    f"{os.path.join(HERE, 'focus')}{os.pathsep}focus",
+]
 
 HIDDEN_IMPORTS = [
     "pyaudiowpatch",
@@ -45,6 +54,9 @@ HIDDEN_IMPORTS = [
     "charset_normalizer",
     "idna",
     "PyQt6.QtSvg",
+    "PyQt6.QtWebEngineWidgets",
+    "PyQt6.QtWebEngineCore",
+    "PyQt6.QtWebChannel",
 ]
 
 COLLECT_ALL = ["pyaudiowpatch"]
@@ -52,7 +64,7 @@ COLLECT_ALL = ["pyaudiowpatch"]
 
 def run_build() -> bool:
     print(f"\n{'=' * 60}")
-    print(f"  Building: {APP_NAME}  <-  main.py  ({'macOS' if IS_MAC else 'Windows'})")
+    print(f"  Building: {APP_NAME}  <-  focus_main.py  ({'macOS' if IS_MAC else 'Windows'})")
     print(f"{'=' * 60}")
 
     cmd = [
@@ -87,13 +99,25 @@ def run_build() -> bool:
     for pkg in COLLECT_ALL:
         cmd += ["--collect-all", pkg]
 
-    cmd.append(os.path.join(HERE, "main.py"))
+    cmd.append(os.path.join(HERE, "focus_main.py"))
 
     result = subprocess.run(cmd, cwd=HERE)
     if result.returncode != 0:
         print(f"\nx  FAILED: {APP_NAME}  (exit code {result.returncode})")
         return False
     return True
+
+
+def check() -> bool:
+    """Run the BUILT exe's self-test: throwaway settings (nobody signed in, no
+    server called), no widget.log, no single-instance lock - so it proves the
+    package on any PC without touching the widget installed there."""
+    exe = os.path.join(HERE, "dist", APP_NAME, f"{APP_NAME}.exe")
+    result = os.path.join(tempfile.mkdtemp(prefix="sf-build-"), "selftest.txt")
+    code = subprocess.run([exe, f"--selftest={result}"], timeout=120).returncode
+    text = open(result, encoding="utf-8").read() if os.path.exists(result) else "(no result written)"
+    print(text)
+    return code == 0 and "RESULT=OK" in text
 
 
 def make_dmg() -> bool:
@@ -137,6 +161,11 @@ def main():
             sys.exit(1)
     else:
         print(f"\nOK  Done: dist/{APP_NAME}/{APP_NAME}.exe  (folder build)")
+        if "--check" in sys.argv:
+            if not check():
+                print("\nSELF-TEST FAILED - do not ship this build.")
+                sys.exit(1)
+            print("SELF-TEST PASSED")
 
     print(f"\nArtifacts are in:  {dist_dir}")
 

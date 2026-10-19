@@ -588,7 +588,11 @@
     var u = host.user || {};
     return '<div class="hd row" data-drag><img class="logo" src="' + ASSET + 'logo.png" alt=""><div class="hd-id"><span class="name">' + esc(host.company || 'Spark Flow') + '</span><span class="sub">' + esc([u.name || u.email || '', u.dept || ''].filter(Boolean).join(' \u00b7 ')) + '</span></div>' +
       '<button class="ib ghost" data-act="settings" aria-label="Settings" data-tip="Settings">' + I.gear + '</button>' +
-      '<button class="ib ghost" data-act="hide" aria-label="Hide to the tray" data-tip="Hide to the tray">' + I.minus + '</button></div>';
+      // Locked from the moment a call starts connecting (19 Oct): an advisor
+      // pressed it mid-call by mistake. Python refuses it too.
+      (host.hideLocked
+        ? '<button class="ib ghost" data-act="hide" aria-label="Can\u2019t hide during a call" data-tip="Can\u2019t hide during a call" disabled>' + I.minus + '</button></div>'
+        : '<button class="ib ghost" data-act="hide" aria-label="Hide to the tray" data-tip="Hide to the tray">' + I.minus + '</button></div>');
   }
 
   function idleBody() {
@@ -614,7 +618,7 @@
       '<div class="tiles"><div><span class="mono">' + esc(s.calls != null && s.calls !== '' ? s.calls : '\u2014') + '</span><span>Calls</span></div>' +
       '<div><span class="mono" style="color:var(--grnInk)">' + esc(s.avg || '\u2014') + '</span><span>Average</span></div>' +
       '<div><span class="mono" style="color:var(--amb)">' + esc(s.flags != null && s.flags !== '' ? s.flags : '\u2014') + '</span><span>Flags</span></div></div>';
-    h += '<div style="margin-top:auto;text-align:center;font-size:11px;color:var(--faint)">Spark Flow ' + esc(host.version || '') + ' \u00b7 Focus layout</div>';
+    h += '<div style="margin-top:auto;text-align:center;font-size:11px;color:var(--faint)">Spark Flow ' + esc(host.version || '') + '</div>';
     return h;
   }
 

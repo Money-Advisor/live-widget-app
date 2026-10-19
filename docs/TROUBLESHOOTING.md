@@ -71,6 +71,20 @@ by `score_fraction()`, which accepts either shape and returns None rather than
 raising on anything it does not recognise. Any new field the server sends the
 widget should be read the same defensive way.
 
+## The old four-column screen is showing (2.9.59+)
+
+The panel could not start, so the widget fell back to the old screen by itself
+(tray message: "The new layout could not start"). Recording is not affected.
+`widget.log` says why on the line `[focus] falling back to the classic layout:`
+- WebEngine missing from the build, the page failing to load, or no "ready"
+within 10s.
+
+## "-" is greyed out (2.9.59+)
+
+Deliberate: hiding is locked from the moment a call starts connecting until it
+stops, after an advisor pressed it mid-call by mistake. `widget.log` shows
+`[focus] hide refused - a call is in progress` if anything tried.
+
 ## Ask for the log file first
 
 ```

@@ -2,7 +2,7 @@
 """What Windows shows while the Focus widget opens - watched from OUTSIDE.
 
     python focus_dev/startup_windows.py [signed-in|signed-out]
-    python focus_dev/startup_windows.py --exe build/focus-dist/SparkFlowFocus/SparkFlowFocus.exe
+    python focus_dev/startup_windows.py --exe dist/SparkFlow/SparkFlow.exe
 
 Starts the widget as a separate process and, every ~2ms, lists every visible
 top-level window that process (or a child of it) owns: where it is, and its

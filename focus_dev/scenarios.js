@@ -15,14 +15,14 @@
   var BASE_STATE = {
     phase: 'idle', signedOut: false, login: { busy: false, error: '', info: '', forgotBusy: false },
     user: { name: 'Sam Advisor', email: 'sam.advisor@example.co.uk', dept: 'SFM' }, company: 'The Insolvency Group',
-    recording: false, paused: false, elapsed: 0, callSeq: 0, ref: '', livePipeline: true, hideFields: false,
+    recording: false, hideLocked: false, paused: false, elapsed: 0, callSeq: 0, ref: '', livePipeline: true, hideFields: false,
     shift: { calls: 11, avg: '84%', flags: 3 }, micGate: false,
     mics: ['Headset Microphone (Jabra Evolve2 30)', 'Microphone Array (Realtek Audio)'], micIndex: 0,
     spks: ['Headset Earphone (Jabra Evolve2 30) [Loopback]', 'Speakers (Realtek Audio) [Loopback]'], spkIndex: 0,
     apiBase: 'https://flow.example:8001', wsUrl: 'ws://192.168.0.10:8765', version: '2.9.57', dock: 'right'
   };
   function st(extra) { return { kind: 'state', data: Object.assign({}, BASE_STATE, extra) }; }
-  function live(extra) { return st(Object.assign({ phase: 'live', recording: true, callSeq: 1, ref: 'REF-48213', elapsed: 755 }, extra || {})); }
+  function live(extra) { return st(Object.assign({ phase: 'live', recording: true, hideLocked: true, callSeq: 1, ref: 'REF-48213', elapsed: 755 }, extra || {})); }
 
   var INCOME_CHECKS = [
     { id: 'inc.pay', label: 'Take-home pay asked', done: true, severity: 'high', evidence: 'What comes into your account each month after tax?', prompt: null, missing_parts: [], parts: [], urgent: false, urgent_reason: null, section_label: 'Income' },
@@ -130,7 +130,7 @@
   S['settings-dropdown-picked'] = { size: [360, 900], steps: [st({ mics: LONG_MICS, micIndex: 0 })],
     clicks: ['[data-act="settings"]', '[data-act="dd"][data-v="mic"]', '[data-act="ddPick"][data-k="1"]'] };
   S['mic-gate'] = { size: [360, 900], steps: [st({ micGate: true })] };
-  S['starting'] = { size: [360, 900], steps: [st({ phase: 'starting' })] };
+  S['starting'] = { size: [360, 900], steps: [st({ phase: 'starting', hideLocked: true })] };
   S['live-listening'] = { size: [360, 900], steps: [live({ elapsed: 4 })] };
   S['live-next'] = { size: [360, 900], steps: [live({}), stage()] };
   S['live-critical'] = { size: [360, 900], steps: [live({ elapsed: 760 }), stage({ trigger_actions: [CARD_AFFORD] }), ieMsg('income')] };
