@@ -38,6 +38,22 @@ def _never_the_real_widget_settings(tmp_path_factory):
     main.QSettings = real
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _no_modal_boxes():
+    """A modal QMessageBox blocks the test run for ever. Earlier test files can
+    leave a call-start worker running whose failure arrives during these tests
+    and opens one (_on_call_failed -> QMessageBox.critical): found 19 Oct when
+    the full suite hung in this file's first test. Record them instead."""
+    from PyQt6.QtWidgets import QMessageBox
+    shown = []
+    saved = {n: getattr(QMessageBox, n) for n in ("critical", "warning", "information", "question")}
+    for n in saved:
+        setattr(QMessageBox, n, staticmethod(lambda *a, _n=n, **k: shown.append(_n)))
+    yield shown
+    for n, f in saved.items():
+        setattr(QMessageBox, n, f)
+
+
 @pytest.fixture(scope="module")
 def app():
     return QApplication.instance() or QApplication([])
