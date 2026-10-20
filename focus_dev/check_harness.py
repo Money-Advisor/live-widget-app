@@ -41,7 +41,7 @@ EXPECT = {
     "live-listening": (["Listening", "Your checklist appears"], ["Put right"]),
     "live-next": (["Say next", "Ask about every source of household income", "4 things not to say", "On track"], []),
     "live-critical": (["Put right now", "You suggested a food figure", "Say this", "1 thing to put right",
-                       "Show another way to say it"], ["On track"]),
+                       "Show another way to say it"], ["On track", "Customer said", 'class="quote said"']),
     "live-critical-alt": (["Or say this", "Just to check"], []),
     "live-three": (["3 things to put right", "Council tax: two amounts", "Guideline figure said aloud",
                     "Affordability steering"], []),
@@ -49,7 +49,13 @@ EXPECT = {
     # not repeated, no "put right" promise under it; other cards unchanged.
     "popup-front": (['class="kind ttl">Income clarification required</span>', '<h2 class="gtext">', "1 thing to clarify"],
                     ['class="eyebrow">Income clarification required', "Clears itself when it", ">Put right</span>",
-                     "to put right"]),
+                     "to put right", "Customer said", 'class="quote said"']),
+    # 2.9.60: a popup says why it opened and what the customer said; a popup
+    # with neither (popup-front) and a breach card with a quote (live-critical) do not.
+    "popup-said": (['<p class="detail">Two figures, not settled: £1,000 or £1,500</p>',
+                    '<div class="quote said"><span class="cap">Customer said</span><p>“maybe 1000 or 1500 from the business”</p></div>',
+                    'class="kind ttl">Income clarification required</span>'],
+                   ["Say this", "Clears itself when it", ">Put right</span>"]),
     "popup-long-title": (['class="kind ttl">Household expenditure needs confirming</span>'], []),
     "popup-queued": (['<span class="kind">Put right</span>', 'class="eyebrow">Council tax: two amounts',
                       '<span class="qt">Income clarification required</span>', ">Clarify</span>",

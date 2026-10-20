@@ -75,6 +75,11 @@
   var CARD_POPUP_LONG = { id: 'ie.prompt.payer.Expenditure.Rent', title: 'Household expenditure needs confirming', label: 'Household expenditure needs confirming',
     severity: 'high', message: 'The customer indicated that someone else pays or reimburses some of rent. Clarify what amount the household actually pays before including or excluding it.',
     action: null, script: null, coaching_only: false, occurrence: 1, about: 'Rent', source: 'panel' };
+  // 2.9.60: a popup carrying why it opened and the customer's words (Faseeh, 20 Oct).
+  var CARD_POPUP_SAID = { id: 'ie.prompt.income.earnings.other_earnings', title: 'Income clarification required', label: 'Income clarification required',
+    severity: 'high', message: 'The customer mentioned other earnings of £1,000 or £1,500, but which amount is right still needs confirming. Clarify the correct amount, frequency and whether this is household income or already included elsewhere. Do not include, exclude or duplicate it based on an assumption.',
+    action: null, script: null, coaching_only: false, occurrence: 1, about: 'other_earnings', source: 'panel',
+    quote: 'maybe 1000 or 1500 from the business', why: 'Two figures, not settled: £1,000 or £1,500' };
   var CRISIS = { type: 'crisis_alert', line: 'I’m really sorry you’re feeling this way. You don’t have to deal with this on your own, and there are people you can talk to right now, any time of day.',
     resources: [{ name: 'Samaritans', detail: '116 123 — free, 24/7' }, { name: 'Shout', detail: 'text 85258' }, { name: 'Mind', detail: '0300 123 3393' }],
     immediate: true, escalation: 'IMMEDIATE RISK TO LIFE — stay with them and call 999 now.', evidence: 'I just don’t see the point any more', audio_ts: 812.4 };
@@ -137,6 +142,7 @@
   S['live-critical-alt'] = { size: [360, 900], steps: [live({ elapsed: 760 }), stage({ trigger_actions: [CARD_AFFORD] })], clicks: ['[data-act="alt"]'] };
   S['live-three'] = { size: [360, 900], steps: [live({ elapsed: 790 }), stage({ trigger_actions: [CARD_AFFORD] }), stage({ trigger_actions: [CARD_AFFORD, CARD_CTAX, CARD_GUIDE] }), ieMsg('expenditure')] };
   S['popup-front'] = { size: [360, 900], steps: [live({ elapsed: 790 }), stage({ trigger_actions: [CARD_POPUP] })] };
+  S['popup-said'] = { size: [360, 900], steps: [live({ elapsed: 790 }), stage({ trigger_actions: [CARD_POPUP_SAID] })] };
   S['popup-long-title'] = { size: [360, 900], steps: [live({ elapsed: 790 }), stage({ trigger_actions: [CARD_POPUP_LONG] })] };
   S['popup-queued'] = { size: [360, 900], steps: [live({ elapsed: 790 }), stage({ trigger_actions: [CARD_POPUP] }), stage({ trigger_actions: [CARD_POPUP, CARD_CTAX] })] };
   S['popup-peek'] = { size: [416, 900], steps: [live({}), stage(), ieMsg('expenditure')], clicks: ['[data-act="collapse"]'], later: [stage({ trigger_actions: [CARD_POPUP] })] };

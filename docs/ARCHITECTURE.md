@@ -49,6 +49,11 @@ I&E pinned, 64 folded).
 - **"-" is locked during a call** (19 Oct): greyed out from the moment a call
   starts connecting until it stops, and refused in Python whatever the page
   sends; the old screen's "-" is locked the same way.
+- **A popup says why** (2.9.60, 20 Oct): an I&E clarification popup (a card
+  with a `title`) shows the server's `why` ("Two figures, not settled: £1,000
+  or £1,500") and, under "Customer said", the words that opened it (`quote`,
+  cut at 220 characters). Either is left out when the server sends none, and
+  no other card changes (`popup-said` in the harness).
 - The page's rules (card order, auto-clear, safety card) are tested in
   `focus/tests/` (node); every screen state is rendered and checked in Edge by
   `focus_dev/check_harness.py`; `focus_dev/qt_e2e.py` drives the real window.

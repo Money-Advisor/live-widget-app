@@ -108,6 +108,8 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .quote .cap{font-size:9.5px}
 .critical .quote .cap,.missed .quote .cap{color:#93372E}.high .quote .cap{color:var(--amb)}
 .quote p{margin:0;font-size:15px;font-weight:600;line-height:1.5;color:var(--ink);overflow-wrap:anywhere}
+/* 2.9.60: the customer's words that opened an I&E popup - quieter than a script to say */
+.quote.said p{font-size:13.5px;font-weight:500;font-style:italic;color:var(--ink2)}
 .parts{display:flex;flex-direction:column}
 .part{display:flex;align-items:flex-start;gap:10px;padding:7px 2px;font-size:14px;line-height:1.4;color:var(--ink2);border-top:1px solid #F0EEF6}
 .critical .part,.missed .part,.urgent .part{border-top-color:#F7DCD8}

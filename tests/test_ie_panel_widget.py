@@ -187,7 +187,8 @@ def panel(view="income", solutions=False, stage=None):
 
 def test_the_top_block_holds_household_vehicles_and_affordability():
     t = texts(panel())
-    for want in ("Household", "1 adult, children aged 7 and 12", "Vehicles", "2",
+    # Faseeh, 20 Oct: the household as the guidelines count it.
+    for want in ("Household", "1 adult, 2 under 16", "Vehicles", "2",
                  "Client affordability", "£100"):
         assert want in t
 

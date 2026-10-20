@@ -284,6 +284,14 @@
         (it.forbidden || it.title ? '' : '<div class="eyebrow">' + esc(it.label) + '</div>') +
         // A popup's message is a paragraph of guidance, not a headline.
         '<h2' + (it.title ? ' class="gtext"' : '') + '>' + esc(it.message) + '</h2>';
+      if (it.title) {
+        // 2.9.60: a popup says why it opened and what the customer said that
+        // opened it (Faseeh, 20 Oct). Only on titled popups; no other card changes.
+        var why = String(r.why || '').trim();
+        var said = String(r.quote || '').trim();
+        if (why) h += '<p class="detail">' + esc(why) + '</p>';
+        if (said) h += '<div class="quote said"><span class="cap">Customer said</span><p>“' + esc(said.length > 220 ? said.slice(0, 217) + '…' : said) + '”</p></div>';
+      }
       if (it.forbidden) {
         h += '<p class="detail">This phrase must not be used. Carry on, and don\u2019t repeat it.</p>';
       } else if (r.script) {
