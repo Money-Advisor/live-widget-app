@@ -79,11 +79,18 @@ The panel could not start, so the widget fell back to the old screen by itself
 - WebEngine missing from the build, the page failing to load, or no "ready"
 within 10s.
 
-## "-" is greyed out (2.9.59+)
+## "x" is greyed out, or missing from the bar (2.9.62; "-" before that)
 
-Deliberate: hiding is locked from the moment a call starts connecting until it
-stops, after an advisor pressed it mid-call by mistake. `widget.log` shows
-`[focus] hide refused - a call is in progress` if anything tried.
+Deliberate: hiding to the tray is locked from the moment a call starts
+connecting until it stops, after an advisor hid a call by mistake. `widget.log`
+shows `[focus] hide refused - a call is in progress` if anything tried. Folding
+to the bar ("-" between calls, the fold button on a call) is never locked.
+
+## The widget stays a thin bar when a call starts or ends (2.9.62)
+
+Deliberate: an agent who minimised it to the bar keeps the bar until they open
+it. The bar shows the call while it runs and the score after it; tapping the
+score opens the summary. A customer-safety card opens the panel by itself.
 
 ## Ask for the log file first
 

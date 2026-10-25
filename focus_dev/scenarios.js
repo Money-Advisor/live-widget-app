@@ -241,5 +241,27 @@
       later: [stage({ trigger_actions: [CARD_AFFORD] })], laterDelay: 2300 };
   S['dock-left'] = { size: [360, 900], steps: [live({ dock: 'left' }), stage({ trigger_actions: [CARD_AFFORD] })] };
 
+  // 26 Oct: "-" folds to the bar between calls and after a call, "x" hides to
+  // the tray, and folded stays folded when a call starts or ends.
+  var FOLD = '.hd [data-act="collapse"]';
+  var SUM_SCORE = S['summary-score'].steps;
+  function sumScore(score) { return [st({ phase: 'summary' }), { kind: 'summary', data: { mode: 'score', duration: 1456, score: score, saved: true, covered: [{ label: 'a', section: 'x' }], missed: [{ label: 'Fees explained', section: 'Fees' }] } }]; }
+  S['bar-idle'] = { size: [64, 900], steps: [st({})], clicks: [FOLD] };
+  S['bar-open'] = { size: [360, 900], steps: [st({})], clicks: [FOLD, '.strip [data-act="expand"]'] };
+  S['bar-starting'] = { size: [64, 900], steps: [st({})], clicks: [FOLD], later: [st({ phase: 'starting', hideLocked: true })] };
+  S['bar-call-starts'] = { size: [64, 900], steps: [st({})], clicks: [FOLD], later: [live({ elapsed: 12 }), stage()] };
+  S['bar-call-ends'] = { size: [64, 900], steps: [live({}), stage()], clicks: ['[data-act="collapse"]'],
+    later: [st({ phase: 'summary' }), { kind: 'summary', data: { mode: 'pending', duration: 1456 } }] };
+  S['bar-summary-score'] = { size: [64, 900], steps: SUM_SCORE, clicks: [FOLD] };
+  S['bar-summary-high'] = { size: [64, 900], steps: sumScore(0.93), clicks: [FOLD] };
+  S['bar-summary-low'] = { size: [64, 900], steps: sumScore(0.55), clicks: [FOLD] };
+  S['bar-summary-saved'] = { size: [64, 900], steps: S['summary-saved'].steps, clicks: [FOLD] };
+  S['bar-safety'] = { size: [360, 900], steps: [live({ elapsed: 815 }), stage()], clicks: ['[data-act="collapse"]'], later: [{ kind: 'msg', data: CRISIS }] };
+  S['bar-signed-out'] = { size: [360, 900], steps: [st({})], clicks: [FOLD], later: [st({ phase: 'login', signedOut: true })] };
+  S['bar-mic-gate'] = { size: [360, 900], steps: [st({})], clicks: [FOLD], later: [st({ micGate: true })] };
+  S['bar-settings-closes'] = { size: [360, 900], steps: [st({})], clicks: ['[data-act="settings"]', FOLD, '.strip [data-act="expand"]'] };
+  S['bar-signed-in-again'] = { size: [360, 900], steps: [st({})], clicks: [FOLD], later: [st({ phase: 'login', signedOut: true }), st({})] };
+  S['bar-dock-left'] = { size: [64, 900], steps: [st({ dock: 'left' })], clicks: [FOLD] };
+
   root.FocusScenarios = S;
 }(typeof self !== 'undefined' ? self : this));

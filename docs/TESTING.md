@@ -57,9 +57,10 @@ buffering, and most of the auto-update suite. Treat them accordingly.
 | What | Run |
 | --- | --- |
 | The page's rules (card order, auto-clear, safety, popups, the continuing-case banner and carried text) | `node --test focus/tests` (29 tests in `model.test.cjs`, 25 Oct) |
-| How the page talks to MainWindow, window placement, "-" locked in a call | `python -m pytest tests/test_focus_ui.py` |
+| How the page talks to MainWindow, window placement, "x" locked in a call | `python -m pytest tests/test_focus_ui.py` |
 | Every screen state rendered in Edge and checked | `python focus_dev/check_harness.py` (screenshots: `shoot_harness.py <dir>`); 57 checks on 25 Oct, including the `case-*` scenarios (banner full and compact, name mismatch, carried rows, parts, I&E figures, carried cards and a carried held card) |
 | The real window + real WebEngine, buttons -> MainWindow methods | `python focus_dev/qt_e2e.py <out_dir>` |
+| The bar between calls and the tray in the real window (2.9.62): "-", "x", a call bringing it back in its shape, staying a bar through a call's start and end, score -> summary, Done, safety and sign-in opening the panel - with the window's real width and place at each step | `python focus_dev/minimise_e2e.py <out_dir>` (26 checks) |
 | Nothing flashes on opening (inside Qt / as Windows sees it) | `focus_dev/startup_blinks.py`, `focus_dev/startup_windows.py [--exe dist/SparkFlow/SparkFlow.exe]` |
 | The built exe | `python build_all.py --check` |
 | The installer upgrades an old widget in place | `python focus_dev/upgrade_test.py <old dist> <old installer.iss>` |

@@ -46,9 +46,19 @@ I&E pinned, 64 folded).
   recording is not affected).
 - **Nothing flashes on opening.** The window stays transparent until the page
   has drawn, then appears already docked.
-- **"-" is locked during a call** (19 Oct): greyed out from the moment a call
-  starts connecting until it stops, and refused in Python whatever the page
-  sends; the old screen's "-" is locked the same way.
+- **Minimise and tray** (2.9.62, 26 Oct). Between calls and on the summary the
+  header has Settings, **"-"** (fold to the 64px bar, as the fold button does on
+  a call) and **"x"** (hide to the tray; the next call brings it back by itself,
+  in the shape it was left). Folded stays folded when a call starts and when it
+  ends: the bar shows "Ready" and the shift's calls, a spinner while connecting,
+  the call's timer and counts on a call, then the length, the score (tap: the
+  summary) and **Done** (ready for the next call). A new correction card still
+  slides out for 8 seconds; a safety card, the first-run microphone choice and
+  signing in always open the panel. Only the page changed - the window takes
+  whatever width the page asks for in any phase.
+- **"x" is locked during a call** (19 Oct): greyed out from the moment a call
+  starts connecting until it stops (not on the bar at all then), and refused in
+  Python whatever the page sends; the old screen's "-" is locked the same way.
 - **A popup says why** (2.9.60, 20 Oct): an I&E clarification popup (a card
   with a `title`) shows the server's `why` ("Two figures, not settled: £1,000
   or £1,500") and, under "Customer said", the words that opened it (`quote`,

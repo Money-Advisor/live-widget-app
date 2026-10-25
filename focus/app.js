@@ -133,7 +133,11 @@
     if (was.phase !== host.phase) {
       note('phase:' + was.phase + '>' + host.phase);
       ui.settings = false;
-      if (host.phase !== 'live') { ui.sheet = null; ui.collapsed = false; ui.pinIE = false; }
+      if (host.phase !== 'live') { ui.sheet = null; ui.pinIE = false; }
+      // Folded stays folded when a call starts and when it ends (26 Oct): an
+      // agent who minimised the widget does not want it back full size on every
+      // call. Only signing in needs the panel.
+      if (host.phase === 'login') ui.collapsed = false;
       if (host.phase === 'idle') { ui.manual = false; }
       if (host.phase === 'summary') { ui.summaryAll = false; }
     }
@@ -613,6 +617,39 @@
       '<button class="ib ghost" data-act="expand" aria-label="Open the panel">' + open + '</button></div>';
   }
 
+  /* The bar between calls, while a call connects, and after a call (26 Oct).
+   * Waiting: "Ready" and the shift's calls. Connecting: a spinner. Ended: the
+   * call's length, its score once it arrives (tap: the summary) and Done for
+   * the next call. Open and "x" at the foot, as on the panel's header. */
+  function stripQuiet() {
+    var open = host.dock === 'left' ? I.openL : I.openR;
+    var h = '<div class="strip" data-drag><img class="slogo" src="' + ASSET + 'logo.png" alt="Spark Flow"><div class="sep"></div>';
+    if (host.phase === 'starting') {
+      h += '<button class="sb z" data-act="expand" aria-label="Connecting"><span class="spin"></span><span class="cap">Connect</span></button>';
+    } else if (host.phase === 'summary') {
+      var s = summary || { mode: 'pending' };
+      h += '<span class="tm mono">' + M.mmss(s.duration || 0) + '</span>';
+      if (s.mode === 'pending') {
+        h += '<button class="sb z" data-act="expand" aria-label="Working out your score"><span class="spin"></span><span class="cap">Score</span></button>';
+      } else if (s.mode === 'score' && s.score != null) {
+        var pct = Math.round(s.score * 100);
+        h += '<button class="sb ' + (pct >= 90 ? 'g' : pct >= 70 ? 'a' : 'r') + '" data-act="expand" aria-label="Score ' + pct + '%: open the summary"><span class="mono">' + pct + '%</span><span class="cap">Score</span></button>';
+      } else {
+        h += '<button class="sb g" data-act="expand" aria-label="Call saved: open the summary"><span class="ok">' + I.tickG + '</span><span class="cap">Saved</span></button>';
+      }
+      h += '<button class="sb v" data-act="newcall" aria-label="Ready for the next call" data-tip="Ready for the next call"><span class="ok">' + I.tickB + '</span><span class="cap">Done</span></button>';
+    } else {
+      var sh = host.shift || {};
+      h += '<button class="sb rdy" data-act="expand" aria-label="Ready for your next call"><span class="dotr"></span><span class="cap">Ready</span></button>' +
+        '<button class="sb z" data-act="expand" aria-label="Calls this shift"><span class="mono">' + esc(sh.calls != null && sh.calls !== '' ? sh.calls : '—') + '</span><span class="cap">Calls</span></button>';
+    }
+    h += '<div class="grow"></div><button class="ib ghost" data-act="expand" aria-label="Open the panel" data-tip="Open the panel">' + open + '</button>';
+    if (host.phase !== 'starting') {
+      h += '<button class="ib ghost" data-act="hide" aria-label="Hide to the tray" data-tip="Hide to the tray">' + I.x + '</button>';
+    }
+    return h + '</div>';
+  }
+
   function peekHtml() {
     if (!(ui.peekKey && Date.now() < ui.peekUntil)) return '';
     var it = M.attention(call).filter(function (i) { return i.key === ui.peekKey; })[0];
@@ -649,11 +686,18 @@
     var u = host.user || {};
     return '<div class="hd row" data-drag><img class="logo" src="' + ASSET + 'logo.png" alt=""><div class="hd-id"><span class="name">' + esc(host.company || 'Spark Flow') + '</span><span class="sub">' + esc([u.name || u.email || '', u.dept || ''].filter(Boolean).join(' \u00b7 ')) + '</span></div>' +
       '<button class="ib ghost" data-act="settings" aria-label="Settings" data-tip="Settings">' + I.gear + '</button>' +
-      // Locked from the moment a call starts connecting (19 Oct): an advisor
-      // pressed it mid-call by mistake. Python refuses it too.
+      foldAndClose() + '</div>';
+  }
+
+  // Between calls and after a call (26 Oct): "-" folds the widget to the bar,
+  // as the fold button does during a call, and "x" hides it to the tray. The
+  // tray stays locked from the moment a call starts connecting (19 Oct: an
+  // advisor hid a call by mistake); Python refuses it too.
+  function foldAndClose() {
+    return '<button class="ib ghost" data-act="collapse" aria-label="Minimise to the bar" data-tip="Minimise to the bar">' + I.minus + '</button>' +
       (host.hideLocked
-        ? '<button class="ib ghost" data-act="hide" aria-label="Can\u2019t hide during a call" data-tip="Can\u2019t hide during a call" disabled>' + I.minus + '</button></div>'
-        : '<button class="ib ghost" data-act="hide" aria-label="Hide to the tray" data-tip="Hide to the tray">' + I.minus + '</button></div>');
+        ? '<button class="ib ghost" data-act="hide" aria-label="Can\u2019t hide during a call" data-tip="Can\u2019t hide during a call" disabled>' + I.x + '</button>'
+        : '<button class="ib ghost" data-act="hide" aria-label="Hide to the tray" data-tip="Hide to the tray">' + I.x + '</button>');
   }
 
   function idleBody() {
@@ -729,7 +773,8 @@
   }
 
   function summaryHeader() {
-    return '<div class="hd row" data-drag><span class="name" style="flex:1">Call ended</span><span class="mono" style="font-size:15px;font-weight:700;color:var(--nightMute)">' + M.mmss((summary && summary.duration) || 0) + '</span></div>';
+    return '<div class="hd row" data-drag><span class="name" style="flex:1">Call ended</span><span class="mono" style="font-size:15px;font-weight:700;color:var(--nightMute);margin-right:4px">' + M.mmss((summary && summary.duration) || 0) + '</span>' +
+      foldAndClose() + '</div>';
   }
 
   function summaryBody() {
@@ -768,7 +813,10 @@
   /* ---------- layout ---------- */
   function wantLayout() {
     var live = host.phase === 'live';
-    var strip = live && ui.collapsed;
+    // The bar in every signed-in phase, not only on a call (26 Oct). The
+    // first-run microphone choice needs the panel.
+    var canFold = live || host.phase === 'idle' || host.phase === 'starting' || host.phase === 'summary';
+    var strip = canFold && ui.collapsed && !host.micGate;
     var peek = strip && !!ui.peekKey && Date.now() < ui.peekUntil;
     var pin = live && !strip && ui.pinIE;
     return { mode: strip ? 'strip' : 'panel', pin: !!pin, peek: !!peek };
@@ -786,6 +834,10 @@
       buildShape('login', '<div class="panel' + '" data-r-panel><div data-r="login" style="display:flex;flex-direction:column;height:100%"></div></div>');
       document.querySelector('[data-r-panel]').classList.toggle('alarm', !!host.signedOut);
       setRegion('login', loginHtml());
+    } else if (lay.mode === 'strip') {
+      buildShape('strip', '<div data-r="peek" style="display:contents"></div><div data-r="strip" style="display:contents"></div>');
+      setRegion('peek', ph === 'live' ? peekHtml() : '');
+      setRegion('strip', ph === 'live' ? stripHtml() : stripQuiet());
     } else if (ph === 'idle' || ph === 'starting') {
       buildShape('idle', '<div class="panel"><div data-r="idleHd"></div><div class="pad" data-r="idleBody" data-scroll="idle"></div><div data-r="overlay"></div></div>');
       setRegion('idleHd', idleHeader());
@@ -798,10 +850,6 @@
         '<div style="padding:12px 20px 20px;background:var(--surf);border-top:1px solid var(--line)"><button class="cta" data-act="newcall">Ready for the next call</button></div></div>');
       setRegion('sumHd', summaryHeader());
       setRegion('sumBody', summaryBody());
-    } else if (ph === 'live' && lay.mode === 'strip') {
-      buildShape('strip', '<div data-r="peek" style="display:contents"></div><div data-r="strip" style="display:contents"></div>');
-      setRegion('peek', peekHtml());
-      setRegion('strip', stripHtml());
     } else if (ph === 'live') {
       buildShape('live', '<div data-r="pin" style="display:contents"></div><div class="panel"><div data-r="hd"></div><div class="body" data-r="body" data-scroll="body"></div><div data-r="dock"></div><div data-r="ft"></div><div data-r="sheet"></div><div data-r="toast"></div></div>');
       setRegion('hd', headerLive());
@@ -883,7 +931,7 @@
       case 'gateConfirm': send('gateMic', { index: ui.gateIndex == null ? 0 : ui.gateIndex }); break;
       case 'pause': send('pause'); break;
       case 'stop': send('stop'); break;
-      case 'collapse': ui.collapsed = true; ui.sheet = null; ui.pinIE = false; break;
+      case 'collapse': ui.collapsed = true; ui.sheet = null; ui.pinIE = false; ui.settings = false; ui.dd = null; break;
       case 'expand': ui.collapsed = false; ui.peekKey = null; break;
       case 'keep': ui.peekKey = null; break;
       case 'sheet': ui.sheet = v; if (v === 'ie') ui.ieSeen = call.ieVersion; break;

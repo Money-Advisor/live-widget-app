@@ -162,7 +162,7 @@ def files_under(root):
 
 
 def main_():
-    old_dist, old_iss = Path(sys.argv[1]), Path(sys.argv[2])
+    old_dist, old_iss = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     new_dist = APP / "dist" / "SparkFlow"
     new_iss = APP / "installer" / "installer.iss"
     assert (old_dist / "SparkFlow.exe").exists() and (new_dist / "SparkFlow.exe").exists()

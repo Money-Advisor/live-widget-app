@@ -48,10 +48,17 @@ installer/installer.iss   the one installer - same AppId/folder/exe/Run entry as
   to the old screen; it appears only as the automatic fallback above.
 * Same single-instance lock as before, and a second copy exits silently as the
   old widget did.
-* **"-" is locked during a call** (19 Oct, after an advisor pressed it mid-call
-  by mistake): greyed out from the moment a call starts connecting until it
-  stops, refused in Python whatever the page sends, and the old screen's "-"
-  is locked the same way.
+* **Minimise and tray** (2.9.62, 26 Oct, agents' feedback that the panel sat
+  on screen while idle): between calls and on the summary, **"-"** folds to the
+  bar and **"x"** hides to the tray; the next call brings it back in the shape
+  it was left. Folded stays folded through a call's start and end (the bar shows
+  Ready / the call / the score + Done). Safety card, mic choice and sign-in open
+  the panel. Proof: 15 `bar-*` screens + 9 rules each seen red when broken;
+  `focus_dev/minimise_e2e.py` 26/26 in the real window.
+* **"x" is locked during a call** (19 Oct, after an advisor hid a call by
+  mistake): greyed out from the moment a call starts connecting until it stops,
+  refused in Python whatever the page sends, and the old screen's "-" is locked
+  the same way.
 * **Nothing flashes on opening** (15 Oct). The window stays fully transparent
   until the page has drawn, then appears already docked. Two classic startup
   shows are kept from the screen: the checklist panel's constructor shows it

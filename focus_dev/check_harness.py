@@ -22,7 +22,7 @@ EXPECT = {
     "login-error": (["Incorrect email or password."], []),
     "login-forgot": (["reset link is on its way"], ["msg red"]),
     "signed-out": (["Calls are NOT being recorded", "Sign in"], []),
-    "idle": (['aria-label="Hide to the tray" data-tip="Hide to the tray">', "Ready for your next call", "Start a call manually", "This shift", "84%", 'class="logo" src="../focus/logo.png"'], ["Focus layout"]),
+    "idle": (['aria-label="Hide to the tray" data-tip="Hide to the tray">', 'aria-label="Minimise to the bar" data-tip="Minimise to the bar">', "Ready for your next call", "Start a call manually", "This shift", "84%", 'class="logo" src="../focus/logo.png"'], ["Focus layout"]),
     "idle-manual": (["Customer name", "Reference ID", "Start recording"], []),
     # Opening a dropdown must not replay the sheet's slide-up: the sheet and its
     # backdrop are still on screen, so they are redrawn "calm"; only the list animates.
@@ -86,9 +86,31 @@ EXPECT = {
     "strip-peek": (["New \u00b7 put right", "Keep as count"], []),
     "legacy": (["You said: guaranteed write-off", "Explain the fees"], []),
     "summary-pending": (["Working out your score", "Ready for the next call"], []),
-    "summary-score": (["82%", "Worth working on", "Show all 9", "Recording saved"], []),
+    "summary-score": (["82%", "Worth working on", "Show all 9", "Recording saved",
+                       'aria-label="Minimise to the bar"', 'aria-label="Hide to the tray"'], []),
     "summary-all": (["Show the top three", "Call closed properly", "Missed \u00b7 9"], []),
     "summary-saved": (["Call saved", "Recording saved"], ["%</div>"]),
+    # 26 Oct: the bar between calls and after a call; "-" folds, "x" hides.
+    "bar-idle": (['class="strip"', 'class="sb rdy"', "Ready", ">11<", "Calls", 'aria-label="Hide to the tray"',
+                  'aria-label="Open the panel"', 'class="slogo"'], ['class="pad"', 'class="hd']),
+    "bar-open": (["Ready for your next call", 'aria-label="Minimise to the bar"'], ['class="strip"']),
+    "bar-starting": (['class="strip"', 'class="spin"', "Connect"], ['data-act="hide"', 'class="pad"']),
+    "bar-call-starts": (['class="strip"', 'class="rec', 'data-act="stop"', 'data-act="pause"'], ['class="body"', 'class="sb rdy"']),
+    "bar-call-ends": (['class="strip"', "24:16", "Score", 'class="spin"', 'data-act="newcall"', "Done"],
+                      ['<h2>Working out your score', 'class="pad"', 'data-act="stop"']),
+    "bar-summary-score": (['class="strip"', "82%", 'class="sb a"', 'data-act="newcall"', 'aria-label="Hide to the tray"'],
+                          ["Worth working on"]),
+    "bar-summary-high": (["93%", 'class="sb g"'], []),
+    "bar-summary-low": (["55%", 'class="sb r"'], []),
+    "bar-summary-saved": (["Saved", 'class="sb g"', 'data-act="newcall"'], ["%</span>"]),
+    "bar-safety": (["Customer safety", "Stays until signposted"], ['class="strip"']),
+    "bar-signed-out": (["Calls are NOT being recorded", "Sign in"], ['class="strip"']),
+    "bar-mic-gate": (["Choose your microphone"], ['class="strip"']),
+    # Folding closes Settings: opened again, the panel shows no Settings sheet.
+    "bar-settings-closes": (["Ready for your next call"], ['role="dialog" aria-label="Settings"', 'class="strip"']),
+    # Signed out while folded, then signed in again: the full panel, not the bar.
+    "bar-signed-in-again": (["Ready for your next call"], ['class="strip"']),
+    "bar-dock-left": (['class="strip"', 'm13 9 3 3-3 3'], []),
     "summary-saving": (["Saving the recording", "64%"], ["Recording saved"]),
     # The card a manager dismissed is gone, and the advisor is NOT told they put it right.
     "false-positive": (["Affordability steering", "1 thing to put right"],
