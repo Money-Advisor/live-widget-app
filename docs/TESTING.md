@@ -56,9 +56,9 @@ buffering, and most of the auto-update suite. Treat them accordingly.
 
 | What | Run |
 | --- | --- |
-| The page's rules (card order, auto-clear, safety, popups) | `node --test focus/tests` |
+| The page's rules (card order, auto-clear, safety, popups, the continuing-case banner and carried text) | `node --test focus/tests` (29 tests in `model.test.cjs`, 25 Oct) |
 | How the page talks to MainWindow, window placement, "-" locked in a call | `python -m pytest tests/test_focus_ui.py` |
-| Every screen state rendered in Edge and checked | `python focus_dev/check_harness.py` (screenshots: `shoot_harness.py <dir>`) |
+| Every screen state rendered in Edge and checked | `python focus_dev/check_harness.py` (screenshots: `shoot_harness.py <dir>`); 57 checks on 25 Oct, including the `case-*` scenarios (banner full and compact, name mismatch, carried rows, parts, I&E figures, carried cards and a carried held card) |
 | The real window + real WebEngine, buttons -> MainWindow methods | `python focus_dev/qt_e2e.py <out_dir>` |
 | Nothing flashes on opening (inside Qt / as Windows sees it) | `focus_dev/startup_blinks.py`, `focus_dev/startup_windows.py [--exe dist/SparkFlow/SparkFlow.exe]` |
 | The built exe | `python build_all.py --check` |

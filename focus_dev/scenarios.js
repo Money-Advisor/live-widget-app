@@ -171,6 +171,57 @@
   S['pinned'] = { size: [721, 900], steps: [live({}), stage({ trigger_actions: [CARD_AFFORD] }), ieMsg('expenditure')], clicks: ['[data-v="ie"]', '[data-act="pin"]'] };
   S['strip'] = { size: [64, 900], steps: [live({}), stage({ trigger_actions: [CARD_AFFORD] }), ieMsg('expenditure')], clicks: ['[data-act="collapse"]'] };
   S['strip-peek'] = { size: [416, 900], steps: [live({}), stage(), ieMsg('expenditure')], clicks: ['[data-act="collapse"]'], later: [stage({ trigger_actions: [CARD_CTAX] })] };
+  // Case continuity (server 25 Oct): a callback on the same reference. Sample
+  // names only. Recording 2 of the case; the first call dropped in Loans.
+  function caseInfo(extra) {
+    return Object.assign({ continuing: true, reference: 'REF-48213', case_number: 1, recording: 2, recordings: 2,
+      last_call: { date: '14 Oct', time: '10:42', advisor: 'Priya Shah', how: 'dropped', recording: 1 },
+      continue_here: { key: 'LOANS', label: 'Loans' },
+      carried: { checks: 33, parts: 4, figures: 7, cards: 2 }, name_check: null }, extra || {});
+  }
+  var EARLIER = { recording: 1, advisor: 'Priya Shah', date: '14 Oct' };
+  var ONB_CHECKS = [
+    { id: 'onb.fca_statement', label: 'FCA regulated statement', done: true, severity: 'critical', evidence: 'We are authorised and regulated by the Financial Conduct Authority', carried_from: EARLIER, prompt: null, missing_parts: [], parts: [], urgent: false, section_label: 'Onboarding' },
+    { id: 'onb.dpa_dob', label: 'Date of birth confirmed', done: true, severity: 'critical', evidence: 'Can you confirm your date of birth for me', prompt: null, missing_parts: [], parts: [], urgent: false, section_label: 'Onboarding' },
+    { id: 'onb.dpa_address', label: 'First line of address confirmed', done: false, severity: 'critical', evidence: null, prompt: 'Confirm the first line of the client’s address.', missing_parts: [], parts: [], urgent: false, section_label: 'Onboarding' },
+    { id: 'onb.dpa_postcode', label: 'Postcode confirmed', done: false, severity: 'critical', evidence: null, prompt: 'Confirm the client’s postcode.', missing_parts: [], parts: [], urgent: false, section_label: 'Onboarding' },
+    { id: 'onb.dpa_email', label: 'Email address confirmed', done: false, severity: 'critical', evidence: null, prompt: 'Confirm the client’s email address.', missing_parts: [], parts: [], urgent: false, section_label: 'Onboarding' },
+    { id: 'onb.recording_notice', label: 'Call recording notice', done: true, severity: 'high', evidence: 'This call is recorded for training and quality', carried_from: EARLIER, prompt: null, missing_parts: [], parts: [], urgent: false, section_label: 'Onboarding' },
+    { id: 'onb.company_website', label: 'Company website given', done: true, severity: 'normal', evidence: 'you can find us online at', carried_from: EARLIER, prompt: null, missing_parts: [], parts: [], urgent: false, section_label: 'Onboarding' }
+  ];
+  function caseStage(extra) {
+    var secs = sections(0);
+    return stage(Object.assign({ stage: 'ONBOARDING', sections: secs, section_checks: ONB_CHECKS, still_to_do: [], warnings: [],
+      case: caseInfo() }, extra || {}));
+  }
+  function ieCarried() {
+    var m = ieMsg('expenditure');
+    m.data.expenditure.groups.forEach(function (g) {
+      (g.items || []).forEach(function (it) { if (it.key !== 'gas' && it.state !== 'pending') it.carried_from = EARLIER; });
+    });
+    m.data.income.groups.forEach(function (g) { (g.items || []).forEach(function (it) { it.carried_from = EARLIER; }); });
+    return m;
+  }
+  var CARD_CARRIED = Object.assign({}, CARD_CTAX, { occurrence: -101,
+    carried: { recording: 1, advisor: 'Priya Shah', date: '14 Oct', time: '10:58', held: false } });
+  var CARD_CARRIED_HELD = { id: 'q17.partial_nonmonthly_expenditure_uncaptured', label: 'Non-monthly cost not captured', severity: 'high',
+    message: 'The client mentioned a yearly boiler service. Capture it as a monthly amount before you go through the options.',
+    action: 'Ask what the boiler service costs and how often, then add it as a monthly figure.',
+    script: '“You mentioned the boiler service is once a year. How much is it, so I can include it monthly?”',
+    coaching_only: false, alternatives: [], occurrence: -201, quote: '', about: 'boiler service',
+    carried: { recording: 2, advisor: 'Tom Reid', date: '16 Oct', time: '14:24', held: true } };
+  S['case-callback'] = { size: [360, 900], steps: [live({ elapsed: 34 }), caseStage(), ieCarried()] };
+  S['case-carried-card'] = { size: [360, 900], steps: [live({ elapsed: 40 }), caseStage({ trigger_actions: [CARD_CARRIED] })] };
+  S['case-carried-held'] = { size: [360, 900], steps: [live({ elapsed: 1150 }), stage({ case: caseInfo(), trigger_actions: [CARD_CARRIED_HELD] })] };
+  S['case-carried-two'] = { size: [360, 900], steps: [live({ elapsed: 1150 }), stage({ case: caseInfo(), trigger_actions: [CARD_CARRIED, CARD_CARRIED_HELD, CARD_AFFORD] })] };
+  S['case-callback-name'] = { size: [360, 900], steps: [live({ elapsed: 34 }), caseStage({ case: caseInfo({ name_check: { mismatch: true, case_name: 'Sam Taylor', call_name: 'Jordan Blake' } }) })] };
+  S['case-later'] = { size: [360, 900], steps: [live({ elapsed: 620 }), stage({ case: caseInfo() }), ieCarried()] };
+  S['case-checklist'] = { size: [360, 900], steps: [live({ elapsed: 34 }), caseStage()], clicks: ['[data-v="list"]'] };
+  S['case-ie'] = { size: [360, 900], steps: [live({ elapsed: 620 }), stage({ case: caseInfo() }), ieCarried()], clicks: ['[data-v="ie"]', '[data-k="exp.home"]', '[data-k="exp.utilities"]'] };
+  S['case-parts'] = { size: [360, 900], steps: [live({ elapsed: 620 }), stage({ case: caseInfo(), section_checks: INCOME_CHECKS.map(function (c) {
+      if (c.id !== 'inc.all') return c;
+      return Object.assign({}, c, { parts: c.parts.map(function (p, i) { return i === 1 ? Object.assign({}, p, { carried_from: EARLIER }) : p; }) });
+    }) })] };
   S['legacy'] = { size: [360, 900], steps: [live({ elapsed: 200 }), { kind: 'msg', data: { type: 'compliance_alert', missing_items: [{ id: 'r1', label: 'Explain the fees', level: 'red', suggestion_text: 'Tell the client what the fees are and when they are paid.' }, { id: 'a1', label: 'Confirm the address', level: 'amber', suggestion_text: null }], covered_ids: [] } },
       { kind: 'msg', data: { type: 'compliance_alert', forbidden_hits: [{ id: 'f1', label: 'guaranteed write-off', level: 'red', suggestion_text: null }], missing_items: [], covered_ids: [] } }] };
   S['summary-pending'] = { size: [360, 900], steps: [st({ phase: 'summary' }), { kind: 'summary', data: { mode: 'pending', duration: 1456 } }] };

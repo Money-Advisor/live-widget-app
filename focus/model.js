@@ -22,6 +22,9 @@
       crisis: null, crisisShown: false,
       forbidden: [], cues: [], missing: [],
       ie: null, ieVersion: 0,
+      // Case continuity (server 25 Oct): the "Continuing case" banner, or null on
+      // a call that is not a case's second or later call.
+      caseInfo: null,
       conn: 'ok', transcription: 'ok',
       hasStage: false
     };
@@ -109,6 +112,7 @@
         m.warnings = (msg.warnings || []).filter(function (w) { return w && String(w.text || '').trim(); });
         out.newCard = setActions(m, msg.trigger_actions, nowMs, elapsed) || out.newCard;
         if (msg.crisis_resolved && m.crisis) m.crisis = null;   // latch stays: never re-raised
+        if (msg.case && typeof msg.case === 'object') m.caseInfo = msg.case;
       }
       out.changed = true;
       return out;
@@ -271,7 +275,40 @@
     return sec < 60 ? 'just now' : Math.floor(sec / 60) + ' min ago';
   }
 
+  /* Case continuity (Bilal, 25 Oct): where something was done on an earlier call
+   * of the same case - "Call 1 \u00b7 Priya Shah \u00b7 14 Oct". The server says recording;
+   * an advisor says call. */
+  function carriedText(c) {
+    if (!c || typeof c !== 'object') return '';
+    return [c.recording != null ? 'Call ' + c.recording : 'An earlier call', c.advisor || '', c.date || '']
+      .filter(Boolean).join(' \u00b7 ');
+  }
+
+  /* The banner for a call that continues a case. Full while the advisor is still
+   * on the first stage (DPA, asked on every call); one line once they move on, so
+   * it never pushes the checklist down for the whole call. Null otherwise. */
+  function caseBanner(m) {
+    var c = m.caseInfo;
+    if (!c || !c.continuing) return null;
+    var last = c.last_call || {};
+    var how = { dropped: 'dropped', reached_solutions: 'reached Solutions' }[last.how] || '';
+    var when = [last.date, last.time].filter(Boolean).join(' ');
+    var carried = c.carried || {};
+    var nc = c.name_check;
+    return {
+      reference: c.reference || '',
+      call: c.recording,
+      last: [when ? 'Last call ' + when : 'Last call', last.advisor || '', how].filter(Boolean).join(' \u00b7 '),
+      here: (c.continue_here && c.continue_here.label) || '',
+      done: Number(carried.checks || 0),
+      cards: Number(carried.cards || 0),
+      mismatch: nc && nc.mismatch ? { callName: nc.call_name || '', caseName: nc.case_name || '' } : null,
+      compact: stageInfo(m).index > 0
+    };
+  }
+
   return {
+    carriedText: carriedText, caseBanner: caseBanner,
     newCall: newCall, applyMessage: applyMessage, expire: expire, secondsLeft: secondsLeft,
     attention: attention, fixCount: fixCount, stageInfo: stageInfo, checklist: checklist,
     liveParts: liveParts, cardKey: cardKey, mmss: mmss, ago: ago, titleCase: titleCase

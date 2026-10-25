@@ -54,6 +54,26 @@ I&E pinned, 64 folded).
   or £1,500") and, under "Customer said", the words that opened it (`quote`,
   cut at 220 characters). Either is left out when the server sends none, and
   no other card changes (`popup-said` in the harness).
+- **Continuing case** (2.9.61, 25 Oct; the server's case continuity, off by
+  default and not deployed): when a call continues an earlier call of the same
+  customer, the server adds fields to the messages it already sends, and the
+  page draws them. To the advisor it is a **call**, not a recording.
+  - A banner above the checklist (`compliance_alert` `case`, `model.caseBanner`):
+    "Continuing case <reference> · Call 2", the last call (when, advisor, dropped
+    or reached Solutions), "n done on earlier calls", "Pick up at <stage>" and
+    "Confirm DPA first - it is asked again on every call." Once the advisor moves
+    past the first stage it shrinks to one line. If this call's customer name
+    does not match the case's, an amber "Check the reference" banner sits above it.
+  - A small chain-link chip on a checklist row or part done earlier ("Call 1",
+    with "Done on Call 1 · advisor · date" on hover; `carried_from`), and on an
+    I&E figure given earlier.
+  - A card carried from an earlier call (`carried` on the card) keeps its own
+    wording and adds "Carried over from Call 1 · advisor · date" - with
+    "· held for Solutions" for a held one - and a chip in the queue. An I&E popup
+    left open by an earlier call says "Left open on Call 1 ...", a CAT mismatch
+    "CAT figure from ...".
+  An older widget ignores the new fields; with case continuity off they are never
+  sent and the page is exactly as before (`case-*` scenarios in the harness).
 - The page's rules (card order, auto-clear, safety card) are tested in
   `focus/tests/` (node); every screen state is rendered and checked in Edge by
   `focus_dev/check_harness.py`; `focus_dev/qt_e2e.py` drives the real window.

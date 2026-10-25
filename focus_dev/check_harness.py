@@ -94,6 +94,28 @@ EXPECT = {
     "false-positive": (["Affordability steering", "1 thing to put right"],
                        ["Council tax: two amounts", "Put right<", "Moving to the next thing"]),
     "dock-left": (['class="dock-left"'], []),
+    # Case continuity (server 25 Oct): a callback opens on the case, in full on the
+    # first stage, one line after; a name that does not match is flagged above it;
+    # everything done on an earlier call says which call, advisor and date.
+    "case-callback": (["Continuing case REF-48213", "Call 2", "Priya Shah · dropped",
+                       "done on earlier calls", "Pick up at Loans",
+                       "Confirm DPA first — it is asked again on every call."],
+                      ["Check the reference", 'class="casebn compact"']),
+    "case-callback-name": (["Check the reference — this call is for <b>Jordan Blake</b>",
+                            "the case is <b>Sam Taylor</b>", "Continuing case REF-48213"], []),
+    "case-later": (['class="casebn compact"', "Continuing case · call 2", "33 done earlier"],
+                   ["Confirm DPA first", "Pick up at"]),
+    "case-checklist": (['data-tip="Done on Call 1 · Priya Shah · 14 Oct"', "Call 1 · Priya Shah · 14 Oct",
+                        "FCA regulated statement"], []),
+    "case-ie": (['<span class="il">Rent</span><span class="cchip"', "Call 1"], []),
+    "case-parts": (['Child Benefit and any tax credits</span><span class="cchip"'], []),
+    # A card carried from an earlier call says so; a held one says it waited.
+    "case-carried-card": (['class="carried-line"', "Carried over from Call 1 · Priya Shah · 14 Oct",
+                           "Council tax: two amounts"], ["held for Solutions"]),
+    "case-carried-two": (["Carried over from Call 1 · Priya Shah · 14 Oct",
+                          'class="qt">Non-monthly cost not captured</span><span class="cchip"',
+                          'data-tip="Done on Call 2 · Tom Reid · 16 Oct"'], []),
+    "case-carried-held": (["Carried over from Call 2 · Tom Reid · 16 Oct · held for Solutions"], []),
 }
 
 

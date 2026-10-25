@@ -53,7 +53,10 @@
     mic: svg('<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4"/>'),
     refresh: svg('<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/>', 16),
     pin: svg('<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 3v18"/>', 14, 2.2),
-    coins: svg('<circle cx="8" cy="8" r="6"/><path d="M18.1 10.4A6 6 0 1 1 10.3 18"/><path d="M7 6h1v4"/>', 16, 1.9)
+    coins: svg('<circle cx="8" cy="8" r="6"/><path d="M18.1 10.4A6 6 0 1 1 10.3 18"/><path d="M7 6h1v4"/>', 16, 1.9),
+    // Case continuity: a chain link - "this joins on to an earlier call".
+    link: svg('<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>', 15, 2.2),
+    linkS: svg('<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>', 11, 2.6)
   };
   // The I&E's own icons, the same paths the classic column draws (main.py _IE_ICONS),
   // keyed by the names the server sends.
@@ -221,6 +224,50 @@
       (host.livePipeline ? stageBar() : '') + '</div>';
   }
 
+  /* Case continuity (Bilal, 25 Oct). A callback opens on the case: who had the
+   * last call and how it ended, how much is already done, where to pick up - and
+   * that DPA is asked again on every call. Full while the call is on its first
+   * stage; one line after that. A name that does not match the case is flagged
+   * above it: the wrong reference would load someone else's figures. */
+  function caseBannerHtml() {
+    var b = M.caseBanner(call);
+    if (!b) return '';
+    var h = '';
+    if (b.mismatch) {
+      h += '<div class="banner amber" role="alert">' + I.warnA + '<span>Check the reference \u2014 this call is for <b>' +
+        esc(b.mismatch.callName) + '</b>, but the case is <b>' + esc(b.mismatch.caseName) + '</b>.</span></div>';
+    }
+    if (b.compact) {
+      return h + '<div class="casebn compact" data-tip="' + esc(b.last) + '">' + I.link +
+        '<span class="c1">Continuing case \u00b7 call ' + esc(b.call) + '</span>' +
+        (b.done ? '<span class="cnt">' + b.done + ' done earlier</span>' : '') + '</div>';
+    }
+    return h + '<div class="casebn" role="status" data-anim="casebn">' +
+      '<div class="c1">' + I.link + '<span class="ttl">Continuing case ' + esc(b.reference) + '</span><span class="cn">Call ' + esc(b.call) + '</span></div>' +
+      '<div class="c2">' + esc(b.last) + '</div>' +
+      ((b.done || b.here) ? '<div class="c3">' + (b.done ? '<span class="done"><b>' + b.done + '</b> done on earlier calls</span>' : '') +
+        (b.here ? '<span class="here">Pick up at ' + esc(b.here) + '</span>' : '') + '</div>' : '') +
+      '<div class="c4">Confirm DPA first \u2014 it is asked again on every call.</div></div>';
+  }
+
+  function carriedChip(c, short) {
+    if (!c) return '';
+    var t = M.carriedText(c);
+    return '<span class="cchip" data-tip="Done on ' + esc(t) + '">' + I.linkS +
+      (short ? 'Call ' + esc(c.recording) : esc(t)) + '</span>';
+  }
+
+  /* A card carried from an earlier call of the case (Bilal, 25 Oct): it is the same
+   * card the first advisor saw, so it says where it came from - and, for one that
+   * waited for Solutions, that it did. An open popup left by an earlier call too. */
+  function carriedLine(r) {
+    var c = r && r.carried;
+    if (!c) return '';
+    var what = c.cat ? 'CAT figure from ' : (r.title ? 'Left open on ' : 'Carried over from ');
+    return '<div class="carried-line">' + I.linkS + '<span>' + what + esc(M.carriedText(c)) +
+      (c.held ? ' \u00b7 held for Solutions' : '') + '</span></div>';
+  }
+
   function onlyAsks(items, fixes) {
     return items.filter(function (i) { return i.title; }).length === fixes;
   }
@@ -246,7 +293,8 @@
     if (parts.length >= 2) {
       return '<div class="parts">' + parts.map(function (p) {
         var na = p.na && !p.done;
-        return '<div class="part' + (p.done ? ' ok' : na ? ' na' : '') + '"><span class="o">' + (p.done ? I.tick : '') + '</span><span>' + esc(p.text) + '</span>' + (na ? '<em class="natag">n/a</em>' : '') + '</div>';
+        return '<div class="part' + (p.done ? ' ok' : na ? ' na' : '') + '"><span class="o">' + (p.done ? I.tick : '') + '</span><span>' + esc(p.text) + '</span>' + (na ? '<em class="natag">n/a</em>' : '') +
+          (p.carried_from ? carriedChip(p.carried_from, true) : '') + '</div>';
       }).join('') + '</div>';
     }
     var miss = (row.missing_parts || []).filter(Boolean);
@@ -280,7 +328,8 @@
       var h = '<div class="focus ' + it.kind + cls + '" role="alert"><div class="f-top">' +
         (it.title ? '<span class="kind ttl">' + esc(it.title) + '</span>'
                   : '<span class="kind">' + (it.kind === 'critical' ? 'Put right now' : 'Put right') + '</span>') +
-        (it.at != null ? '<span class="when" data-ago="' + it.at + '"></span>' : '') + '</div>' +
+        (it.at != null && !r.carried ? '<span class="when" data-ago="' + it.at + '"></span>' : '') + '</div>' +
+        carriedLine(r) +
         (it.forbidden || it.title ? '' : '<div class="eyebrow">' + esc(it.label) + '</div>') +
         // A popup's message is a paragraph of guidance, not a headline.
         '<h2' + (it.title ? ' class="gtext"' : '') + '>' + esc(it.message) + '</h2>';
@@ -342,7 +391,8 @@
     return '<div class="queue"><div class="q-h"><span class="cap" style="color:var(--mute)">Then</span><span class="cap" style="color:var(--faint)">' + rest.length + '</span></div>' +
       rest.map(function (it) {
         var t = it.kind === 'urgent' ? 'Questions to ask now' : it.kind === 'safety' ? 'Customer safety' : it.label;
-        return '<button class="qrow" data-act="focus" data-k="' + esc(it.key) + '"><span class="qdot" style="background:' + col[it.kind] + '"></span><span class="qt">' + esc(t) + '</span><span class="qk" style="color:' + col[it.kind] + '">' + (it.title ? 'Clarify' : lab[it.kind]) + '</span><span style="display:flex;color:var(--faint)">' + I.chev + '</span></button>';
+        var carried = it.row && it.row.carried ? carriedChip(it.row.carried, true) : '';
+        return '<button class="qrow" data-act="focus" data-k="' + esc(it.key) + '"><span class="qdot" style="background:' + col[it.kind] + '"></span><span class="qt">' + esc(t) + '</span>' + carried + '<span class="qk" style="color:' + col[it.kind] + '">' + (it.title ? 'Clarify' : lab[it.kind]) + '</span><span style="display:flex;color:var(--faint)">' + I.chev + '</span></button>';
       }).join('') + '</div>';
   }
 
@@ -360,6 +410,7 @@
         '<button class="cta amber" data-act="pause">' + I.play + 'Resume recording</button></div>';
     }
     if (!host.livePipeline) return h + quietCard('Recording', 'This call is being recorded. Live checking is off for this call.');
+    h += caseBannerHtml();
     var items = M.attention(call);
     var hasAny = call.hasStage || call.missing.length || items.length;
     if (!hasAny) return h + quietCard('Listening', 'Your checklist appears here as the call gets going.', true);
@@ -423,6 +474,7 @@
         // read as a second, squashed line (Faseeh, 15 Oct).
         var tag = urg ? '<span class="tagurg">Ask now</span>' : (x.now ? '<span class="tagnow">Say next</span>' : '');
         var tx = '<span class="line"><span class="lb">' + esc(r.label) + '</span>' + tag + '</span>';
+        if (ok && r.carried_from) tx += carriedChip(r.carried_from, false);
         if (ok && r.evidence) tx += '<span class="q">\u201c' + esc(String(r.evidence).slice(0, 110)) + '\u201d</span>';
         if (!ok) {
           var parts = M.liveParts(r);
@@ -507,7 +559,8 @@
         var pk = key + '/' + (it.key || it.label);
         var parts = it.parts || [];
         var showParts = parts.length > 1 && ui.parts[pk];
-        h += '<div class="it' + (it.state === 'pending' ? ' pending' : '') + '"><div class="r1"><span class="il">' + esc(it.label) + '</span><span class="iv">' + esc(it.text || '\u2014') + '</span></div>';
+        h += '<div class="it' + (it.state === 'pending' ? ' pending' : '') + '"><div class="r1"><span class="il">' + esc(it.label) + '</span>' +
+          (it.carried_from ? carriedChip(it.carried_from, true) : '') + '<span class="iv">' + esc(it.text || '\u2014') + '</span></div>';
         if (it.flag) h += '<div class="fl"><span class="dotc" style="width:6px;height:6px;flex:0 0 6px;background:var(--ambDot)"></span>' + esc(it.flag) + '</div>';
         if (showParts) {
           h += parts.map(function (p) { return '<div class="pt' + (p.flag ? ' amb' : '') + '"><span>' + esc(p.label) + '</span><span>' + esc(p.text || '\u2014') + '</span></div>' + (p.flag ? '<div class="fl" style="padding-left:12px"><span class="dotc" style="width:6px;height:6px;flex:0 0 6px;background:var(--ambDot)"></span>' + esc(p.flag) + '</div>' : ''); }).join('');

@@ -217,3 +217,64 @@ test('a card the server sends with a title keeps it (2.9.58 I&E popups); others 
   assert.equal(byId['ie.prompt.income.Income.Wages'].kind, 'high');
   assert.equal(byId.A.title, '');
 });
+
+// ---- case continuity (server 25 Oct; Bilal's multi-call feature) ----
+
+const caseInfo = (extra) => Object.assign({
+  continuing: true, reference: '500123', case_number: 1, recording: 2, recordings: 2,
+  last_call: { date: '14 Oct', time: '10:42', advisor: 'Priya Shah', how: 'dropped', recording: 1 },
+  continue_here: { key: 'LOANS', label: 'Loans' },
+  carried: { checks: 33, parts: 4, figures: 7, cards: 2 }, name_check: null
+}, extra || {});
+
+const introMsg = (extra) => stageMsg(Object.assign({
+  stage: 'ONB',
+  sections: [{ key: 'ONB', label: 'Onboarding', done: 5, total: 9, current: true },
+             { key: 'INCOME', label: 'Income', done: 0, total: 4, current: false }]
+}, extra || {}));
+
+test('a call with no case has no banner, and nothing about it changes', () => {
+  const m = M.newCall();
+  M.applyMessage(m, stageMsg(), 0, 1);
+  assert.equal(M.caseBanner(m), null);
+});
+
+test('a callback shows the case in full while the call is on its first stage', () => {
+  const m = M.newCall();
+  M.applyMessage(m, introMsg({ case: caseInfo() }), 0, 1);
+  const b = M.caseBanner(m);
+  assert.equal(b.compact, false);
+  assert.equal(b.reference, '500123');
+  assert.equal(b.call, 2);
+  assert.equal(b.last, 'Last call 14 Oct 10:42 \u00b7 Priya Shah \u00b7 dropped');
+  assert.equal(b.here, 'Loans');
+  assert.equal(b.done, 33);
+  assert.equal(b.mismatch, null);
+});
+
+test('once the call moves past the first stage the banner shrinks to one line', () => {
+  const m = M.newCall();
+  M.applyMessage(m, stageMsg({ case: caseInfo() }), 0, 1);     // current = Income
+  assert.equal(M.caseBanner(m).compact, true);
+});
+
+test('a good-job message without stage fields never loses the banner', () => {
+  const m = M.newCall();
+  M.applyMessage(m, introMsg({ case: caseInfo() }), 0, 1);
+  M.applyMessage(m, { type: 'compliance_alert', missing_items: [], covered_ids: ['i1'] }, 1, 2);
+  assert.ok(M.caseBanner(m));
+});
+
+test('a name that does not match the case is passed on to be flagged', () => {
+  const m = M.newCall();
+  M.applyMessage(m, introMsg({ case: caseInfo({ name_check: { mismatch: true,
+    case_name: 'Sam Taylor', call_name: 'Jordan Blake' } }) }), 0, 1);
+  assert.deepEqual(M.caseBanner(m).mismatch, { callName: 'Jordan Blake', caseName: 'Sam Taylor' });
+});
+
+test('where a carried item was done reads as a call, an advisor and a date', () => {
+  assert.equal(M.carriedText({ recording: 1, advisor: 'Priya Shah', date: '14 Oct' }),
+               'Call 1 \u00b7 Priya Shah \u00b7 14 Oct');
+  assert.equal(M.carriedText({ recording: 3 }), 'Call 3');
+  assert.equal(M.carriedText(null), '');
+});
