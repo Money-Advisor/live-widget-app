@@ -121,7 +121,7 @@ write arbitrary files.
 | `transcription_status` | The transcription indicator |
 | `session_summary` | `SummaryScreen` — score, covered, missing, duration |
 | `upload_complete` | Marks the recording saved |
-| `dialer_activate` | Pop up and start recording |
+| `dialer_activate` | Pop up and start recording. During a call: the same call's start again is ignored; any other start ends the call first, then starts (see ARCHITECTURE, *A dialer start during a call*) |
 | `dialer_stop` | Stop |
 | `dialer_pause` / `dialer_resume` | PCI pause and resume |
 

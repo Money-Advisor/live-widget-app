@@ -67,12 +67,16 @@ def test_activate_falls_back_to_lead_id(monkeypatch):
 
 
 def test_double_activate_is_ignored(monkeypatch):
+    # The same call's start twice. A start for a DIFFERENT call ends this one
+    # first (F3, 26 Oct) - tests/test_dialer_switch.py.
+    import time
     app = QApplication.instance() or QApplication([])
     w = _win(app)
     started = {"n": 0}
     monkeypatch.setattr(w, "_start_recording", lambda *a, **k: started.__setitem__("n", started["n"] + 1))
 
     w._recording = True  # already on a call
+    w._call_dialer_meta, w._call_started_at = {"customer_reference": "X"}, time.monotonic()
     w._handle_server_message({"type": "dialer_activate", "action": "start", "customer_reference": "X"})
     assert started["n"] == 0                          # double-start guarded
 

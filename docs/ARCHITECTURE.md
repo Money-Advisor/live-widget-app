@@ -187,9 +187,33 @@ Little-endian 4-byte length, then `mic` or `speaker`, then the raw PCM.
 | `transcription_status` | Updates the transcription indicator |
 | `session_summary` | Populates `SummaryScreen` — score, covered, missing, duration |
 | `upload_complete` | Marks the recording saved |
-| `dialer_activate` | Pop up and start recording |
+| `dialer_activate` | Pop up and start recording. During a call: the same call's start again is ignored; any other start ends the call first, then starts (see ARCHITECTURE, *A dialer start during a call*) |
 | `dialer_stop` | Stop |
 | `dialer_pause` / `dialer_resume` | PCI pause and resume |
+
+### A dialer start during a call
+
+Until 2.9.62 a `dialer_activate` that arrived while the widget was recording was
+thrown away. When the dialer never sent a call's end (24 Oct: one call recorded
+for a day), every call after it went unrecorded. Now (`_handle_dialer_activate`):
+
+* **The same call again** - the same `lead_id` (or, with no lead on either side,
+  the same real customer reference; never a placeholder such as `HOTKEY`) within
+  `DUPLICATE_START_S` (120 s) of the call starting - is ignored, as before.
+* **Any other start** ends the call first (`_end_superseded_call`: the normal
+  `_stop_recording`, so both streams and `session_end` go out on its socket), then
+  starts the new one. Never two calls at once. The old call's socket is cut off
+  from the screen before it stops - the server's summary of it arrives about a
+  second later and would otherwise cover the new call - and is still closed after
+  the usual 15 s, by its own timer. Its summary is not shown, so the idle panel's
+  THIS SHIFT tiles miss that one call.
+* **A start while a call is connecting** waits for it (`_queued_activate`, the
+  newest wins): once that call is up it is ended as above (or kept, if the start
+  was for the same call); if it failed to connect, the queued call starts.
+
+A `dialer_stop` carries no call identity, so a stop that arrived late for the
+replaced call would end the new one. XDial sends a call's end before the next
+call's start, so this does not arise; it is noted here in case that ever changes.
 
 Timeouts: `WS_CONNECT_TIMEOUT` 10s, `WS_HANDSHAKE_TIMEOUT` 30s,
 `WS_STREAM_TIMEOUT` 5s. The 30-second handshake deadline is why the recording

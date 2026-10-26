@@ -31,6 +31,7 @@ Verified on 21 September 2026: **430 passed**, and the smoke test **all 21 pass*
 | --- | --- | --- |
 | `test_autoupdate.py` | 47 | Version comparison as tuples rather than strings, the trusted-host gate, the `.exe`-only rule, the HTTPS requirement for off-backend downloads, filename sanitisation against `../..`, and the updater script. This is the security-sensitive area of the app — it downloads and executes a binary. |
 | `test_dialer_activate.py` | 45 | Dialer-driven pop-up, start, stop, and PCI pause and resume, including which connection is addressed. |
+| `test_dialer_switch.py` | 11 | A dialer start during a call (26 Oct): a new call ends the old one (stop and `session_end` on its socket) before it starts, never two at once; the old call's late messages and 25 s fallback cannot reach the new call; its socket is still closed; the same call's start again is ignored (lead, else a real reference, within 120 s); a start while connecting is queued, newest wins. |
 | `test_loopback_keepalive.py` | 44 | Speaker loopback capture, format probing, and keepalive behaviour. |
 | `test_call_buffering.py` | 28 | Local buffering and replay across a mid-call disconnect, so the recording has no gap. |
 | `test_mic_filter.py` | 26 | That Krisp's virtual microphone is excluded, and that tolerant device-name matching survives Windows renaming a device (including the curly-apostrophe case). |

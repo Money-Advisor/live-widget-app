@@ -6063,6 +6063,12 @@ class MainWindow(QMainWindow):
         # Dialer call metadata stashed by _handle_dialer_activate and consumed
         # (one-shot) by the next _start_recording. None for manual calls.
         self._pending_dialer_meta: dict | None = None
+        # The dialer metadata of the call being recorded and when it was started
+        # (None for a manual call), to tell a repeated start from a new call; and
+        # a dialer start that arrived while a call was still connecting (F3).
+        self._call_dialer_meta: dict | None = None
+        self._call_started_at: float = 0.0
+        self._queued_activate: dict | None = None
         # First-run mic-setup gate: dims the widget + shows a setup card until the
         # agent picks a microphone. Blocks recording (incl. dialer auto-start).
         self._mic_gate_active: bool = False
@@ -7594,6 +7600,8 @@ class MainWindow(QMainWindow):
             token_provider=lambda: self._token,
         )
         # One-shot: a later manual call must not inherit this dialer metadata.
+        self._call_dialer_meta = self._pending_dialer_meta
+        self._call_started_at = time.monotonic()
         self._pending_dialer_meta = None
         # Phase 3: receive inbound server messages (compliance alerts etc.)
         streamer.on_message = self._on_inbound_message
@@ -7620,6 +7628,10 @@ class MainWindow(QMainWindow):
         """Worker could not connect — surface the error and return to idle."""
         self._starting = False
         self._pending_streamer = None
+        # A dialer start that came in while this one was connecting still gets
+        # its call - queued now, before the error box below holds the loop.
+        if self._queued_activate is not None:
+            QTimer.singleShot(0, self._take_queued_activate)
         self._rec_btn.setEnabled(True)
         self._rec_btn.setText("Start Call Recording")
         self._status_chip.setText("● Ready to Record")
@@ -7641,6 +7653,10 @@ class MainWindow(QMainWindow):
         self._pending_streamer = None
         self._starting = False
         self._rec_btn.setEnabled(True)
+        # A dialer start that came in while this call was connecting (F3): it
+        # ends this call once it is up, or simply goes ahead if none came up.
+        if self._queued_activate is not None:
+            QTimer.singleShot(0, self._take_queued_activate)
         if streamer is None:
             return
         # The server told us whether live compliance runs (gates the summary).
@@ -8058,11 +8074,76 @@ class MainWindow(QMainWindow):
         nx = min(x, max(right - new_w, left))
         return nx, x - nx
 
+    # A second start for the call already recording - the same start sent
+    # twice, or that customer redialled straight away - is not a new call.
+    DUPLICATE_START_S = 120
+    # Labels the dialer sends where a customer reference belongs (the api's
+    # _PLACEHOLDER_REFS): two different calls can both carry one.
+    _PLACEHOLDER_REFS = {"hotkey", "-", "--", "n/a", "na", "none", "null", "unknown"}
+
+    def _same_dialer_call(self, msg: dict) -> bool:
+        """Is this dialer start for the call already recording?
+
+        The start carries no per-call id (XDial sends that on the end), so the
+        lead, or failing that the customer reference, and the time decide. A
+        manual call is never the same as a dialer one.
+        """
+        cur = self._call_dialer_meta
+        if not cur or time.monotonic() - self._call_started_at > self.DUPLICATE_START_S:
+            return False
+        lead_a, lead_b = (str(m.get("lead_id") or "").strip() for m in (cur, msg))
+        if lead_a and lead_b:
+            return lead_a == lead_b
+        ref_a, ref_b = (str(m.get("customer_reference") or "").strip() for m in (cur, msg))
+        return bool(ref_a) and ref_a == ref_b and ref_a.lower() not in self._PLACEHOLDER_REFS
+
+    def _end_superseded_call(self):
+        """End the call a new dialer start has replaced, ready for the new one.
+
+        Its messages are cut off first: the server's summary of the old call
+        lands about a second after the stop and would be read as the new call's
+        (covering its screen). Its socket is still closed after the usual 15 s,
+        but by its own timer, so the new call's own close never strands it.
+        """
+        if self._streamer is not None:
+            self._streamer.on_message = None
+        self._stop_recording()
+        self._stop_summary_wait()
+        old, self._closing_streamer = self._closing_streamer, None
+        if old is not None:
+            QTimer.singleShot(15000, lambda s=old: self._close_streamer(s))
+        self._show_front()
+
+    @staticmethod
+    def _close_streamer(s):
+        try:
+            s.close()
+        except Exception:
+            pass
+
+    def _take_queued_activate(self):
+        msg, self._queued_activate = self._queued_activate, None
+        if msg is not None:
+            self._handle_dialer_activate(msg)
+
     def _handle_dialer_activate(self, msg: dict):
-        """Dialer-driven auto-start — behaves exactly like clicking Start."""
-        # Guard against double-start: never start a second call.
-        if self._recording:
+        """Dialer-driven auto-start — behaves exactly like clicking Start.
+
+        A start while a call is still open means that call is over - the dialer
+        never sent its end (24 Oct: one call recorded for a day, and every call
+        after it silently not recorded). The old call is ended and this one
+        started straight after it, never two at once (OUTSTANDING F3).
+        """
+        if self._starting:
+            # A call is connecting: this start waits for it (the newest wins),
+            # then ends it or follows it - _on_call_connected / _on_call_failed.
+            self._queued_activate = msg
             return
+        if self._recording:
+            if self._same_dialer_call(msg):
+                return
+            print("[dialer] a new call while recording - ending the old one first")
+            self._end_superseded_call()
         # First-run gate: if the agent hasn't picked a mic yet, do NOT record on
         # a default/wrong device — surface the setup overlay and bail. The dialer
         # re-fires on the next call once setup is done.
