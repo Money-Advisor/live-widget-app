@@ -195,7 +195,7 @@ Little-endian 4-byte length, then `mic` or `speaker`, then the raw PCM.
 
 Until 2.9.62 a `dialer_activate` that arrived while the widget was recording was
 thrown away. When the dialer never sent a call's end (24 Oct: one call recorded
-for a day), every call after it went unrecorded. Now (`_handle_dialer_activate`):
+for a day), every call after it went unrecorded. From 2.9.63 (`_handle_dialer_activate`):
 
 * **The same call again** - the same `lead_id` (or, with no lead on either side,
   the same real customer reference; never a placeholder such as `HOTKEY`) within
