@@ -263,5 +263,20 @@
   S['bar-signed-in-again'] = { size: [360, 900], steps: [st({})], clicks: [FOLD], later: [st({ phase: 'login', signedOut: true }), st({})] };
   S['bar-dock-left'] = { size: [64, 900], steps: [st({ dock: 'left' })], clicks: [FOLD] };
 
+  // 30 Oct (2.9.64, W2): a call whose live AI is on keeps the panel open. It
+  // opens when the call connects, the fold is greyed out, and the agent's own
+  // fold comes back when the call ends. A call with live AI off is unchanged
+  // (bar-call-starts, bar-call-ends).
+  var COACHED = { kind: 'summary', data: { mode: 'pending', duration: 1456 } };
+  S['coached-call'] = { size: [360, 900], steps: [live({ keepOpen: true }), stage()] };
+  S['coached-fold-refused'] = { size: [360, 900], steps: [live({ keepOpen: true }), stage()],
+    clicks: ['[aria-label="Stays open during coached calls"]'] };
+  S['coached-call-opens-the-bar'] = { size: [360, 900], steps: [st({})], clicks: [FOLD],
+    later: [live({ keepOpen: true, elapsed: 12 }), stage()] };
+  S['coached-call-ends-folds-back'] = { size: [64, 900], steps: [st({})], clicks: [FOLD],
+    later: [live({ keepOpen: true }), stage(), st({ phase: 'summary' }), COACHED] };
+  S['coached-call-ends-open'] = { size: [360, 900], steps: [live({ keepOpen: true }), stage()],
+    later: [st({ phase: 'summary' }), COACHED] };
+
   root.FocusScenarios = S;
 }(typeof self !== 'undefined' ? self : this));

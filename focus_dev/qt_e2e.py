@@ -9,6 +9,7 @@ Proves, with nothing faked between Python and the page:
   * pressing the page's buttons reaches the SAME MainWindow methods
   * the window is the width of what is drawn, on the screen edge
   * switching to classic and back works, mid-call
+  * a call whose live AI is on keeps the panel open (2.9.64): its fold refused
 and saves a screenshot of the real window at each step.
 
 Safe on a working PC: QSettings point at a throwaway folder (the real signed-
@@ -243,6 +244,19 @@ shot(win, "05-pinned")
 js(win, "document.querySelector('[data-act=unpin]').click(); true")
 check("unpinning gives the width back", wait_for(lambda: win.width() == 360, 3000), str(win.width()))
 
+# 2.9.64 (W2): this call's live AI is on, so the panel stays open
+check("the fold is greyed out on a coached call",
+      js(win, "!!(document.querySelector('[data-act=collapse]')||{}).disabled") is True)
+js(win, "var b = document.querySelector('[data-act=collapse]'); if (b) b.click(); true")
+check("folding is refused: the window stays 360px", not wait_for(lambda: win.width() != 360, 1500), str(win.width()))
+
+# The bar and its slide-out, with the keep-open rule off for these steps: no call
+# reaches them today (cards come only with live AI on), kept for a per-team switch.
+win.keep_open = lambda: False
+ctl.push_state(force=True)
+pump(300)
+
+
 def fold_and_peek(n):
     """Fold, let a new card slide out, let it go back. Returns the three results."""
     js(win, "var b = document.querySelector('[data-act=collapse]'); if (b) b.click(); true")
@@ -278,6 +292,8 @@ check("a new card slides out of the strip (window grows to 416px)", peek_ok)
 check("the slide-out goes back after 8 seconds", back_ok, f"{win.width()} {trail}")
 js(win, "document.querySelector('.strip [data-act=expand]:last-child').click(); true")
 check("opening the panel again", wait_for(lambda: win.width() == 360, 3000), str(win.width()))
+del win.keep_open                              # the rule back on
+ctl.push_state(force=True)
 
 # --- safety ---
 win.server_message.emit({"type": "crisis_alert", "line": "Approved support wording.", "immediate": True,

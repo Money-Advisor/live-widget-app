@@ -138,6 +138,15 @@ EXPECT = {
                           'class="qt">Non-monthly cost not captured</span><span class="cchip"',
                           'data-tip="Done on Call 2 · Tom Reid · 16 Oct"'], []),
     "case-carried-held": (["Carried over from Call 2 · Tom Reid · 16 Oct · held for Solutions"], []),
+    # 2.9.64 (W2): a call whose live AI is on keeps the panel open.
+    "coached-call": (['aria-label="Stays open during coached calls" data-tip="Stays open during coached calls" disabled',
+                      'class="body"', 'data-act="stop"'], ['aria-label="Fold to the strip"', 'class="strip"']),
+    "coached-fold-refused": (['class="body"', 'aria-label="Stays open during coached calls"'], ['class="strip"']),
+    "coached-call-opens-the-bar": (['class="body"', 'aria-label="Stays open during coached calls"', 'data-act="stop"'],
+                                   ['class="strip"']),
+    "coached-call-ends-folds-back": (['class="strip"', 'data-act="newcall"', "Done"],
+                                     ['class="body"', 'aria-label="Stays open during coached calls"']),
+    "coached-call-ends-open": (['<h2>Working out your score'], ['class="strip"']),
 }
 
 

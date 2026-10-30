@@ -268,7 +268,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.63"
+APP_VERSION = "2.9.64"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -1427,20 +1427,79 @@ class UpdateCheckWorker(QThread):
             self.no_update.emit()
 
 
-def build_updater_script(installer: str, exe: str, minimized: bool) -> str:
+# Most the update helper waits for the widget's own processes to be gone (2.9.64).
+UPDATE_WAIT_SECONDS = 60
+
+
+def update_log_path() -> Path:
+    """The installer's own log (Inno /LOG), beside widget.log: a failed update says why."""
+    return log_path().with_name("update-install.log")
+
+
+def _bat(text) -> str:
+    """Text for a .cmd file: cmd expands %...% even inside quotes."""
+    return str(text).replace("%", "%%")
+
+
+def wait_for_exit_line(folder: str, seconds: int) -> str:
+    """One .cmd line that waits until no process started from `folder` is running.
+
+    2.9.64 (Bilal, 30 Oct): a fixed ~3s was not enough. Since 2.9.59 the widget
+    has a Qt WebEngine process beside it (QtWebEngineProcess.exe), and the widget
+    or that process could still hold its files when the installer started to
+    replace them - [InstallDelete] _internal - so the install failed and nothing
+    said so. This waits for whatever runs from the widget's OWN folder (any other
+    copy, another user's included, is not this install's) for `seconds` at most,
+    then goes on. If PowerShell cannot run, the line does nothing and the installer
+    waits as well (installer.iss PrepareToInstall).
+    """
+    # A process is named by the path it was started with: the folder in full,
+    # and by its 8.3 name too when Windows gives it one.
+    forms = [folder.rstrip("\\/")]
+    short = _short_path(folder)
+    if short and short.rstrip("\\/").lower() != forms[0].lower():
+        forms.append(short.rstrip("\\/"))
+    lits = ",".join("'" + f.replace("'", "''") + "\\'" for f in forms)
+    ps = (f"$d=@({lits}); $t=(Get-Date).AddSeconds({int(seconds)}); "
+          "while ((Get-Date) -lt $t -and (Get-Process -ErrorAction SilentlyContinue | Where-Object "
+          "{ try { $p = $_.Path; $p -and ($d | Where-Object { $p.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) }) } "
+          "catch { $false } })) { Start-Sleep -Milliseconds 250 }")
+    return f'powershell -NoProfile -NonInteractive -Command "{_bat(ps)}" >nul 2>&1\r\n'
+
+
+def _short_path(path: str) -> str:
+    """The folder's 8.3 name ("" when Windows gives none, or off Windows)."""
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(1024)
+        n = ctypes.windll.kernel32.GetShortPathNameW(str(path), buf, 1024)
+        return buf.value if 0 < n < 1024 else ""
+    except Exception:
+        return ""
+
+
+def build_updater_script(installer: str, exe: str, minimized: bool, log: str | None = None) -> str:
     """The batch a detached cmd runs after we quit.
 
     A running exe can't overwrite itself, so the sequence has to happen from
     outside the process: wait for us to exit, run the installer silently, relaunch.
     The install is per-user (Inno PrivilegesRequired=lowest), so there's no UAC
     prompt. Finally it deletes the installer and itself.
+
+    Waiting for us to exit means for our processes to be gone, not a fixed time
+    (wait_for_exit_line, 2.9.64). `log`: where the installer writes its log.
     """
     args = " --minimized" if minimized else ""
     exe_name = os.path.basename(exe) or "SparkFlow.exe"
+    # The folder as Windows names running programs: in full, never 8.3-short
+    # (C:\Users\FASEEH~1.IQB\... is the same folder, but no process path starts with it).
+    folder = os.path.dirname(os.path.realpath(exe)) if os.path.dirname(exe) else ""
+    log_arg = f' /LOG="{_bat(log)}"' if log else ""
     return (
         "@echo off\r\n"
         "ping 127.0.0.1 -n 4 >nul\r\n"                     # ~3s: let the widget exit
-        f'"{installer}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS\r\n'
+        + (wait_for_exit_line(folder, UPDATE_WAIT_SECONDS) if folder else "") +
+        f'"{installer}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS{log_arg}\r\n'
         # Let the installer settle and antivirus finish scanning the new exe before
         # launching it — starting too eagerly is how the relaunch gets swallowed.
         "ping 127.0.0.1 -n 4 >nul\r\n"
@@ -1452,6 +1511,54 @@ def build_updater_script(installer: str, exe: str, minimized: bool) -> str:
         f'del "{installer}" >nul 2>&1\r\n'
         'del "%~f0" >nul 2>&1\r\n'
     )
+
+
+# Installs of one version per day. Two, as before - but for that DAY, not for good
+# (2.9.64, Bilal, 30 Oct): a failure blocked a version for ever, so agents stayed
+# on 2.9.59-2.9.62 with nothing to say why.
+UPDATE_TRIES_PER_DAY = 2
+
+
+def update_tries_today(attempts: dict, version: str, today: str) -> int:
+    """How often `version` has been tried on `today` ("YYYY-MM-DD").
+
+    A try is kept as {"tries": n, "day": "YYYY-MM-DD"}. The old count (a bare
+    number, no day) is from before 2.9.64 and counts as another day's, so a widget
+    blocked by it tries again."""
+    rec = (attempts or {}).get(version)
+    if isinstance(rec, dict) and rec.get("day") == today:
+        try:
+            return max(0, int(rec.get("tries", 0)))
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def update_outcome(attempts: dict, current: str, log: Path) -> str | None:
+    """What the last update came to, for widget.log - None when there is none.
+
+    The try is recorded before the widget quits to install, so on the next start
+    either this IS that version (it worked), or it is not (it failed, and the
+    installer's log says why)."""
+    if not attempts:
+        return None
+    version = next(iter(attempts))
+    if version == current:
+        return f"[update] now on {current} - the update installed"
+    if not is_newer_version(version, current):
+        return None
+    rec = attempts[version]
+    when = rec.get("day") if isinstance(rec, dict) else "before 2.9.64"
+    msg = f"[update] {version} did not install (last tried {when}); still on {current}"
+    try:
+        lines = [ln.strip() for ln in Path(log).read_text(encoding="utf-8", errors="replace").splitlines()
+                 if ln.strip()]
+    except OSError:
+        return msg + f" - no installer log at {log}"
+    key = [ln for ln in lines if any(w in ln.lower() for w in ("error", "exception", "failed", "abort",
+                                                               "denied", "in use", "waited"))]
+    shown = (key or lines)[-5:]
+    return msg + f". The installer's log ({log}) ends:\n" + "\n".join("    " + ln for ln in shown)
 
 
 def _spool_dir() -> Path:
@@ -6853,8 +6960,18 @@ class MainWindow(QMainWindow):
         self._update_checked = True
         # Loop guard: if the registry ever advertises a version the installer doesn't
         # actually produce (a mis-tagged release), we would reinstall and relaunch on
-        # every start — across the whole fleet. Try a given version twice, then stop.
+        # every start — across the whole fleet. Try a given version twice a day.
         self._update_attempts = _load_json_setting(self._settings, "update/attempts")
+        outcome = update_outcome(self._update_attempts, APP_VERSION, update_log_path())
+        if outcome:
+            print(outcome)
+        if APP_VERSION in (self._update_attempts or {}):
+            # Installed: said once, then forgotten.
+            self._update_attempts = {}
+            try:
+                self._settings.remove("update/attempts")
+            except Exception:
+                pass
         self._update_worker = UpdateCheckWorker(self._api_base, APP_VERSION)
         self._update_worker.update_ready.connect(self._on_update_ready)
         self._update_worker.no_update.connect(
@@ -6863,15 +6980,14 @@ class MainWindow(QMainWindow):
 
     def _on_update_ready(self, installer_path: str, version: str):
         """Installer downloaded. Install it once the agent isn't on a call."""
-        tried = int((self._update_attempts or {}).get(version, 0))
-        if tried >= 2:
-            print(f"[update] {version} already attempted {tried}x and we're still on "
-                  f"{APP_VERSION} — not retrying (check the release registry)")
+        today = datetime.date.today().isoformat()
+        tried = update_tries_today(self._update_attempts, version, today)
+        if tried >= UPDATE_TRIES_PER_DAY:
+            print(f"[update] {version} already attempted {tried}x today and we're still on "
+                  f"{APP_VERSION} — trying again tomorrow (the installer's log: {update_log_path()})")
             return
-        attempts = dict(self._update_attempts or {})
-        attempts[version] = tried + 1
         # Keep only this version's counter; older ones are irrelevant once we move on.
-        self._update_attempts = {version: attempts[version]}
+        self._update_attempts = {version: {"tries": tried + 1, "day": today}}
         try:
             self._settings.setValue("update/attempts", json.dumps(self._update_attempts))
             self._settings.sync()      # must survive the imminent restart
@@ -6896,8 +7012,14 @@ class MainWindow(QMainWindow):
         try:
             exe = sys.executable
             minimized = "--minimized" in sys.argv
+            log = update_log_path()
+            try:
+                log.parent.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                log = None          # no folder for it: install without a log, as before
             script = Path(tempfile.gettempdir()) / "sparkflow_update.cmd"
-            script.write_text(build_updater_script(installer, exe, minimized),
+            script.write_text(build_updater_script(installer, exe, minimized,
+                                                   str(log) if log else None),
                               encoding="utf-8")
             # CREATE_NO_WINDOW ONLY. Windows explicitly IGNORES CREATE_NO_WINDOW when
             # it is combined with DETACHED_PROCESS — which is why the helper's console

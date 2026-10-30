@@ -141,6 +141,13 @@
       if (host.phase === 'idle') { ui.manual = false; }
       if (host.phase === 'summary') { ui.summaryAll = false; }
     }
+    // A call whose live AI is on keeps the panel open (2.9.64, W2): it opens when
+    // the call connects, and the agent's own fold comes back when it ends.
+    if (!!host.keepOpen !== !!was.keepOpen) {
+      note('keepOpen:' + !!host.keepOpen);
+      if (host.keepOpen) { ui.foldBefore = ui.collapsed; ui.collapsed = false; ui.peekKey = null; }
+      else if (ui.foldBefore != null) { ui.collapsed = ui.foldBefore; ui.foldBefore = null; }
+    }
     if (host.micGate && ui.gateIndex == null) ui.gateIndex = host.micIndex || 0;
     if (!host.micGate) ui.gateIndex = null;
   }
@@ -224,7 +231,9 @@
       (p ? '<button class="ib resume" data-act="pause" aria-label="Resume recording">' + I.play + '</button>'
          : '<button class="ib pause" data-act="pause" aria-label="Pause for card payment" data-tip="Pause for card payment">' + I.pause + '</button>') +
       '<button class="ib stop" data-act="stop" aria-label="Stop recording" data-tip="Stop recording">' + I.stop + '</button>' +
-      '<button class="ib ghost" data-act="collapse" aria-label="Fold to the strip" data-tip="Fold to the strip">' + fold + '</button></div>' +
+      (host.keepOpen
+        ? '<button class="ib ghost" data-act="collapse" aria-label="Stays open during coached calls" data-tip="Stays open during coached calls" disabled>' + fold + '</button></div>'
+        : '<button class="ib ghost" data-act="collapse" aria-label="Fold to the strip" data-tip="Fold to the strip">' + fold + '</button></div>') +
       (host.livePipeline ? stageBar() : '') + '</div>';
   }
 

@@ -59,6 +59,12 @@ installer/installer.iss   the one installer - same AppId/folder/exe/Run entry as
   mistake): greyed out from the moment a call starts connecting until it stops,
   refused in Python whatever the page sends, and the old screen's "-" is locked
   the same way.
+* **A coached call keeps the panel open** (2.9.64, 30 Oct): on a call whose
+  live AI is on, the panel opens when the call connects (from the bar too), the
+  fold is greyed out, and a fold, "x", Windows' minimise and Alt+F4 are refused
+  in Python; the agent's own bar comes back when the call ends. Calls with live
+  AI off are as above. Proof: 5 `coached-*` screens, `tests/test_keep_open.py`
+  15, `focus_dev/minimise_e2e.py` 38/38 in the real window.
 * **Nothing flashes on opening** (15 Oct). The window stays fully transparent
   until the page has drawn, then appears already docked. Two classic startup
   shows are kept from the screen: the checklist panel's constructor shows it

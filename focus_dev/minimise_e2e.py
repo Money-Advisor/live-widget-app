@@ -13,7 +13,13 @@ real size and place at each step and saves a screenshot of each.
 Throwaway settings with dead server addresses, the dialer connection stubbed
 out, nothing recorded: the "call" is the widget's own flags and its classic
 summary path, as in qt_e2e.py.
+
+2.9.64 (W2, 30 Oct): those calls are ones with live AI OFF; a call whose live AI
+is on opens the panel and keeps it open - the fold greyed out, a fold, a hide,
+Windows' minimise and Alt+F4 all refused - and the agent's own bar comes back
+when it ends.
 """
+import json
 import os
 import sys
 import tempfile
@@ -130,7 +136,8 @@ shot("02-waiting-bar")
 click(".strip [data-act=hide]")
 check("x on the bar hides it to the tray", wait_for(lambda: not win.isVisible(), 3000), geo())
 
-# The dialer starts a call: _handle_dialer_activate shows the window, then records.
+# A call with live AI OFF (a recording-only team): as in 2.9.62, folded stays
+# folded through the call. The dialer shows the window, then records.
 win._show_window()
 check("a call brings it back from the tray as the bar", wait_for(lambda: win.isVisible() and docked(64), 3000), geo())
 win._starting = True
@@ -139,16 +146,14 @@ check("while connecting: still the bar, with no x",
       wait_for(lambda: js("!!document.querySelector('.strip .spin') && !document.querySelector('[data-act=hide]')") is True, 3000))
 win._starting = False
 win._recording = True
-win._live_pipeline = True
+win._live_pipeline = False
 ctl.push_state(force=True)
-check("the call starts and it stays the bar", wait_for(lambda: js("!!document.querySelector('.strip [data-act=stop]')") is True, 3000)
-      and docked(64), geo())
+check("a call with live AI off starts and it stays the bar",
+      wait_for(lambda: js("!!document.querySelector('.strip [data-act=stop]')") is True, 3000) and docked(64), geo())
 ctl.on_action("hide", "{}")
 pump(300)
 check("hiding is refused during the call", win.isVisible(), geo())
 shot("03-call-bar")
-
-# The call ends while it is a bar.
 win._recording = False
 win._summary_card.show_pending(1456)
 win._summary_card.setVisible(True)
@@ -156,7 +161,50 @@ win._front_card.setVisible(False)
 ctl.push_state(force=True)
 check("the call ends and it stays the bar", wait_for(lambda: js("!!document.querySelector('.strip [data-act=newcall]')") is True, 3000)
       and docked(64), geo())
-shot("04-ended-bar-pending")
+win._show_server_summary({"type": "session_summary", "duration_seconds": 1456, "recording_saved": True})
+win._summary_card.mark_saved()
+check("with live AI off the bar shows Saved, no score", wait_for(lambda: js("!!document.querySelector('.strip .sb.g')") is True, 3000)
+      and "%" not in (js("document.querySelector('.strip').innerText") or "") and docked(64), geo())
+click(".strip [data-act=newcall]")
+check("Done: ready for the next call, still the bar",
+      wait_for(lambda: js("!!document.querySelector('.strip .sb.rdy')") is True, 3000) and docked(64), geo())
+
+# A call whose live AI is ON (2.9.64, W2): the panel opens and stays open; the
+# agent's bar comes back when the call ends.
+win._starting = True
+ctl.push_state(force=True)
+check("a coached call connecting: still the bar", wait_for(lambda: js("!!document.querySelector('.strip .spin')") is True, 3000)
+      and docked(64), geo())
+win._starting = False
+win._recording = True
+win._live_pipeline = True
+ctl.push_state(force=True)
+check("a coached call opens the full panel", wait_for(lambda: docked(360), 3000)
+      and wait_for(lambda: js("!!document.querySelector('.panel [data-act=stop]')") is True, 3000), geo())
+check("its fold is greyed out",
+      js("(function(){var b=document.querySelector('.hd [data-act=collapse]');"
+         "return b && b.disabled ? b.getAttribute('aria-label') : 'enabled'})()") == "Stays open during coached calls")
+shot("04-coached-call")
+ctl.on_action("layout", json.dumps({"mode": "strip", "pin": False, "peek": False}))
+pump(400)
+check("a fold sent anyway is refused", docked(360), geo())
+ctl.on_action("hide", "{}")
+pump(300)
+check("hiding is refused", win.isVisible() and docked(360), geo())
+win.setWindowState(win.windowState() | Qt.WindowState.WindowMinimized)      # a taskbar click, Win+M
+check("Windows minimising it brings it straight back",
+      wait_for(lambda: win.isVisible() and not win.isMinimized() and docked(360), 3000), geo())
+win.close()                                                                  # Alt+F4
+check("closing it is refused", wait_for(lambda: win.isVisible() and docked(360), 3000), geo())
+
+win._recording = False
+win._summary_card.show_pending(1456)
+win._summary_card.setVisible(True)
+win._front_card.setVisible(False)
+ctl.push_state(force=True)
+check("the call ends: back to the bar the agent chose", wait_for(lambda: js("!!document.querySelector('.strip [data-act=newcall]')") is True, 3000)
+      and docked(64), geo())
+shot("05-ended-bar-pending")
 win._show_server_summary({"type": "session_summary", "duration_seconds": 1456, "recording_saved": True,
                           "score": {"covered": 41, "total": 50, "earned": 41.0, "fraction": 0.82},
                           "covered": {f"c{i}": {} for i in range(41)}, "missing": ["m1", "m2"],
@@ -164,13 +212,13 @@ win._show_server_summary({"type": "session_summary", "duration_seconds": 1456, "
                                          "m2": {"label": "Next steps agreed", "section": "Next Steps"}}})
 win._summary_card.mark_saved()
 check("the bar shows the score", wait_for(lambda: "82%" in text(), 3000) and docked(64))
-shot("05-ended-bar-score")
+shot("06-ended-bar-score")
 
 click(".strip .sb.a")
 check("tapping the score opens the summary panel", wait_for(lambda: docked(360) and "Call ended" in text(), 3000), geo())
 check("the summary has minimise and x",
       js("[...document.querySelectorAll('.hd [data-act]')].map(e=>e.getAttribute('data-act')).join(',')") == "collapse,hide")
-shot("06-summary-panel")
+shot("07-summary-panel")
 click(".hd [data-act=collapse]")
 check("- on the summary folds it to the bar", wait_for(lambda: docked(64), 3000), geo())
 
@@ -193,20 +241,29 @@ win._recording = True
 ctl.push_state(force=True)
 check("the next call brings it back as the panel", wait_for(lambda: win.isVisible() and docked(360), 3000)
       and wait_for(lambda: js("!!document.querySelector('.panel [data-act=stop]')") is True, 3000), geo())
-shot("07-call-panel")
-
-# A safety card while folded opens the panel (unchanged).
-click("[data-act=collapse]")
-check("folded during the call", wait_for(lambda: docked(64), 3000), geo())
+shot("08-call-panel")
 win.server_message.emit({"type": "crisis_alert", "line": "Approved support wording.", "immediate": True,
                          "escalation": "IMMEDIATE RISK TO LIFE - call 999 now.",
                          "resources": [{"name": "Samaritans", "detail": "116 123"}], "evidence": ""})
-check("a safety card opens the full panel", wait_for(lambda: docked(360), 3000)
-      and wait_for(lambda: js("!!document.querySelector('.focus.safety')") is True, 3000), geo())
+check("a safety card shows in the open panel", wait_for(lambda: js("!!document.querySelector('.focus.safety')") is True, 3000)
+      and docked(360), geo())
 win._recording = False
 win._summary_card.setVisible(False)
 win._front_card.setVisible(True)
 ctl.push_state(force=True)
+
+# A call with live AI off from the panel: it can be folded during the call.
+check("between calls again: the panel", wait_for(lambda: "Ready for your next call" in text(), 3000) and docked(360), geo())
+win._recording = True
+win._live_pipeline = False
+ctl.push_state(force=True)
+wait_for(lambda: js("!!document.querySelector('.panel [data-act=stop]')") is True, 3000)
+click("[data-act=collapse]")
+check("folded during a call with live AI off", wait_for(lambda: docked(64), 3000), geo())
+win._recording = False
+ctl.push_state(force=True)
+click(".strip [data-act=expand]")
+check("and it opens again as before", wait_for(lambda: docked(360), 3000), geo())
 
 # Signed out while folded: the panel, and it stays the panel after signing in.
 wait_for(lambda: "Ready for your next call" in text(), 3000)

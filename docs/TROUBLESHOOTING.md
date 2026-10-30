@@ -92,6 +92,12 @@ Deliberate: an agent who minimised it to the bar keeps the bar until they open
 it. The bar shows the call while it runs and the score after it; tapping the
 score opens the summary. A customer-safety card opens the panel by itself.
 
+**Except a coached call (2.9.64):** on a call whose live AI is on, the panel
+opens when the call connects and cannot be folded, hidden or minimised until it
+ends; then the bar comes back. `widget.log` shows `[focus] a coached call:
+opening the panel` and `... refused - the panel stays open on a coached call`.
+A call with live AI off keeps the bar as before.
+
 ## Ask for the log file first
 
 ```
@@ -323,7 +329,7 @@ worth capturing with the log.
 | Symptom | Cause |
 | --- | --- |
 | No update offered, though a new version exists | It was not published in Settings ▸ Releases. The widget compares against `/api/version`, not against GitHub. |
-| Update downloads then does nothing | Check `update/attempts` in `QSettings` and the log. Retries are bounded so a persistently failing update cannot loop forever. |
+| Update downloads then does nothing | From 2.9.64: `widget.log` says on the next start `[update] X did not install ...` with the installer's own lines, and the full installer log is `%LOCALAPPDATA%\Spark Flow\logs\update-install.log`. It tries twice a day (`update/attempts`). Widgets up to 2.9.63 kept no installer log and stopped after two tries for good - one manual install of 2.9.64 unsticks a PC that has already given up on it. |
 | Update refused outright | `is_safe_installer_url()` rejected it. The URL must end in `.exe` and be on the backend's own host or an HTTPS GitHub host. A plain-HTTP file server elsewhere is refused on purpose. |
 | SmartScreen warns on install | The installer is not code-signed. Expected today, and on the open list — it is exactly the wrong signal to give someone installing a recording tool. |
 | `Failed to load Python DLL ...\_MEIxxxxxx\python312.dll` | Someone changed the build to `--onefile`. Revert it: antivirus scanning the per-launch unpack causes this, it happens in the PyInstaller bootloader before any of our code runs, and the agent ends up with no widget at all. |

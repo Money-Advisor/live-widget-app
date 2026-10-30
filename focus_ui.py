@@ -371,6 +371,7 @@ class FocusController:
             "company": win._company_name or "Spark Flow",
             "recording": rec,
             "hideLocked": win.call_in_progress(),
+            "keepOpen": win.keep_open(),
             "paused": bool(win._paused),
             "elapsed": int(win._elapsed or 0),
             "callSeq": self.call_seq,
@@ -398,12 +399,24 @@ class FocusController:
             self.bridge.push.emit(json.dumps(payload))
 
     def push_state(self, force=False):
+        self._keep_open()
         state = self.snapshot()
         text = json.dumps(state, sort_keys=True)
         if force or text != self._last_state:
             self._last_state = text
             self._send({"kind": "state", "data": state})
             self._apply_on_top()
+
+    def _keep_open(self):
+        """On a call whose live AI is on, the panel - never the bar (2.9.64, W2).
+
+        The page opens it when the call connects; this does it whatever the page
+        has drawn so far, so a widget folded between calls opens on the first state
+        of the call."""
+        if self.active and self.win.keep_open() and self.layout.get("mode") == "strip":
+            print("[focus] a coached call: opening the panel")
+            self.layout = {"mode": "panel", "pin": False, "peek": False}
+            self.place()
 
     def _tick(self):
         try:
@@ -549,8 +562,13 @@ class FocusController:
         except ValueError:
             p = {}
         if action == "layout":
-            self.layout = {"mode": "strip" if p.get("mode") == "strip" else "panel",
-                           "pin": bool(p.get("pin")), "peek": bool(p.get("peek"))}
+            strip = p.get("mode") == "strip"
+            if strip and win.keep_open():
+                # The page greys the fold out on a coached call; this is the second lock.
+                print("[focus] fold refused - the panel stays open on a coached call")
+                strip = False
+            self.layout = {"mode": "strip" if strip else "panel",
+                           "pin": bool(p.get("pin")), "peek": bool(p.get("peek")) and strip}
             if self.active:
                 self.place()
             return
@@ -730,6 +748,45 @@ class FocusWindow(main.MainWindow):
     def call_in_progress(self):
         """True from the moment a call starts connecting until it has stopped."""
         return bool(self._recording or self._starting)
+
+    def keep_open(self):
+        """True on a connected call whose live AI is on (2.9.64, W2 - Faseeh, 30 Oct).
+
+        The coaching is only any use if the advisor can see it, so on such a call
+        the panel cannot be folded to the bar, hidden to the tray or minimised by
+        Windows; it opens when the call connects and the agent's own fold comes
+        back when it ends (the page). Whether the call's live AI is on is only
+        known once it has connected (the server's session_started), so a call
+        that is still connecting, and a call with live AI off, are as before."""
+        return bool(self._recording and self._live_pipeline)
+
+    def changeEvent(self, event):
+        # A taskbar click or Win+M minimises the window, and the classic widget
+        # then hides itself to the tray (MainWindow.changeEvent). On a coached
+        # call it comes straight back instead.
+        if (event.type() == QEvent.Type.WindowStateChange and self.isMinimized()
+                and self.keep_open()):
+            event.ignore()
+            print("[focus] minimise refused - the panel stays open on a coached call")
+            QTimer.singleShot(0, self._back_on_screen)
+            return
+        super().changeEvent(event)
+
+    def closeEvent(self, event):
+        # Alt+F4 on the widget: the classic widget hides to the tray. Not on a
+        # coached call. Quit from the tray still works - it stops the call first.
+        if self.keep_open():
+            event.ignore()
+            print("[focus] close refused - the panel stays open on a coached call")
+            QTimer.singleShot(0, self._back_on_screen)
+            return
+        super().closeEvent(event)
+
+    def _back_on_screen(self):
+        self.showNormal()
+        if self.focus_active():
+            self._focus.place()
+        self.raise_()
 
     def _sync_hide_lock(self):
         btn = getattr(self, "_classic_minimise", None)

@@ -56,6 +56,17 @@ I&E pinned, 64 folded).
   slides out for 8 seconds; a safety card, the first-run microphone choice and
   signing in always open the panel. Only the page changed - the window takes
   whatever width the page asks for in any phase.
+- **A coached call keeps the panel open** (2.9.64, Faseeh 30 Oct). On a call whose
+  live AI is on (`_live_pipeline`, known once the call has connected), the panel
+  opens when the call connects - from the bar too - and its fold button is greyed
+  out ("Stays open during coached calls"); when the call ends the agent's own
+  fold comes back. Python refuses it too, whatever is sent: the page's fold
+  (`layout` strip), its "x", Windows' minimise (taskbar, Win+M: the classic widget
+  hides to the tray then, this brings it straight back) and Alt+F4
+  (`FocusWindow.keep_open`, `changeEvent`, `closeEvent`). Quit from the tray still
+  works - it stops the call first. A call with live AI off, a call still
+  connecting, and every moment between calls are as before. The panel was already
+  kept above other windows while signed in.
 - **"x" is locked during a call** (19 Oct): greyed out from the moment a call
   starts connecting until it stops (not on the bar at all then), and refused in
   Python whatever the page sends; the old screen's "-" is locked the same way.
@@ -239,7 +250,7 @@ APP_VERSION = "2.9.50"
 | `auth/token`, `auth/refresh_token`, `auth/user` | The session, only with "Remember me" |
 | `config/json`, `config/etag` | The cached compliance configuration and its ETag |
 | `audio/mic_name`, `audio/spk_name` | The remembered devices |
-| `update/attempts` | Auto-update retry bookkeeping |
+| `update/attempts` | Auto-update retry bookkeeping: `{version: {"tries": n, "day": "YYYY-MM-DD"}}`, two a day (2.9.64) |
 
 **`QSettings` takes precedence over the compile-time defaults.** This is the most
 important operational fact about the widget, and it is what
@@ -324,6 +335,30 @@ Plain HTTP anywhere else is refused, because without TLS the real host cannot be
 distinguished from someone impersonating it. `safe_installer_filename()` sanitises
 the version string before it is interpolated into a temp path, so a crafted version
 cannot escape the directory with `../..`.
+
+### An update waits until the widget has really gone (2.9.64)
+
+The widget hands the install to a detached helper (`build_updater_script`) and
+quits. The helper used to wait a fixed ~3s; since 2.9.59 the widget has a Qt
+WebEngine process beside it, and the widget or that process could still hold
+`_internal` when the installer replaced it (`[InstallDelete]`), so the install
+failed with nothing said - and after two tries a version was never tried again
+(Bilal, 30 Oct: agents on 2.9.59-2.9.62). Now:
+
+- the helper waits until nothing runs from the widget's own folder
+  (`wait_for_exit_line`, PowerShell, `UPDATE_WAIT_SECONDS` = 60 at most), then
+  installs. Windows names a process by the path it was started with, so the
+  folder is matched by its full name and by its 8.3 name;
+- the installer waits the same way itself, in silent installs only
+  (`installer.iss` `PrepareToInstall`, both paths compared in full) - every widget
+  up to 2.9.63 still runs it after a fixed ~3s, so this is what lets those widgets
+  update;
+- the installer writes its log beside `widget.log`
+  (`%LOCALAPPDATA%\Spark Flow\logs\update-install.log`), and on its next start the
+  widget writes into `widget.log` whether the update took and, if not, the log's
+  lines that say why (`update_outcome`);
+- a version is tried twice a DAY (`update/attempts` = `{version: {tries, day}}`);
+  the old count, a bare number, no longer blocks.
 
 ### Login: the panel draws it; main.py stays web-free
 
