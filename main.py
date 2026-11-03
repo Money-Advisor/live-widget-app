@@ -268,7 +268,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.64"
+APP_VERSION = "2.9.65"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -512,6 +512,56 @@ def _user_from_me(me: dict) -> dict:
     }
 
 
+# After a call the Focus panel asks "which department was this call for?" (OUTSTANDING
+# MD2, Bilal + Faseeh, 3 Nov). Never on a call shorter than this: a no-answer or a
+# wrong number is not worth the question.
+DEPT_QUESTION_MIN_SECONDS = 30
+
+
+def department_choices(me: dict) -> list:
+    """The departments to pick from after a call, the main one first; [] = no question.
+
+    The backend's rule for the answer (department_filing.answer_from_agent): only
+    while the agent's main department files calls by department, and only into the
+    departments that do, or the main one. One choice is no question, so an agent
+    who works for one department is never asked."""
+    depts = [d for d in ((me or {}).get("departments") or [])
+             if isinstance(d, dict) and d.get("id") and d.get("name")]
+    home = next((d for d in depts if d.get("main")), None)
+    if home is None or not home.get("file_by_code"):
+        return []
+    picks = [{"id": str(d["id"]), "name": str(d["name"]), "main": bool(d.get("main"))}
+             for d in depts if d.get("main") or d.get("file_by_code")]
+    picks.sort(key=lambda d: not d["main"])
+    return picks if len(picks) >= 2 else []
+
+
+def api_answer_department(base_url: str, token: str, session_id: str, department_id: str) -> dict:
+    """POST /api/widget/calls/{session_id}/department -> {department_id, result}.
+
+    The agent's answer (MD2). It decides over the dialer's code; a manager's move by
+    hand still stands (result "kept_hand_move"). A refusal (400) carries the
+    backend's reason, written for the agent - "That is not one of your departments."."""
+    try:
+        r = requests.post(
+            f"{base_url.rstrip('/')}/api/widget/calls/{session_id}/department",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"department_id": department_id}, timeout=15,
+        )
+    except requests.RequestException:
+        raise BackendError("Could not reach the server. Check your connection.")
+    if r.status_code == 200:
+        return r.json()
+    if r.status_code == 400:
+        try:
+            detail = (r.json() or {}).get("detail")
+        except ValueError:
+            detail = None
+        raise BackendError(detail if isinstance(detail, str) and detail
+                           else "The server did not take the answer.")
+    raise BackendError(f"Could not save the answer (server error {r.status_code}).")
+
+
 # ──────────────────────────────────────────────────────────────
 # Login worker: authenticate then load config, off the UI thread
 # ──────────────────────────────────────────────────────────────
@@ -627,6 +677,49 @@ class RefreshWorker(QThread):
             self.failed.emit(str(e))
         except Exception as e:
             self.failed.emit(f"Unexpected error: {e}")
+
+
+class DepartmentChoicesWorker(QThread):
+    """The departments a call will be asked about (MD2), loaded off the UI thread
+    when it connects, so the question is ready the moment the call ends. A failure
+    asks nothing: the call is filed by the dialer's code, as it is without MD2."""
+    loaded = pyqtSignal(object, object)     # the call's row id, the choices (a list)
+
+    def __init__(self, base_url, token, call_id, parent=None):
+        super().__init__(parent)
+        self.base_url = base_url
+        self.token = token
+        self.call_id = call_id
+
+    def run(self):
+        try:
+            choices = department_choices(api_get_me(self.base_url, self.token))
+        except Exception as e:
+            print(f"[dept] departments not loaded ({e}) - this call is not asked about")
+            choices = []
+        self.loaded.emit(self.call_id, choices)
+
+
+class DepartmentAnswerWorker(QThread):
+    """Sends the agent's answer (MD2), off the UI thread."""
+    done = pyqtSignal(object, str, object)  # the call's row id, the department, the reply
+    failed = pyqtSignal(object, str, str)   # the call's row id, the department, why
+
+    def __init__(self, base_url, token, call_id, department_id, parent=None):
+        super().__init__(parent)
+        self.base_url = base_url
+        self.token = token
+        self.call_id = call_id
+        self.department_id = department_id
+
+    def run(self):
+        try:
+            reply = api_answer_department(self.base_url, self.token, self.call_id, self.department_id)
+            self.done.emit(self.call_id, self.department_id, reply if isinstance(reply, dict) else {})
+        except BackendError as e:
+            self.failed.emit(self.call_id, self.department_id, str(e))
+        except Exception as e:
+            self.failed.emit(self.call_id, self.department_id, f"Unexpected error: {e}")
 
 
 class ValidateWorker(QThread):
@@ -1655,6 +1748,10 @@ class AudioStreamer:
         # this session (from the session_started ack). Default True = behave as
         # before (show compliance summary) for older servers that don't send it.
         self.live_pipeline = True
+        # The call's row in the database (the same ack), which the widget's
+        # "which department was this call for?" answer names (MD2). None from an
+        # older server, or when the server could not reach its database.
+        self.db_session_id = None
         self._lock = threading.Lock()
         self._receiver_stop = threading.Event()
         self._receiver_thread: threading.Thread | None = None
@@ -1749,6 +1846,7 @@ class AudioStreamer:
         if resp.get("status") != "session_started":
             raise RuntimeError(f"Server session_start failed: {resp}")
         self.live_pipeline = bool(resp.get("live_pipeline", True))
+        self.db_session_id = resp.get("db_session_id") or None
         # From here on a socket failure is recoverable: the server holds the session
         # open for a grace period, so we buffer locally and resume.
         self._session_live.set()

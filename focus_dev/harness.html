@@ -46,7 +46,13 @@
         // cause (a 1.6s flash) is still on screen when the page is read at 3s.
         setTimeout(function () {
           (sc.later || []).forEach(function (s) { fn(JSON.stringify(s)); });
-          setTimeout(function () { document.title = 'ready:' + name; }, 200);
+          setTimeout(function () {
+            // What the panel sent back, in the page for the checks (never drawn).
+            var sent = document.createElement('pre');
+            sent.id = 'sent'; sent.hidden = true; sent.textContent = JSON.stringify(window.__log);
+            document.body.appendChild(sent);
+            document.title = 'ready:' + name;
+          }, 200);
         }, sc.laterDelay || 0);
       }
     }());

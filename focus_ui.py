@@ -372,6 +372,8 @@ class FocusController:
             "recording": rec,
             "hideLocked": win.call_in_progress(),
             "keepOpen": win.keep_open(),
+            # After the call: "which department was this call for?" (MD2), or None.
+            "deptQuestion": getattr(win, "dept_question", lambda: None)(),
             "paused": bool(win._paused),
             "elapsed": int(win._elapsed or 0),
             "callSeq": self.call_seq,
@@ -398,7 +400,16 @@ class FocusController:
         if self.ready:
             self.bridge.push.emit(json.dumps(payload))
 
+    # Set while a call is being stopped (FocusWindow._stop_recording): the classic code
+    # fills the summary card before it shows it, and a state sent in between told the
+    # page the call was over with no summary - "idle" - for a moment. The page now gets
+    # one state, where the stop ends up (2.9.65, so the department question's lock
+    # follows the call's without a gap).
+    _held = False
+
     def push_state(self, force=False):
+        if self._held:
+            return
         self._keep_open()
         state = self.snapshot()
         text = json.dumps(state, sort_keys=True)
@@ -408,13 +419,15 @@ class FocusController:
             self._apply_on_top()
 
     def _keep_open(self):
-        """On a call whose live AI is on, the panel - never the bar (2.9.64, W2).
+        """On a call whose live AI is on, the panel - never the bar (2.9.64, W2);
+        and while the department question waits for its answer (2.9.65, MD2).
 
         The page opens it when the call connects; this does it whatever the page
         has drawn so far, so a widget folded between calls opens on the first state
         of the call."""
         if self.active and self.win.keep_open() and self.layout.get("mode") == "strip":
-            print("[focus] a coached call: opening the panel")
+            print("[focus] " + ("a coached call" if self.win._recording else "the department question")
+                  + ": opening the panel")
             self.layout = {"mode": "panel", "pin": False, "peek": False}
             self.place()
 
@@ -601,8 +614,18 @@ class FocusController:
             if win._recording:
                 win._toggle_recording()
         elif action == "newcall":
-            self.summary = None
-            win._on_new_call()
+            if getattr(win, "dept_question_open", lambda: False)():
+                # The page greys "Ready for the next call" out until the question is
+                # answered (MD2); this is the second lock. The page dropped its copy
+                # of the summary when it asked, so it gets it back.
+                print("[focus] next call refused - the department question is waiting")
+                self._send({"kind": "summary", "data": self.summary})
+            else:
+                self.summary = None
+                win._on_new_call()
+        elif action == "deptAnswer":
+            if hasattr(win, "answer_department"):
+                win.answer_department(str(p.get("id") or ""))
         elif action == "mic":
             i = int(p.get("index", -1))
             if 0 <= i < len(win._mic_devices):
@@ -632,6 +655,8 @@ class FocusController:
             # mistake). The page greys the button out; this is the second lock.
             if win.call_in_progress():
                 print("[focus] hide refused - a call is in progress")
+            elif win.keep_open():
+                print("[focus] hide refused - the department question is waiting")
             else:
                 win.close()
         else:
@@ -703,6 +728,13 @@ class FocusWindow(main.MainWindow):
     _veiled = True
     _building = False         # True only while MainWindow.__init__ runs
     _show_after_build = False
+    # "Which department was this call for?" (MD2): the running call's row and the
+    # departments it will be asked about, the question on its summary, a call that
+    # ended before those arrived, and a sign-out or quit under way (never asked then).
+    _dept_call = None
+    _dept_q = None
+    _dept_wait = None
+    _leaving = False
 
     def __init__(self, view_factory=None, start=True):
         # The panel ONLY (2.9.59: it replaced the old screen in SparkFlow.exe).
@@ -757,8 +789,11 @@ class FocusWindow(main.MainWindow):
         Windows; it opens when the call connects and the agent's own fold comes
         back when it ends (the page). Whether the call's live AI is on is only
         known once it has connected (the server's session_started), so a call
-        that is still connecting, and a call with live AI off, are as before."""
-        return bool(self._recording and self._live_pipeline)
+        that is still connecting, and a call with live AI off, are as before.
+
+        Also true while the department question waits for its answer (2.9.65,
+        MD2): the same locks, and the agent's fold comes back once answered."""
+        return bool(self._recording and self._live_pipeline) or self.dept_question_open()
 
     def changeEvent(self, event):
         # A taskbar click or Win+M minimises the window, and the classic widget
@@ -883,10 +918,159 @@ class FocusWindow(main.MainWindow):
 
     def _on_call_connected(self):
         super()._on_call_connected()
+        self._start_dept_call()
         if self._focus is not None:
             self._focus.push_state(force=True)
 
     def _stop_recording(self):
-        super()._stop_recording()
+        ended = self._dept_call if self._recording else None
+        secs = int(self._elapsed or 0)
+        self._dept_call = self._dept_q = self._dept_wait = None
+        if self._focus is not None:
+            self._focus._held = True
+        try:
+            super()._stop_recording()
+        finally:
+            if self._focus is not None:
+                self._focus._held = False
+        if ended is not None:
+            self._ask_department(ended, secs)
+        # One state for the call's end and its question, so the panel does not fold
+        # and unfold again between them.
         if self._focus is not None:
             self._focus.push_state(force=True)
+
+    # ---- "Which department was this call for?" (2.9.65, MD2 - Bilal + Faseeh, 3 Nov) ----
+    # Asked on the summary of a call of 30 seconds or more, of an agent who works
+    # for two or more departments that file calls by department. The answer files
+    # the call, over the dialer's code; a manager's move by hand still stands. Until
+    # it is answered the panel stays open, as on a coached call. Recording never
+    # waits on it: a new call drops the question, and the call is filed as without
+    # it - by the dialer's code, else "not confirmed" for a manager. A failed save
+    # frees the agent at once.
+
+    def _start_dept_call(self):
+        """A call has connected: load which departments it can be asked about now,
+        so the question is there the moment it ends."""
+        self._dept_q = self._dept_wait = None
+        streamer = self._streamer if self._recording else None
+        call_id = getattr(streamer, "db_session_id", None) if streamer is not None else None
+        self._dept_call = {"id": call_id, "choices": None} if call_id else None
+        if self._dept_call is None or not self.focus_active() or not self._token:
+            return
+        worker = main.DepartmentChoicesWorker(self._api_base, self._token, call_id, self)
+        worker.loaded.connect(self._on_dept_choices)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_dept_choices(self, call_id, choices):
+        if self._dept_call is not None and self._dept_call["id"] == call_id:
+            self._dept_call["choices"] = list(choices or [])
+        elif self._dept_wait is not None and self._dept_wait[0]["id"] == call_id:
+            # The call ended before they arrived: ask now.
+            ended, secs = self._dept_wait
+            self._dept_wait = None
+            ended["choices"] = list(choices or [])
+            self._ask_department(ended, secs)
+            if self._focus is not None:
+                self._focus.push_state(force=True)
+
+    def _ask_department(self, ended, secs):
+        if self._leaving or not self.focus_active() or not self._token:
+            return
+        if secs < main.DEPT_QUESTION_MIN_SECONDS:
+            print(f"[dept] not asked - a {secs}s call (under {main.DEPT_QUESTION_MIN_SECONDS}s)")
+            return
+        if ended["choices"] is None:
+            self._dept_wait = (ended, secs)
+            return
+        if not ended["choices"]:
+            return
+        self._dept_q = {"call": ended["id"], "choices": ended["choices"], "answer": None,
+                        "busy": None, "error": "", "kept": False}
+        print(f"[dept] asked which department the call was for ({len(ended['choices'])} to pick from)")
+        # Bilal: the widget must come up for it. After this turn of the loop: a
+        # dialer start that ended this call has its next call connecting by then,
+        # which drops the question, and nothing comes up for it.
+        QTimer.singleShot(0, self._show_dept_question)
+
+    def _show_dept_question(self):
+        if self.dept_question_open():
+            self._back_on_screen()
+            if self._focus is not None:
+                self._focus.push_state(force=True)
+
+    def _dept_q_showing(self):
+        """The question exists only on the summary of the call it is about."""
+        return bool(self._dept_q is not None and not self._recording and not self._starting
+                    and self._stack.currentWidget() is self._page_main
+                    and not self._summary_card.isHidden())
+
+    def dept_question(self):
+        """What the page draws, or None."""
+        if not self._dept_q_showing():
+            return None
+        q = self._dept_q
+        return {"choices": [dict(c) for c in q["choices"]], "answer": q["answer"],
+                "busy": q["busy"], "error": q["error"], "kept": q["kept"]}
+
+    def dept_question_open(self):
+        """Waiting for an answer: the panel stays open and the next call waits."""
+        return self._dept_q_showing() and not self._dept_q["answer"] and not self._dept_q["error"]
+
+    def answer_department(self, department_id):
+        q = self._dept_q if self._dept_q_showing() else None
+        if q is None or q["busy"] or q["kept"] or department_id == q["answer"]:
+            return
+        if department_id not in {c["id"] for c in q["choices"]}:
+            print("[dept] answer refused - not one of the choices")
+            return
+        q["busy"], q["error"] = department_id, ""
+        worker = main.DepartmentAnswerWorker(self._api_base, self._token, q["call"], department_id, self)
+        worker.done.connect(self._on_dept_answered)
+        worker.failed.connect(self._on_dept_failed)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_dept_answered(self, call_id, department_id, reply):
+        q = self._dept_q
+        if q is None or q["call"] != call_id:
+            return
+        q["busy"] = None
+        # A manager who moved the call by hand first keeps it where they put it.
+        q["kept"] = (reply or {}).get("result") == "kept_hand_move"
+        q["answer"] = str((reply or {}).get("department_id") or department_id) if q["kept"] else department_id
+        print("[dept] answered" + (" - a manager had already moved the call" if q["kept"] else ""))
+        if self._focus is not None:
+            self._focus.push_state(force=True)
+
+    def _on_dept_failed(self, call_id, department_id, why):
+        q = self._dept_q
+        if q is None or q["call"] != call_id:
+            return
+        q["busy"] = None
+        q["error"] = why or "The answer was not saved."
+        print(f"[dept] answer not saved ({q['error']}) - the agent can carry on")
+        if self._focus is not None:
+            self._focus.push_state(force=True)
+
+    def _start_recording(self, require_name=True):
+        super()._start_recording(require_name)
+        if self._starting:
+            self._dept_q = self._dept_wait = None     # a new call: the last one's question goes
+
+    def _on_new_call(self):
+        self._dept_q = self._dept_wait = None
+        super()._on_new_call()
+
+    def _logout(self):
+        self._leaving = True
+        try:
+            super()._logout()
+        finally:
+            self._leaving = False
+        self._dept_q = self._dept_wait = None
+
+    def _quit(self):
+        self._leaving = True
+        super()._quit()

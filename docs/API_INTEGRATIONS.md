@@ -20,7 +20,8 @@ Base URL is `api/base_url` from `QSettings`, falling back to
 | `POST /auth/refresh-widget` | Before the one-hour expiry | Exchanges the refresh token for a fresh ID token, so an agent signs in once and not again. Rate-limited to 60 a minute. |
 | `POST /auth/forgot-password` | The "Forgot password?" link | Sends a reset link. Always succeeds from the widget's point of view, so it cannot be used to discover which addresses exist. |
 | `GET /api/widget/config` | After login, and on refresh | The department-scoped compliance configuration: script steps, criteria by level, knowledge bank, railguards, company name, and `hide_customer_fields`. |
-| `GET /api/me` | On launch, to validate a stored token | Also how the widget confirms the account is still active. |
+| `GET /api/me` | On launch, to validate a stored token; and when a call connects (2.9.65) | Also how the widget confirms the account is still active. From 2.9.65 its `departments` (each with `main` and `file_by_code`) are the choices for "which department was this call for?" |
+| `POST /api/widget/calls/{session_id}/department` | The agent answers that question (2.9.65, MD2) | `{"department_id"}` in, `{department_id, result}` out (`filed`, or `kept_hand_move` when a manager moved the call by hand first). The agent's own call only (another's is a 404); a 400 carries the reason in words the widget shows the agent. `session_id` is the server's `db_session_id`, below. |
 | `GET /api/version` | The update check | The current release per platform and its download URL. |
 
 ### Authentication
@@ -105,6 +106,11 @@ struct.pack("I", len(stream_type)) + stream_type.encode() + pcm_bytes
 
 `CHUNK = 4096` frames, 16-bit PCM. **The chunk size and the frame layout are part of
 the contract.**
+
+The server answers `session_start` with `session_started`, which carries
+`live_pipeline` (is live AI on for this call) and, from the recording server that
+ships with MD2, `db_session_id` - the call's row, which the department answer
+names. An older server sends no row, and the widget then simply does not ask.
 
 The server will refuse `start` unless `session_start` produced a token-validated
 session. No validated session means no WAV and no audio accepted — that is enforced

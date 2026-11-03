@@ -384,6 +384,25 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .radio{width:18px;height:18px;border-radius:9px;border:1.5px solid #B9B4D3;flex:0 0 18px}
 .opt.on .radio{border:5px solid var(--brand)}
 .opt span:last-child{min-width:0;overflow-wrap:anywhere}
+/* "Which department was this call for?" (2.9.65, MD2): the question on the summary, its rows the .opt above. */
+.dq{margin:0;min-width:0;padding:14px;border:1px solid var(--brandLine);border-radius:14px;background:var(--white);display:flex;flex-direction:column;gap:10px;animation:rise .3s var(--ease)}
+.dq legend{padding:0 4px;color:var(--brand2)}
+.dq-hd{display:flex;flex-direction:column;gap:2px}
+.dq-t{font-size:15px;font-weight:800}
+.dq-s{font-size:12.5px;line-height:1.4;color:var(--mute)}
+.dq-opts{display:flex;flex-direction:column;gap:8px}
+.dq .opt{min-height:44px;padding:10px 12px}
+.dq .opt .nm{flex:1;min-width:0;overflow-wrap:anywhere}
+.dq .opt .main{flex:0 0 auto;font-size:9.5px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--mute);background:var(--surf);border:1px solid var(--line);border-radius:6px;padding:2px 6px}
+.dq .opt .spin{flex:0 0 18px;border-color:#D6D3E3;border-top-color:var(--brand)}
+.dq .opt:disabled:not(.on){opacity:.55}
+.dq-done{display:flex;align-items:flex-start;gap:10px;padding:12px;border-radius:12px;background:var(--white);border:1px solid var(--line);animation:rise .3s var(--ease)}
+.dq-done>svg{flex:0 0 18px;margin-top:1px;color:var(--brand)}
+.dq-done .tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.dq-done .tx b{font-weight:800;overflow-wrap:anywhere}
+.dq-done .tx span{font-size:12.5px;line-height:1.4;color:var(--mute)}
+.dq-chg{height:32px;padding:0 10px;border:1px solid var(--brandLine);border-radius:9px;background:var(--white);color:var(--brand2);font-size:12.5px;font-weight:700;flex:0 0 auto}
+.dq-hint{display:block;margin-bottom:8px;font-size:12px;line-height:1.45;color:var(--mute);text-align:center}
 .overlay{position:absolute;inset:0;background:rgba(20,18,42,.55);z-index:6;display:flex;align-items:center;padding:16px;animation:fade .2s}
 .overlay .card{background:var(--white);border-radius:20px;padding:20px;display:flex;flex-direction:column;gap:12px;width:100%;max-height:100%;overflow-y:auto}
 .spin{width:18px;height:18px;border-radius:9px;border:2.5px solid rgba(255,255,255,.35);border-top-color:#FFFFFF;animation:spin .8s linear infinite}

@@ -17,7 +17,7 @@
 ; untouched. Keep it that way: a new AppId would install a SECOND widget.
 
 #define AppName "Spark Flow"
-#define AppVersion "2.9.64"
+#define AppVersion "2.9.65"
 #define AppPublisher "Spark Flow"
 #define AppExe "SparkFlow.exe"
 

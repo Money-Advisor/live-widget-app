@@ -67,6 +67,32 @@ I&E pinned, 64 folded).
   works - it stops the call first. A call with live AI off, a call still
   connecting, and every moment between calls are as before. The panel was already
   kept above other windows while signed in.
+- **"Which department was this call for?"** (2.9.65, OUTSTANDING MD2 - Bilal and
+  Faseeh, 3 Nov). On the summary of a call of **30 seconds or more**
+  (`DEPT_QUESTION_MIN_SECONDS`, the call's own recorded seconds), for an agent who
+  works for **two or more** departments that file calls by department. The choices
+  are `department_choices(/api/me)`: the main department and the others whose
+  `file_by_code` is on, the main one first - nothing at all while the main one is
+  off, which is the backend's own rule for the answer. They are loaded off the UI
+  thread when the call connects (`DepartmentChoicesWorker`), so the question is
+  there the moment it ends; the call's row is the server's `db_session_id` from
+  `session_started`. Tapping a department sends it (`DepartmentAnswerWorker`,
+  `POST /api/widget/calls/{id}/department`); the answer files the call over the
+  dialer's code, and "Change" sends another. Until it is answered the panel stays
+  open exactly as on a coached call (`keep_open`), comes back on screen for it if
+  it was in the tray, and **Ready for the next call** is greyed out (Python
+  refuses it too). **Recording never waits on it:** a new call starting - the
+  dialer's or a manual one - drops the question, and that call is filed as without
+  it: by the dialer's code, else "not confirmed" for a manager; so does a sign-out
+  or quit. A save that fails says why and frees
+  the agent at once; a manager's move by hand stands ("Already filed by your
+  manager"). Not asked: a call under 30 seconds, an agent of one department, a
+  server too old to send the row, departments that would not load, the classic
+  fallback screen. (`FocusWindow._start_dept_call`, `_ask_department`,
+  `dept_question`, `answer_department`; the page's `deptHtml`.) A call's end
+  reaches the page as one state now (`FocusController._held` while the classic
+  code fills the summary and then shows it), so the coached call's lock runs
+  straight into the question's.
 - **"x" is locked during a call** (19 Oct): greyed out from the moment a call
   starts connecting until it stops (not on the bar at all then), and refused in
   Python whatever the page sends; the old screen's "-" is locked the same way.

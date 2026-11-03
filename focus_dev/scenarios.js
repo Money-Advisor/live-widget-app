@@ -278,5 +278,38 @@
   S['coached-call-ends-open'] = { size: [360, 900], steps: [live({ keepOpen: true }), stage()],
     later: [st({ phase: 'summary' }), COACHED] };
 
+  // 3 Nov (2.9.65, MD2): "which department was this call for?" on the summary of a
+  // call of 30 seconds or more, for an agent of two or more departments. The widget
+  // decides when to ask and sends deptQuestion; until it is answered the panel
+  // stays open (keepOpen) and "Ready for the next call" waits.
+  var DQ = [{ id: 'd-cs', name: 'Customer Service DMP', main: true }, { id: 'd-ar', name: 'Annual Review', main: false },
+            { id: 'd-ca', name: 'Case Assessment', main: false }];
+  function dq(extra) { return Object.assign({ choices: DQ, answer: null, busy: null, error: '', kept: false }, extra || {}); }
+  function asked(extra, open) { return st({ phase: 'summary', keepOpen: open !== false, deptQuestion: dq(extra) }); }
+  var SAVED = S['summary-saved'].steps[1];
+  S['dept-question'] = { size: [360, 900], steps: [asked(), SAVED] };
+  S['dept-question-score'] = { size: [360, 900], steps: [asked(), SUM_SCORE[1]] };
+  S['dept-question-pending'] = { size: [360, 900], steps: [asked(), COACHED] };
+  S['dept-question-tap'] = { size: [360, 900], steps: [asked(), SAVED], clicks: ['[data-act="deptAnswer"][data-v="d-ar"]'] };
+  S['dept-next-refused'] = { size: [360, 900], steps: [asked(), SAVED], clicks: ['.cta[data-act="newcall"]', '.hd [data-act="collapse"]'] };
+  S['dept-saving'] = { size: [360, 900], steps: [asked({ busy: 'd-ar' }), SAVED] };
+  S['dept-answered'] = { size: [360, 900], steps: [asked({ answer: 'd-ar' }, false), SAVED] };
+  S['dept-change'] = { size: [360, 900], steps: [asked({ answer: 'd-ar' }, false), SAVED], clicks: ['[data-act="deptChange"]'] };
+  S['dept-change-same'] = { size: [360, 900], steps: [asked({ answer: 'd-ar' }, false), SAVED],
+    clicks: ['[data-act="deptChange"]', '[data-act="deptAnswer"][data-v="d-ar"]'] };
+  S['dept-changed'] = { size: [360, 900], steps: [asked({ answer: 'd-ar' }, false), SAVED], clicks: ['[data-act="deptChange"]'],
+    later: [asked({ answer: 'd-cs' }, false)] };
+  S['dept-failed'] = { size: [360, 900], steps: [asked({ error: 'Could not reach the server. Check your connection.' }, false), SAVED] };
+  S['dept-kept'] = { size: [360, 900], steps: [asked({ answer: 'd-cs', kept: true }, false), SAVED] };
+  S['dept-long-name'] = { size: [360, 900], steps: [asked({ choices: [DQ[0], { id: 'd-x', name: 'Customer Service Debt Management Plan Arrears and Variations', main: false }] }), SAVED] };
+  // The agent's bar: the question opens the panel, the answer gives the bar back;
+  // an answer that did not save leaves the panel open with its error.
+  S['dept-opens-the-bar'] = { size: [360, 900], steps: [st({})], clicks: [FOLD],
+    later: [live({ elapsed: 50 }), stage(), asked(), SAVED] };
+  S['dept-answered-folds-back'] = { size: [64, 900], steps: [st({})], clicks: [FOLD],
+    later: [live({ elapsed: 50 }), stage(), asked(), SAVED, asked({ answer: 'd-ar' }, false)] };
+  S['dept-failed-stays-open'] = { size: [360, 900], steps: [st({})], clicks: [FOLD],
+    later: [live({ elapsed: 50 }), stage(), asked(), SAVED, asked({ error: 'Could not reach the server. Check your connection.' }, false)] };
+
   root.FocusScenarios = S;
 }(typeof self !== 'undefined' ? self : this));

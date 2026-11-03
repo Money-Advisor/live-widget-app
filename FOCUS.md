@@ -65,6 +65,14 @@ installer/installer.iss   the one installer - same AppId/folder/exe/Run entry as
   in Python; the agent's own bar comes back when the call ends. Calls with live
   AI off are as above. Proof: 5 `coached-*` screens, `tests/test_keep_open.py`
   15, `focus_dev/minimise_e2e.py` 38/38 in the real window.
+* **"Which department was this call for?"** (2.9.65, 3 Nov, MD2): on the summary
+  of a call of 30 seconds or more, for an agent of two or more departments that
+  file calls by department; tapping one files the call over the dialer's code.
+  Until it is answered the panel stays open (as on a coached call) and "Ready for
+  the next call" waits; a new call drops it, a failed save frees the agent.
+  Proof: 16 `dept-*` screens, `tests/test_dept_question.py` 35,
+  `focus_dev/minimise_e2e.py` 64/64 in the real window. Detail:
+  `docs/ARCHITECTURE.md`.
 * **Nothing flashes on opening** (15 Oct). The window stays fully transparent
   until the page has drawn, then appears already docked. Two classic startup
   shows are kept from the screen: the checklist panel's constructor shows it

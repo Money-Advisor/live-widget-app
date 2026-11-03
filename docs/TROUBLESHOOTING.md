@@ -98,6 +98,27 @@ ends; then the bar comes back. `widget.log` shows `[focus] a coached call:
 opening the panel` and `... refused - the panel stays open on a coached call`.
 A call with live AI off keeps the bar as before.
 
+## "Which department was this call for?" (2.9.65)
+
+It opens the panel after a call, and the next call waits for the answer. That is
+the design (MD2): it is asked on a call of 30 seconds or more, for an agent of two
+or more departments that file calls by department, and the panel stays open until
+it is answered. A new call never waits on it - the dialer's next call drops it.
+
+**An agent is not asked when they expected to be.** In `widget.log`:
+`[dept] not asked - a 12s call (under 30s)` is the 30-second rule;
+`[dept] departments not loaded (...)` means `/api/me` failed when the call
+connected (the call is filed by the dialer's code, as without the question). No
+`[dept]` line at all: check on the dashboard that the agent's main department is
+switched on to file by code (Settings > Departments) and that a second department
+of theirs is on too - one choice is no question - and that the recording server
+is new enough to send the call's row (`db_session_id`). The classic fallback
+screen never asks.
+
+**"Not saved."** The answer did not reach the backend; the panel says why and the
+agent can carry on - the call keeps the dialer's code. Picking again retries.
+`[dept] answer not saved (...)` in the log.
+
 ## Ask for the log file first
 
 ```

@@ -56,7 +56,9 @@
     coins: svg('<circle cx="8" cy="8" r="6"/><path d="M18.1 10.4A6 6 0 1 1 10.3 18"/><path d="M7 6h1v4"/>', 16, 1.9),
     // Case continuity: a chain link - "this joins on to an earlier call".
     link: svg('<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>', 15, 2.2),
-    linkS: svg('<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>', 11, 2.6)
+    linkS: svg('<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>', 11, 2.6),
+    // The department a call is filed under (MD2).
+    folder: svg('<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>', 18, 2.2)
   };
   // The I&E's own icons, the same paths the classic column draws (main.py _IE_ICONS),
   // keyed by the names the server sends.
@@ -143,11 +145,17 @@
     }
     // A call whose live AI is on keeps the panel open (2.9.64, W2): it opens when
     // the call connects, and the agent's own fold comes back when it ends.
+    // So does the department question until it is answered (2.9.65, MD2) - but an
+    // answer that did not save leaves the panel open, its error on screen.
     if (!!host.keepOpen !== !!was.keepOpen) {
       note('keepOpen:' + !!host.keepOpen);
+      var dqFailed = host.deptQuestion && host.deptQuestion.error && !host.deptQuestion.answer;
       if (host.keepOpen) { ui.foldBefore = ui.collapsed; ui.collapsed = false; ui.peekKey = null; }
-      else if (ui.foldBefore != null) { ui.collapsed = ui.foldBefore; ui.foldBefore = null; }
+      else if (ui.foldBefore != null) { if (!dqFailed) ui.collapsed = ui.foldBefore; ui.foldBefore = null; }
     }
+    // "Change" is open until a different answer is saved, or the question goes.
+    var dqWas = was.deptQuestion, dqNow = host.deptQuestion;
+    if (!dqNow || !dqWas || dqNow.answer !== dqWas.answer) ui.deptChange = false;
     if (host.micGate && ui.gateIndex == null) ui.gateIndex = host.micIndex || 0;
     if (!host.micGate) ui.gateIndex = null;
   }
@@ -646,7 +654,10 @@
       } else {
         h += '<button class="sb g" data-act="expand" aria-label="Call saved: open the summary"><span class="ok">' + I.tickG + '</span><span class="cap">Saved</span></button>';
       }
-      h += '<button class="sb v" data-act="newcall" aria-label="Ready for the next call" data-tip="Ready for the next call"><span class="ok">' + I.tickB + '</span><span class="cap">Done</span></button>';
+      h += dqOpen()
+        // Never on screen in practice - the question keeps the panel open - but locked too.
+        ? '<button class="sb v" data-act="newcall" aria-label="Answer the department question first" data-tip="Answer the department question first" disabled><span class="ok">' + I.tickB + '</span><span class="cap">Done</span></button>'
+        : '<button class="sb v" data-act="newcall" aria-label="Ready for the next call" data-tip="Ready for the next call"><span class="ok">' + I.tickB + '</span><span class="cap">Done</span></button>';
     } else {
       var sh = host.shift || {};
       h += '<button class="sb rdy" data-act="expand" aria-label="Ready for your next call"><span class="dotr"></span><span class="cap">Ready</span></button>' +
@@ -701,8 +712,13 @@
   // Between calls and after a call (26 Oct): "-" folds the widget to the bar,
   // as the fold button does during a call, and "x" hides it to the tray. The
   // tray stays locked from the moment a call starts connecting (19 Oct: an
-  // advisor hid a call by mistake); Python refuses it too.
+  // advisor hid a call by mistake); Python refuses it too. Both wait while the
+  // department question waits for its answer (2.9.65, MD2).
   function foldAndClose() {
+    if (host.keepOpen) {
+      return '<button class="ib ghost" data-act="collapse" aria-label="Answer the department question first" data-tip="Answer the department question first" disabled>' + I.minus + '</button>' +
+        '<button class="ib ghost" data-act="hide" aria-label="Answer the department question first" data-tip="Answer the department question first" disabled>' + I.x + '</button>';
+    }
     return '<button class="ib ghost" data-act="collapse" aria-label="Minimise to the bar" data-tip="Minimise to the bar">' + I.minus + '</button>' +
       (host.hideLocked
         ? '<button class="ib ghost" data-act="hide" aria-label="Can\u2019t hide during a call" data-tip="Can\u2019t hide during a call" disabled>' + I.x + '</button>'
@@ -816,7 +832,51 @@
       h += s.saved ? '<div class="msg green">' + I.tickG + '<span><b>Recording saved</b></span></div>'
                    : '<div class="msg plain"><span class="spin" style="border-color:#D6D3E3;border-top-color:var(--brand)"></span><span>Saving the recording\u2026</span></div>';
     }
-    return h;
+    return h + deptHtml();
+  }
+
+  /* "Which department was this call for?" (2.9.65, MD2 - Bilal + Faseeh, 3 Nov).
+   * On the summary of a call of 30 seconds or more, for an agent who works for two
+   * or more departments: tapping one files the call, and "Ready for the next call"
+   * waits until then. The widget decides when to ask; this only draws it. */
+  function dqOpen() {
+    var q = host.deptQuestion;
+    return !!(q && !q.answer && !q.error);
+  }
+
+  function deptHtml() {
+    var q = host.deptQuestion;
+    if (!q) return '';
+    var choices = q.choices || [];
+    var named = choices.filter(function (c) { return c.id === q.answer; })[0];
+    if (q.answer && !ui.deptChange) {
+      return '<div class="dq-done" role="status" data-anim="dq-done">' + I.folder +
+        '<span class="tx"><b>' + (q.kept ? 'Already filed by your manager' : 'Filed under ' + esc(named ? named.name : '')) + '</b>' +
+        '<span>' + (q.kept ? (named ? esc(named.name) + ': moved there by hand, so it stays.' : 'Moved by hand, so it stays where they put it.')
+                           : 'Your answer files this call.') + '</span></span>' +
+        (q.kept ? '' : '<button class="dq-chg" data-act="deptChange">Change</button>') + '</div>';
+    }
+    var h = '<fieldset class="dq" data-anim="dq"><legend class="cap">' + (q.answer ? 'Change the department' : 'Needed before the next call') + '</legend>' +
+      '<span class="dq-hd"><span class="dq-t" id="dq-t">Which department was this call for?</span><span class="dq-s">Pick one. It files the call under the right team.</span></span>' +
+      '<div class="dq-opts" role="radiogroup" aria-labelledby="dq-t">';
+    choices.forEach(function (c) {
+      var on = q.busy ? q.busy === c.id : q.answer === c.id;
+      h += '<button class="opt' + (on ? ' on' : '') + '" role="radio" aria-checked="' + on + '" data-act="deptAnswer" data-v="' + esc(c.id) + '"' + (q.busy ? ' disabled' : '') + '>' +
+        (q.busy === c.id ? '<span class="spin"></span>' : '<span class="radio"></span>') +
+        '<span class="nm">' + esc(c.name) + '</span>' + (c.main ? '<span class="main">Main</span>' : '') + '</button>';
+    });
+    h += '</div>';
+    if (q.error) h += '<div class="msg red" role="alert">' + I.alertR + '<span><b>Not saved.</b> ' + esc(q.error) + ' Pick again to try once more.</span></div>';
+    return h + '</fieldset>';
+  }
+
+  function summaryFoot() {
+    var q = host.deptQuestion;
+    if (dqOpen()) {
+      return '<span class="dq-hint">Recording never waits on this: if a new call starts first, this one is filed by the dialer\u2019s code or confirmed by your manager.</span>' +
+        '<button class="cta" data-act="newcall" disabled>' + (q.busy ? 'Saving your answer\u2026' : 'Pick the call\u2019s department first') + '</button>';
+    }
+    return '<button class="cta" data-act="newcall">Ready for the next call</button>';
   }
 
   /* ---------- layout ---------- */
@@ -856,9 +916,15 @@
       // The button sits outside the scroller: a long list of missed checks
       // must never push "Ready for the next call" off the bottom.
       buildShape('summary', '<div class="panel"><div data-r="sumHd"></div><div class="pad" data-r="sumBody" data-scroll="sum"></div>' +
-        '<div style="padding:12px 20px 20px;background:var(--surf);border-top:1px solid var(--line)"><button class="cta" data-act="newcall">Ready for the next call</button></div></div>');
+        '<div data-r="sumFt" style="padding:12px 20px 20px;background:var(--surf);border-top:1px solid var(--line)"></div></div>');
       setRegion('sumHd', summaryHeader());
       setRegion('sumBody', summaryBody());
+      setRegion('sumFt', summaryFoot());
+      // Below a long list of missed checks the question can start under the fold:
+      // brought into view once, when it appears.
+      var dqWaits = dqOpen();
+      if (dqWaits && !ui.dqInView) { var dqEl = document.querySelector('.dq'); if (dqEl) dqEl.scrollIntoView({ block: 'nearest' }); }
+      ui.dqInView = dqWaits;
     } else if (ph === 'live') {
       buildShape('live', '<div data-r="pin" style="display:contents"></div><div class="panel"><div data-r="hd"></div><div class="body" data-r="body" data-scroll="body"></div><div data-r="dock"></div><div data-r="ft"></div><div data-r="sheet"></div><div data-r="toast"></div></div>');
       setRegion('hd', headerLive());
@@ -952,7 +1018,13 @@
       case 'alt': ui.alt[k] = !ui.alt[k]; break;
       case 'grp': ui.open[k] = !((k in ui.open) ? ui.open[k] : k.indexOf('income.') === 0 && k !== 'income.all' && (call.ie && call.ie.view !== 'expenditure')); break;
       case 'parts': ui.parts[k] = !ui.parts[k]; break;
-      case 'newcall': summary = null; send('newcall'); break;
+      case 'newcall': if (dqOpen()) break; summary = null; send('newcall'); break;
+      case 'deptAnswer':
+        // The one already chosen: nothing to save, "Change" closes.
+        if (host.deptQuestion && v === host.deptQuestion.answer) ui.deptChange = false;
+        else send('deptAnswer', { id: v });
+        break;
+      case 'deptChange': ui.deptChange = true; break;
       case 'sumAll': ui.summaryAll = !ui.summaryAll; break;
       case 'dd': ui.ddShut = ui.dd === v ? v : (ui.dd || null); ui.dd = ui.dd === v ? null : v; break;
       case 'ddPick': {
