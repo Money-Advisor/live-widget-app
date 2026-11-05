@@ -131,6 +131,12 @@ write arbitrary files.
 | `dialer_stop` | Stop |
 | `dialer_pause` / `dialer_resume` | PCI pause and resume |
 
+Since 2.9.59 the panel (`focus/`) is drawn from the same messages. From 2.9.66 it
+also reads `cat_section` on the full `compliance_alert` state - the CAT flags
+section, `{items, done}`, worded by the server - and then leaves out the
+`trigger_actions` rows the server marks `in_cat_section` (it keeps sending those for
+older widgets). With no `cat_section` nothing changes (see ARCHITECTURE, *CAT flags*).
+
 `_receiver_loop` reads on a worker thread and hands every message to
 `_handle_server_message` **on the main thread** via `QTimer.singleShot(0, ...)`.
 Touching a widget from the reader thread would crash the process.

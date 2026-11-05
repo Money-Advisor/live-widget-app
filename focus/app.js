@@ -58,7 +58,13 @@
     link: svg('<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>', 15, 2.2),
     linkS: svg('<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>', 11, 2.6),
     // The department a call is filed under (MD2).
-    folder: svg('<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>', 18, 2.2)
+    folder: svg('<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>', 18, 2.2),
+    // CAT flags (2.9.66): the bar's flag, "CAT didn't accept the answer",
+    // "Answer sent to CAT", and "Done on this call".
+    flag: svg('<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/>', 16, 1.9),
+    again: svg('<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/>', 12, 2.6),
+    sentTick: svg('<path d="m5 12 5 5 9-10"/>', 14, 2.6),
+    doneTick: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#13803D" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg>'
   };
   // The I&E's own icons, the same paths the classic column draws (main.py _IE_ICONS),
   // keyed by the names the server sends.
@@ -101,7 +107,11 @@
     sheet: null, collapsed: false, pinIE: false, focusKey: null, alt: {}, open: {}, parts: {},
     manual: false, settings: false, peekKey: null, peekUntil: 0, newKey: null, newUntil: 0,
     flash: null, flashUntil: 0, lastFocusKey: null, ieSeen: 0, showPw: false, gateIndex: null,
-    summaryAll: false, layoutKey: null
+    summaryAll: false, layoutKey: null,
+    // CAT flags (2.9.66): the pop showing now (null, or {keys, id, start, fly,
+    // delay, body}), the flags marked "New" in the open sheet, the badge's last
+    // bump ({n, until}), and whether "Done on this call" is open.
+    catPop: null, catFresh: {}, catBump: null, catDone: false
   };
   var regions = {};
   var shape = null;
@@ -131,6 +141,7 @@
       call = M.newCall();
       ui.sheet = null; ui.focusKey = null; ui.alt = {}; ui.peekKey = null; ui.flash = null;
       ui.newKey = null; ui.pinIE = false; ui.lastFocusKey = null; ui.ieSeen = 0;
+      catDrop(false); ui.catFresh = {}; ui.catBump = null; ui.catDone = false;
     }
     if (was.phase !== host.phase) {
       note('phase:' + was.phase + '>' + host.phase);
@@ -164,6 +175,8 @@
     var crisisBefore = !!call.crisis;
     var r = M.applyMessage(call, msg, Date.now(), host.elapsed || 0);
     if (!r.changed) return;
+    catPrune();
+    if (r.newCat.length) catArrived(r.newCat);
     var now = Date.now();
     // No "Put right" flash when a card leaves. The server takes a card off for
     // more than one reason - the advisor repaired it, OR a manager marked it a
@@ -467,10 +480,166 @@
     var di = ie ? ((ie.di && ie.di.shown && ie.di.value != null) ? ie.di.text : 'Pending') : 'Not yet';
     var diOk = ie && ie.di && ie.di.shown && ie.di.value != null;
     var fresh = ie && call.ieVersion > ui.ieSeen && ui.sheet !== 'ie' && !ui.pinIE;
-    return '<div class="dock">' +
+    return '<div class="dock">' + catBar() +
       '<button class="dk" data-act="sheet" data-v="list" aria-label="Open the checklist"><span class="ringm" style="background:conic-gradient(var(--brand) 0 ' + pct + '%,#E3DFF3 ' + pct + '% 100%)"><i></i></span><span class="dt"><span>Checklist</span><span>' + (c.total ? done + ' of ' + total : (total ? total + ' to do' : '\u2014')) + '</span></span>' +
       (c.earlierCount ? '<span class="early" data-tip="' + c.earlierCount + ' still to do from earlier stages">+' + c.earlierCount + '</span>' : '') + '</button>' +
       '<button class="dk" data-act="sheet" data-v="ie" aria-label="Open the income and expenditure"><span class="tile" style="background:#E9F7EF;color:var(--grnInk)">' + I.coins + '</span><span class="dt"><span>I&amp;E \u00b7 DI</span><span class="' + (diOk ? 'mono' : '') + '" style="font-size:14px;' + (diOk ? '' : 'color:var(--amb)') + '">' + esc(di) + '</span></span>' + (fresh ? '<span class="new" aria-label="New figures"></span>' : '') + '</button></div>';
+  }
+
+  /* ---------- CAT flags (2.9.66) ----------
+   * Bilal's CAT requirement (§8.1, 3 Nov): everything CAT raises goes in its
+   * own section, never mixed in with the I&E cards and never pushing them down.
+   * So it is a bar on top of the dock - Checklist and I&E keep their size - and
+   * a sheet like theirs. A new flag first shows as a pop just above the bar for
+   * six seconds, then drops into it and the count goes up (the approved mockup,
+   * 4 Nov). A server that sends no `cat_section` gets the 2.9.65 panel exactly. */
+  var CAT_POP_MS = 6000, CAT_FLY_MS = 480;
+  var catTimer = 0, catPopSeq = 0;
+
+  function catStopTimer() { clearTimeout(catTimer); catTimer = 0; }
+
+  // A pop needs the live panel with its dock on screen: never while paused, on
+  // a call with live checking off, folded to the strip, or off a call.
+  function catCanPop() {
+    return host.phase === 'live' && !!host.livePipeline && !host.paused && !ui.collapsed;
+  }
+
+  // Keys still in a pop that has not landed: not counted, not listed, yet.
+  function catHidden() {
+    var h = {};
+    if (ui.catPop) ui.catPop.keys.forEach(function (k) { h[k] = true; });
+    return h;
+  }
+
+  function catArrived(keys) {
+    // The section is open: the new flags appear in it, marked "New", no pop.
+    if (ui.sheet === 'cat') { keys.forEach(function (k) { ui.catFresh[k] = true; }); return; }
+    if (!catCanPop()) return;      // they wait in the bar's count
+    // More while a pop is up: it starts again with everything not landed yet.
+    var still = ui.catPop ? M.catLive(call, ui.catPop.keys) : [];
+    catStopTimer();
+    ui.catPop = { keys: still.concat(keys), id: ++catPopSeq, start: Date.now(), fly: false, delay: 0, body: null };
+    catTimer = setTimeout(catFly, CAT_POP_MS);
+  }
+
+  // "Move it now", or six seconds up: it drops into the bar.
+  function catFly() {
+    var p = ui.catPop;
+    if (!p) return;
+    catStopTimer();
+    p.fly = true;
+    p.delay = Date.now() - p.start;     // the bar under it carries on, not from full
+    catTimer = setTimeout(catLand, CAT_FLY_MS);
+    schedule();
+  }
+
+  function catLand() {
+    catStopTimer();
+    if (!ui.catPop) return;
+    ui.catPop = null;
+    ui.catBump = { n: (ui.catBump ? ui.catBump.n : 0) + 1, until: Date.now() + 700 };
+    schedule();
+  }
+
+  // The pop goes at once, with no drop and no bump: a sheet opened, a pause, a
+  // fold, the end of the call. Opened into the CAT section, its flags are "New" there.
+  function catDrop(intoSheet) {
+    var p = ui.catPop;
+    catStopTimer();
+    if (!p) return;
+    if (intoSheet) M.catLive(call, p.keys).forEach(function (k) { ui.catFresh[k] = true; });
+    ui.catPop = null;
+  }
+
+  // A flag that went while it was in the pop leaves it; an empty pop closes.
+  function catPrune() {
+    var p = ui.catPop;
+    if (!p) return;
+    var live = M.catLive(call, p.keys);
+    if (live.length === p.keys.length) return;
+    if (!live.length) { catDrop(false); return; }
+    p.keys = live;
+  }
+
+  function catBar() {
+    var v = M.catView(call, catHidden());
+    if (!v) return '';
+    var b = ui.catBump;
+    // The bump plays once, as the flag lands; drawn again later it stays still.
+    var bump = b && Date.now() < b.until ? (b.n % 2 ? ' b1' : ' b2') : '';
+    return '<button class="dk catbar' + (v.count ? ' has' : '') + '" data-act="sheet" data-v="cat" aria-label="Open CAT flags">' +
+      '<span class="tile">' + I.flag + '</span><span class="dt"><span>CAT flags</span><span' + (v.count ? '' : ' class="z"') + '>' + esc(v.summary) + '</span></span>' +
+      (v.count ? '<span class="cbadge' + bump + '" data-anim="cbadge-' + (b ? b.n : 0) + '" aria-label="' + v.count + ' CAT flag' + (v.count > 1 ? 's' : '') + ' to act on">' + v.count + '</span>' : '') +
+      '<span style="display:flex;color:var(--faint)">' + I.chev + '</span></button>';
+  }
+
+  function catPopHtml() {
+    var p = ui.catPop;
+    if (!p || !catCanPop()) return '';
+    var v = M.catPop(call, p.keys);
+    if (!v) return '';
+    var body = '<div class="focus ' + v.cls + '"><div class="f-top"><span class="kind ttl">' + esc(v.pill) + '</span><span class="when">just now</span></div>' +
+      (v.list ? '<div class="parts">' + v.list.map(function (x) {
+        return '<div class="part"><span class="o"></span><span>' + esc(x.title) + '</span>' + (x.section ? '<span class="secchip">' + esc(x.section) + '</span>' : '') + '</div>';
+      }).join('') + '</div>' : '<h2 class="gtext">' + esc(v.text) + '</h2>') +
+      '<div class="pa"><button class="go" data-act="sheet" data-v="cat">Open CAT flags</button><button class="kp" data-act="catNow">Move it now</button></div>' +
+      '<span class="catmv">Moves into CAT flags in a few seconds</span></div>';
+    // Redrawn with different words (a flag left it), the draining bar carries
+    // on from where it was rather than starting full again.
+    if (p.body !== body) { if (p.body !== null) p.delay = Date.now() - p.start; p.body = body; }
+    return '<div class="catpop ' + v.cls + (p.fly ? ' fly' : '') + '" role="alert" data-anim="catpop-' + p.id + (p.fly ? '-fly' : '') + '">' + body +
+      '<div class="pb"><i' + (p.delay > 0 ? ' style="animation-delay:-' + p.delay + 'ms"' : '') + '></i></div></div>';
+  }
+
+  function payRow(x, tag) {
+    return '<' + tag + ' class="pay"><span class="d">' + esc(x.date) + '</span><span class="p">' + esc(x.payee) + '</span><span class="a">' + esc(x.amount) + '</span></' + tag + '>';
+  }
+
+  // One CAT card, every part in the server's words and left out when it sends none.
+  function catCard(it) {
+    var k = M.catKey(it), fresh = !!ui.catFresh[k];
+    var pays = (it.payments || []).filter(function (x) { return x && typeof x === 'object'; });
+    var cands = (it.candidates || []).filter(function (x) { return x && typeof x === 'object'; });
+    var h = '<div class="focus ' + M.catFamily(it.kind) + ' catc' + (fresh ? ' enter' : '') + '" data-anim="cat-' + esc(k) + '">' +
+      '<div class="f-top"><span class="kind ttl">' + (fresh ? 'New · ' : '') + esc(it.pill) + '</span>' +
+      (it.section ? '<span class="when">' + esc(it.section) + '</span>' : '') + '</div>';
+    if (it.back) h += '<div class="backline">' + I.again + '<span>' + esc(it.back) + '</span></div>';
+    h += '<h2 class="gtext">' + esc(it.text) + '</h2>';
+    if (it.why) h += '<p class="detail">' + esc(it.why) + '</p>';
+    if (it.sent_text) h += '<p class="detail">' + esc(it.sent_text) + '</p>';
+    if (pays.length) {
+      h += '<div class="pays">' + (it.payments_label ? '<span class="cap">' + esc(it.payments_label) + '</span>' : '') +
+        pays.map(function (x) { return payRow(x, 'div'); }).join('') + '</div>';
+    }
+    if (it.quote) h += '<div class="quote said"><span class="cap">Customer said</span><p>“' + esc(it.quote) + '”</p></div>';
+    if (cands.length) {
+      h += '<div class="pays cands"><span class="cap">' + esc(it.candidates_label || 'Which one?') + '</span>' + cands.map(function (x) {
+        return '<div class="cand"><span class="o"></span><span class="ct">' + payRow(x, 'span') + (x.note ? '<span class="cc">' + esc(x.note) + '</span>' : '') + '</span></div>';
+      }).join('') + '</div>';
+    }
+    if (it.status) h += '<div class="catst">' + I.sentTick + '<span>' + esc(it.status) + '</span></div>';
+    if (it.listen) h += listenLine(it.listen);
+    return h + '</div>';
+  }
+
+  function catSheet() {
+    var v = M.catView(call, catHidden()) || { groups: [], done: [], count: 0 };
+    var h = '';
+    if (!v.groups.length) h += '<div class="msg plain">Nothing to act on. A CAT flag appears here when the call reaches its section.</div>';
+    v.groups.forEach(function (g) {
+      h += '<div class="st-h">' + esc(g.title) + '<span style="margin-left:auto;color:' + g.color + '">' + g.items.length + '</span></div>';
+      g.items.forEach(function (it) { h += catCard(it); });
+    });
+    if (v.done.length) {
+      h += '<button class="catdone" data-act="catDone" aria-expanded="' + !!ui.catDone + '">' + I.doneTick +
+        '<span style="flex:1">Done on this call · ' + v.done.length + '</span><span style="display:flex;color:var(--faint)">' + (ui.catDone ? I.down : I.chev) + '</span></button>';
+      if (ui.catDone) {
+        h += '<div>' + v.done.map(function (d) {
+          return '<div class="ck ok"><span class="o">' + I.tick + '</span><span class="tx"><span>' + esc(d.title) + '</span>' + (d.note ? '<span class="miss">' + esc(d.note) + '</span>' : '') + '</span></div>';
+        }).join('') + '</div>';
+      }
+    }
+    return h + '<span class="cathelp">The widget can hear a document being asked for or promised. It can’t check that the document arrived.</span>';
   }
 
   function footLive() {
@@ -598,14 +767,17 @@
 
   function sheetLive() {
     if (!ui.sheet) return '';
-    var titles = { list: 'Checklist', ie: 'Income & expenditure', dont: 'Not to say' + (M.stageInfo(call).label ? ' in ' + M.stageInfo(call).label : '') };
-    var body = ui.sheet === 'list' ? checklistSheet() : ui.sheet === 'ie' ? ieBody() : dontSheet();
+    var titles = { list: 'Checklist', ie: 'Income & expenditure', dont: 'Not to say' + (M.stageInfo(call).label ? ' in ' + M.stageInfo(call).label : ''), cat: 'CAT flags' };
+    var body = ui.sheet === 'list' ? checklistSheet() : ui.sheet === 'ie' ? ieBody() : ui.sheet === 'cat' ? catSheet() : dontSheet();
+    // The CAT section's title carries its count, as the bar does.
+    var cv = ui.sheet === 'cat' ? M.catView(call, catHidden()) : null;
+    var badge = cv && cv.count ? '<span class="cbadge" style="margin-left:8px;vertical-align:2px">' + cv.count + '</span>' : '';
     var nb = '';
     if (ui.newKey && Date.now() < ui.newUntil) {
       var it = M.attention(call).filter(function (i) { return i.key === ui.newKey; })[0];
       if (it) nb = '<div class="newbar" role="alert" data-anim="newbar-' + esc(it.key) + '"><span class="qdot" style="background:var(--red)"></span><span class="t">New: ' + esc(it.label || 'card') + '</span><button data-act="closeSheet">View</button></div>';
     }
-    return '<div class="scrim" data-anim="scrim-live" data-act="closeSheet"></div><div class="sheet" data-anim="sheet-' + ui.sheet + '" role="dialog" aria-label="' + esc(titles[ui.sheet]) + '"><div class="grab"></div><div class="sh-h"><h3>' + esc(titles[ui.sheet]) + '</h3>' +
+    return '<div class="scrim" data-anim="scrim-live" data-act="closeSheet"></div><div class="sheet" data-anim="sheet-' + ui.sheet + '" role="dialog" aria-label="' + esc(titles[ui.sheet]) + '"><div class="grab"></div><div class="sh-h"><h3>' + esc(titles[ui.sheet]) + badge + '</h3>' +
       (ui.sheet === 'ie' && call.ie && call.ie.visible ? '<button class="pinbtn" data-act="pin" data-tip="Keep the I&amp;E open beside the panel">' + I.pin + 'Pin</button>' : '') +
       '<button class="sh-x" data-act="closeSheet" aria-label="Close">' + I.x + '</button></div>' + nb +
       '<div class="sh-b" data-scroll="sheet">' + body + '</div></div>';
@@ -898,6 +1070,12 @@
     var lk = JSON.stringify(lay);
     if (lk !== ui.layoutKey) { ui.layoutKey = lk; send('layout', lay); }
     var ph = host.phase;
+    // CAT flags: a pop never outlives the dock it drops into, the "New" marks
+    // only last while the section stays open, and the section closes if the
+    // server stops sending it.
+    if (ui.catPop && !catCanPop()) catDrop(false);
+    if (ui.sheet === 'cat' && !call.cat) ui.sheet = null;
+    if (ui.sheet !== 'cat') ui.catFresh = {};
     if (ph === 'boot') { buildShape('boot', '<div class="panel"></div>'); return; }
     if (ph === 'login') {
       buildShape('login', '<div class="panel' + '" data-r-panel><div data-r="login" style="display:flex;flex-direction:column;height:100%"></div></div>');
@@ -926,11 +1104,12 @@
       if (dqWaits && !ui.dqInView) { var dqEl = document.querySelector('.dq'); if (dqEl) dqEl.scrollIntoView({ block: 'nearest' }); }
       ui.dqInView = dqWaits;
     } else if (ph === 'live') {
-      buildShape('live', '<div data-r="pin" style="display:contents"></div><div class="panel"><div data-r="hd"></div><div class="body" data-r="body" data-scroll="body"></div><div data-r="dock"></div><div data-r="ft"></div><div data-r="sheet"></div><div data-r="toast"></div></div>');
+      buildShape('live', '<div data-r="pin" style="display:contents"></div><div class="panel"><div data-r="hd"></div><div class="body" data-r="body" data-scroll="body"></div><div data-r="dock"></div><div data-r="ft"></div><div data-r="catpop"></div><div data-r="sheet"></div><div data-r="toast"></div></div>');
       setRegion('hd', headerLive());
       setRegion('body', bodyLive());
       setRegion('dock', dockLive());
       setRegion('ft', footLive());
+      setRegion('catpop', catPopHtml());
       setRegion('sheet', sheetLive());
       setRegion('pin', pinHtml());
     }
@@ -1009,9 +1188,12 @@
       case 'collapse': ui.collapsed = true; ui.sheet = null; ui.pinIE = false; ui.settings = false; ui.dd = null; break;
       case 'expand': ui.collapsed = false; ui.peekKey = null; break;
       case 'keep': ui.peekKey = null; break;
-      case 'sheet': ui.sheet = v; if (v === 'ie') ui.ieSeen = call.ieVersion; break;
+      // Any sheet takes the CAT pop away; the CAT one shows its flags as "New".
+      case 'sheet': catDrop(v === 'cat'); ui.sheet = v; if (v === 'ie') ui.ieSeen = call.ieVersion; break;
       case 'openSheet': ui.collapsed = false; ui.peekKey = null; ui.sheet = v; if (v === 'ie') ui.ieSeen = call.ieVersion; break;
       case 'closeSheet': ui.sheet = null; ui.newKey = null; break;
+      case 'catNow': catFly(); break;
+      case 'catDone': ui.catDone = !ui.catDone; break;
       case 'pin': ui.pinIE = true; ui.sheet = null; ui.ieSeen = call.ieVersion; break;
       case 'unpin': ui.pinIE = false; break;
       case 'focus': ui.focusKey = k || null; break;

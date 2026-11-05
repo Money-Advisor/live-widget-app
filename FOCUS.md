@@ -27,7 +27,7 @@ widget's, ported and named in `focus/model.js`.
 focus_main.py      entry point: the SAME widget started as FocusWindow
 focus_ui.py        FocusWindow(main.MainWindow) + FocusController + the bridge
 focus/             the page: index.html, app.js (drawing), model.js (rules), app.css, fonts/ (OFL)
-focus_dev/         harness.html + scenarios.js (40 states), screenshot + check scripts, qt_e2e.py
+focus_dev/         harness.html + scenarios.js (129 states), screenshot + check scripts, qt_e2e.py
 build_all.py       PyInstaller: focus_main.py -> dist/SparkFlow/SparkFlow.exe (--check self-tests it)
 installer/installer.iss   the one installer - same AppId/folder/exe/Run entry as every earlier Spark Flow
 ```
@@ -73,6 +73,15 @@ installer/installer.iss   the one installer - same AppId/folder/exe/Run entry as
   Proof: 16 `dept-*` screens, `tests/test_dept_question.py` 35,
   `focus_dev/minimise_e2e.py` 64/64 in the real window. Detail:
   `docs/ARCHITECTURE.md`.
+* **CAT flags** (2.9.66, 5 Nov; the mockup approved 4 Nov): a "CAT flags" bar on
+  top of the dock (Checklist and I&E keep their size) and a sheet of CAT's cards in
+  four groups - your action, to ask, not sure which one, waiting for CAT - plus
+  what was done on the call. A new flag pops above the bar for 6 s, then drops in
+  and the count bumps. Only when the server sends `cat_section`; without it the
+  panel is 2.9.65's, pixel for pixel (all 93 earlier screens compared with main).
+  Proof: 36 `cat-*` screens, `focus/tests/cat.test.cjs` 21, every guard (37) seen
+  red when reverted; side by side with the mockup, the same to within anti-aliasing.
+  Detail: `docs/ARCHITECTURE.md`.
 * **Nothing flashes on opening** (15 Oct). The window stays fully transparent
   until the page has drawn, then appears already docked. Two classic startup
   shows are kept from the screen: the checklist panel's constructor shows it
@@ -126,7 +135,7 @@ by the new installer: uninstall it by hand on the two PCs that have it.
 | `focus_dev/startup_blinks.py` — the same from inside Qt | 0 visible blinks, 0 early frames |
 | `main.py` | identical to `main` except `APP_VERSION` (test) |
 
-Screens to look at: `python focus_dev/shoot_harness.py <dir>` (all 40 at real size).
+Screens to look at: `python focus_dev/shoot_harness.py <dir>` (all 129 at real size).
 
 ## Known, and owed
 

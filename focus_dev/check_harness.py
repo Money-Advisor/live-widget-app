@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Render every Focus scenario in headless Edge and check what it says.
 
-    python focus_dev/check_harness.py
+    python focus_dev/check_harness.py [scenario ...]
 
 The screenshots (shoot_harness.py) are for a person to look at; this is the
 same rendering checked by machine, so a later change that drops a card, a
@@ -193,23 +193,159 @@ EXPECT = {
     "dept-opens-the-bar": (['<fieldset class="dq"', 'class="panel"'], ['class="strip"']),
     "dept-answered-folds-back": (['class="strip"', 'data-act="newcall"'], ['class="panel"', '<fieldset class="dq"']),
     "dept-failed-stays-open": (["<b>Not saved.</b>", '<fieldset class="dq"'], ['class="strip"']),
+    # 2.9.66: the CAT flags section (the server's cat_section). The bar sits on top of
+    # the dock; a new flag pops above it, is not counted until it lands, and lands
+    # with a bump; the sheet groups the cards in a fixed order. A third list here is
+    # strings that must appear IN THAT ORDER.
+    "cat-bar-zero": (['<button class="dk catbar" data-act="sheet" data-v="cat" aria-label="Open CAT flags">',
+                      '<span class="dt"><span>CAT flags</span><span class="z">Nothing to act on</span></span>',
+                      '<button class="dk" data-act="sheet" data-v="list"'],
+                     ['class="cbadge', 'class="catpop', "catbar has"]),
+    "cat-bar-waiting": (['<span class="z">1 waiting for CAT</span>'], ['class="cbadge', "catbar has"]),
+    # Flags that arrived while paused wait in the count: no pop, no bump.
+    "cat-bar-count": (['<button class="dk catbar has"', "<span>2 to ask · 1 to check</span>",
+                       '<span class="cbadge" data-anim="cbadge-0" aria-label="3 CAT flags to act on">3</span>'],
+                      ['class="catpop', "cbadge b1", "cbadge b2"]),
+    "cat-bar-all-kinds": (["<span>3 to act on</span>", 'aria-label="3 CAT flags to act on">3</span>'], ["to confirm"]),
+    "cat-paused": (["Paused for card payment"], ['class="catpop', "catbar"]),
+    "cat-pop-one": (['<div class="catpop high" role="alert" data-anim="catpop-1"><div class="focus high"><div class="f-top">'
+                     '<span class="kind ttl">New · CAT needs an answer</span><span class="when">just now</span></div>'
+                     '<h2 class="gtext">Proof of Address: Can the customer send proof of their current address, dated in the last three months?</h2>',
+                     '<div class="pa"><button class="go" data-act="sheet" data-v="cat">Open CAT flags</button>'
+                     '<button class="kp" data-act="catNow">Move it now</button></div>',
+                     '<span class="catmv">Moves into CAT flags in a few seconds</span></div><div class="pb"><i></i></div></div>',
+                     '<span class="z">Nothing to act on</span>'],
+                    ['class="cbadge', "catbar has"]),
+    "cat-pop-check": (['<div class="catpop critical"', '<div class="focus critical"><div class="f-top"><span class="kind ttl">New · Check your action</span>'], []),
+    "cat-pop-unsure": (['<div class="catpop next"', '<div class="focus next"><div class="f-top"><span class="kind ttl">New · Not sure which one</span>'], []),
+    "cat-pop-many": (['<div class="catpop high" role="alert" data-anim="catpop-1">', '<span class="kind ttl">2 new CAT flags</span>',
+                      '<div class="parts"><div class="part"><span class="o"></span><span>Unexplained Inflow</span><span class="secchip">I&amp;E</span></div>'
+                      '<div class="part"><span class="o"></span><span>Family &amp; Friends</span><span class="secchip">I&amp;E</span></div></div>',
+                      '<span class="z">Nothing to act on</span>'],
+                     ['<h2 class="gtext">Unexplained', 'class="cbadge']),
+    # More while a pop is up: it starts again (a new pop, bar full) with both.
+    "cat-pop-restart": (['data-anim="catpop-2"', "2 new CAT flags", "<span>Unexplained Inflow</span>",
+                         "<span>Family &amp; Friends</span>", '<div class="pb"><i></i></div>'],
+                        ['data-anim="catpop-1"', 'class="cbadge']),
+    # A flag that went leaves the pop, which carries on (same pop, its bar where it was).
+    "cat-pop-leaves": (['data-anim="catpop-1"', "New · CAT needs an answer", "Family &amp; Friends: Who are these payments to",
+                        '<div class="pb"><i style="animation-delay:-'],
+                       ["2 new CAT flags", "Unexplained Inflow", 'data-anim="catpop-2"']),
+    "cat-pop-empties": (['<span class="z">Nothing to act on</span>'], ['class="catpop', 'class="cbadge']),
+    "cat-pop-lands": (['<button class="dk catbar has"', "<span>2 to ask</span>",
+                       '<span class="cbadge b1" data-anim="cbadge-1" aria-label="2 CAT flags to act on">2</span>'],
+                      ['class="catpop']),
+    "cat-pop-open": (['role="dialog" aria-label="CAT flags"',
+                      '<h3>CAT flags<span class="cbadge" style="margin-left:8px;vertical-align:2px">1</span></h3>',
+                      '<div class="focus high catc enter" data-anim="cat-cat.flag.poa#1"><div class="f-top">'
+                      '<span class="kind ttl">New · CAT needs an answer</span><span class="when">Personal Details</span></div>'],
+                     ['class="catpop', "cbadge b1"]),
+    # Another sheet takes the pop away; its flag is counted, with no bump and no "New".
+    "cat-pop-other-sheet": (['aria-label="Checklist"', '<span class="cbadge" data-anim="cbadge-0" aria-label="1 CAT flag to act on">1</span>'],
+                            ['class="catpop', "New · ", "cbadge b1"]),
+    "cat-pop-over-checklist": (['aria-label="Checklist"', '<div class="catpop high"'], []),
+    "cat-sheet": (['<div class="st-h">Check your action<span style="margin-left:auto;color:var(--red)">2</span></div>',
+                   '<div class="st-h">To ask<span style="margin-left:auto;color:var(--amb)">3</span></div>',
+                   '<div class="st-h">Not sure which one<span style="margin-left:auto;color:var(--brand)">1</span></div>',
+                   '<div class="st-h">Waiting for CAT<span style="margin-left:auto;color:var(--mute)">1</span></div>',
+                   '<h3>CAT flags<span class="cbadge" style="margin-left:8px;vertical-align:2px">6</span></h3>',
+                   '<div class="focus critical catc', '<div class="focus high catc', '<div class="focus next catc', '<div class="focus sent catc',
+                   '<span class="kind ttl">Back from CAT</span><span class="when">I&amp;E</span></div><div class="backline"><svg',
+                   "<span>CAT didn’t accept the answer · ask again</span></div><h2 class=\"gtext\">Unexplained Inflow: What was this payment into the account for?</h2>"
+                   '<p class="detail">Why CAT raised it: a large payment in with no reference.</p>'
+                   '<p class="detail">Sent: Customer says the £250 was a birthday present from their brother.</p>'
+                   '<div class="pays"><span class="cap">The payment</span><div class="pay"><span class="d">14 Oct</span><span class="p">J SMITH</span><span class="a">+£250.00</span></div></div>',
+                   '<div class="pays"><span class="cap">3 payments · £115.00</span><div class="pay"><span class="d">03 Oct</span><span class="p">A JONES</span><span class="a">',
+                   '<div class="pays cands"><span class="cap">Which one?</span><div class="cand"><span class="o"></span><span class="ct">'
+                   '<span class="pay"><span class="d">02 Oct</span><span class="p">AVIVA</span><span class="a">£60.00</span></span>'
+                   '<span class="cc">In CAT as Car insurance</span></span></div>',
+                   '<div class="quote said"><span class="cap">Customer said</span><p>“the Aviva one, that’s my life insurance, not the car”</p></div>',
+                   '<span class="kind ttl">Sent to CAT</span>',
+                   '<div class="catst"><svg', "<span>Answer sent to CAT · waiting for CAT’s reply</span></div></div>",
+                   '<div class="listen"><span class="eq"><i></i><i></i><i></i><i></i></span>Clears itself if it comes up on the call</div>',
+                   '<button class="catdone" data-act="catDone" aria-expanded="true">', '<span style="flex:1">Done on this call · 4</span>',
+                   '<span class="tx"><span>Proof of Address</span><span class="miss">Answered · CAT accepted</span></span></div>',
+                   '<span class="cathelp">The widget can hear a document being asked for or promised. It can’t check that the document arrived.</span>'],
+                  ["New · ", 'class="catpop', "Nothing to act on. A CAT flag"],
+                  [">Check your action<span", "You closed ‘Partner awareness’", "You dismissed ‘Right to remain’",
+                   ">To ask<span", "Back from CAT", "Family &amp; Friends: Who", "Universal Credit: the bank",
+                   ">Not sure which one<span", ">Waiting for CAT<span", "Sent to CAT", 'class="catdone"', 'class="cathelp"']),
+    "cat-sheet-tall": (["Done on this call · 4", "In CAT as Pet insurance"], []),
+    "cat-sheet-done-closed": (['<button class="catdone" data-act="catDone" aria-expanded="false">', "Done on this call · 4"],
+                              ['<span class="miss">Answered · CAT accepted</span>']),
+    "cat-sheet-empty": (["<h3>CAT flags</h3>",
+                         '<div class="msg plain">Nothing to act on. A CAT flag appears here when the call reaches its section.</div><span class="cathelp">'],
+                        ['class="catdone"', 'class="st-h"']),
+    # The section open: a new flag appears in it, marked New, with no pop.
+    "cat-sheet-new": (['<div class="focus critical catc enter" data-anim="cat-cat.flag.rtr#1"><div class="f-top"><span class="kind ttl">New · Check your action</span>'],
+                      ['class="catpop']),
+    "cat-sheet-closed-not-new": (['<div class="focus high catc" data-anim="cat-cat.flag.poa#1"><div class="f-top"><span class="kind ttl">CAT needs an answer</span>'],
+                                 ["New · "]),
+    "cat-collapsed": (['class="strip"'], ['class="catpop', "catbar"]),
+    "cat-fold-drops-pop": (['<span class="cbadge" data-anim="cbadge-0" aria-label="1 CAT flag to act on">1</span>'],
+                           ['class="catpop', 'class="strip"', "cbadge b1"]),
+    "cat-recording-only": (["Live checking is off for this call"], ['class="catpop', "catbar"]),
+    "cat-new-call": (['<span class="z">Nothing to act on</span>'], ['class="catpop', 'class="cbadge', "Proof of Address"]),
+    "cat-new-call-pops-again": (['<div class="catpop high" role="alert" data-anim="catpop-2">', "New · CAT needs an answer"],
+                                ["2 new CAT flags", 'class="cbadge']),
+    "cat-pop-times-out": (['<span class="cbadge b1" data-anim="cbadge-1" aria-label="1 CAT flag to act on">1</span>', "<span>1 to ask</span>"],
+                          ['class="catpop']),
+    "cat-pop-empties-no-bump": (['<span class="cbadge" data-anim="cbadge-0" aria-label="1 CAT flag to act on">1</span>'],
+                                ['class="catpop', "cbadge b1", "cbadge-1"]),
+    "cat-pause-drops-pop": (['<span class="cbadge" data-anim="cbadge-0" aria-label="1 CAT flag to act on">1</span>'],
+                            ['class="catpop', "cbadge b1"]),
+    "cat-folded-no-pop": (['class="body"', '<span class="cbadge" data-anim="cbadge-0" aria-label="1 CAT flag to act on">1</span>'],
+                          ['class="catpop', 'class="strip"']),
+    "cat-section-goes": (['class="body"', 'data-v="list" aria-label="Open the checklist"'], ["catbar", 'aria-label="CAT flags"']),
+    # Today's CAT card in trigger_actions, marked in_cat_section: not a correction
+    # beside a cat_section (body, state line, strip), drawn as before without one.
+    "cat-hides-its-cards": (["1 thing to put right", "You suggested a food figure", "<span>1 to ask</span>"],
+                            ["Ask the customer for proof of their current address.", ">Clarify</span>"]),
+    "cat-old-card-without-section": (["2 things to put right", "Ask the customer for proof of their current address."], ["catbar"]),
+    "cat-hides-its-cards-strip": (['class="strip"', 'aria-label="1 to put right"'], ['aria-label="2 to put right"']),
+    "cat-old-card-strip": (['class="strip"', 'aria-label="2 to put right"'], []),
 }
 
 
-def dom(name):
+def budgets():
+    """A scenario's `budget` (ms of page time before the page is read; default
+    3000), given right after its size in scenarios.js - shoot_harness.py reads the
+    same. A CAT flag's pop lands by itself only after 6.5 s (2.9.66)."""
+    import re
+    text = (HERE / "scenarios.js").read_text(encoding="utf-8")
+    return {m.group(1): int(m.group(2)) for m in re.finditer(
+        r"S\['([a-z0-9-]+)'\]\s*=\s*\{\s*size:\s*\[\d+,\s*\d+\],\s*budget:\s*(\d+)", text)}
+
+
+def dom(name, budget=3000):
     url = (HERE / "harness.html").as_uri() + "?s=" + name
     cmd = [str(EDGE), "--headless=new", "--disable-gpu", "--window-size=800,900",
-           "--virtual-time-budget=3000", "--allow-file-access-from-files", "--dump-dom", url]
+           f"--virtual-time-budget={budget}", "--allow-file-access-from-files", "--dump-dom", url]
     r = subprocess.run(cmd, capture_output=True, timeout=60)
     return r.stdout.decode("utf-8", errors="replace")
 
 
 def main():
     bad = 0
-    for name, (must, never) in EXPECT.items():
-        html = dom(name)
+    wanted = set(sys.argv[1:])
+    budget = budgets()
+    for name, (must, never, *order) in EXPECT.items():
+        if wanted and name not in wanted:
+            continue
+        html = dom(name, budget.get(name, 3000))
         missing = [m for m in must if m not in html]
         present = [n for n in never if n in html]
+        # In this order (the CAT sheet's groups): each after the one before it.
+        at = -1
+        for s in (order[0] if order else []):
+            i = html.find(s, at + 1)
+            if i < 0:
+                missing.append(f"(in order) {s}")
+                break
+            at = i
+        # A server that sends no cat_section gets the 2.9.65 panel: no CAT bar, no pop.
+        if not name.startswith("cat-") and ("catbar" in html or 'class="catpop' in html):
+            present.append("a CAT bar or pop on a screen with no cat_section")
         # No browser hover hint, anywhere: inside the widget Qt draws it as an
         # empty black box (15 Oct). The page's own data-tip hint replaces it.
         if ' title="' in html:
@@ -220,7 +356,8 @@ def main():
         bad += 0 if ok else 1
         print(("PASS " if ok else "FAIL ") + name
               + (f"  missing={missing}" if missing else "") + (f"  unexpected={present}" if present else ""))
-    print(f"\n{len(EXPECT) - bad} of {len(EXPECT)} scenarios as expected")
+    n = len(wanted & set(EXPECT)) if wanted else len(EXPECT)
+    print(f"\n{n - bad} of {n} scenarios as expected")
     return 1 if bad else 0
 
 

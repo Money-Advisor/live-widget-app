@@ -311,5 +311,116 @@
   S['dept-failed-stays-open'] = { size: [360, 900], steps: [st({})], clicks: [FOLD],
     later: [live({ elapsed: 50 }), stage(), asked(), SAVED, asked({ error: 'Could not reach the server. Check your connection.' }, false)] };
 
+  // 2.9.66: the CAT flags section - the server's `cat_section` on the full state.
+  // Wording from the approved mockup (4 Nov); every name, payee, figure and quote
+  // is made up. A first arrival pops for 6 s, longer than a shot's 3 s, so a
+  // scenario that wants the flags already in the bar sends them while paused
+  // (no pop then) and resumes.
+  function catItem(id, kind, extra) {
+    return Object.assign({ id: 'cat.flag.' + id, occurrence: 1, kind: kind, pill: 'CAT needs an answer', title: '', section: 'I&E', text: '',
+      why: null, sent_text: null, back: null, payments_label: null, payments: [], quote: null, candidates_label: null, candidates: [], status: null,
+      listen: kind === 'check' ? 'Clears itself when the customer backs it' : kind === 'unsure' ? 'Nothing goes to CAT until the customer confirms'
+        : kind === 'waiting' ? null : 'Listening — clears when the customer answers' }, extra || {});
+  }
+  var CAT_POA = catItem('poa', 'ask', { title: 'Proof of Address', section: 'Personal Details',
+    text: 'Proof of Address: Can the customer send proof of their current address, dated in the last three months?',
+    why: 'Why CAT raised it: the address on the credit file is not the one on the case.' });
+  var CAT_POA_SENT = Object.assign({}, CAT_POA, { kind: 'waiting', pill: 'Sent to CAT', why: null, listen: null,
+    quote: 'I can send you my council tax bill tonight, it has this address on it', status: 'Answer sent to CAT · waiting for CAT’s reply' });
+  var CAT_RTR = catItem('rtr', 'check', { pill: 'Check your action', title: 'Right to remain', section: 'Personal Details',
+    text: 'You dismissed ‘Right to remain’, but it hasn’t been discussed on the call. Please check with the customer.',
+    listen: 'Clears itself if it comes up on the call' });
+  var CAT_UC = catItem('bank.uc', 'ask', { pill: 'Ask why it differs from the bank', title: 'Universal Credit differs from the bank', section: 'Income',
+    text: 'Universal Credit: the bank shows £318 a month, but £218 is entered and the customer confirmed it. Ask the customer why.',
+    quote: 'it’s two hundred and eighteen a month, yeah' });
+  var CAT_FF = catItem('ff', 'ask', { title: 'Family & Friends', section: 'I&E',
+    text: 'Family & Friends: Who are these payments to, and what are they for?',
+    why: 'Why CAT raised it: payments to one person add up to more than £100.', payments_label: '3 payments · £115.00',
+    payments: [{ date: '03 Oct', payee: 'A JONES', amount: '−£40.00' }, { date: '17 Oct', payee: 'A JONES', amount: '−£35.00' },
+               { date: '31 Oct', payee: 'A JONES', amount: '−£40.00' }] });
+  var CAT_INFLOW = catItem('inflow', 'ask', { title: 'Unexplained Inflow', section: 'I&E',
+    text: 'Unexplained Inflow: What was this payment into the account for?',
+    why: 'Why CAT raised it: a large payment in with no reference.', payments_label: 'The payment',
+    payments: [{ date: '14 Oct', payee: 'J SMITH', amount: '+£250.00' }] });
+  var CAT_INFLOW_BACK = Object.assign({}, CAT_INFLOW, { occurrence: 2, pill: 'Back from CAT', back: 'CAT didn’t accept the answer · ask again',
+    sent_text: 'Sent: Customer says the £250 was a birthday present from their brother.' });
+  var CAT_PARTNER = catItem('partner', 'check', { pill: 'Check your action', title: 'Partner awareness', section: 'I&E',
+    text: 'You closed ‘Partner awareness’ with ‘Doesn’t apply’, but the customer said something different. Please check with the customer.',
+    quote: 'my partner knows about all of this, we go through the bills together' });
+  var CAT_AVIVA = catItem('aviva', 'unsure', { pill: 'Not sure which one', title: 'Which Aviva payment?', section: 'I&E',
+    text: 'We’re not sure which transaction the customer meant. Can you confirm it with them?',
+    quote: 'the Aviva one, that’s my life insurance, not the car', candidates_label: 'Which one?',
+    candidates: [{ date: '02 Oct', payee: 'AVIVA', amount: '£60.00', note: 'In CAT as Car insurance' },
+                 { date: '09 Oct', payee: 'AVIVA', amount: '£18.40', note: 'In CAT as Pet insurance' }] });
+  var CAT_DONE = [{ title: 'Proof of Address', note: 'Answered · CAT accepted' },
+    { title: 'Right to remain', note: 'Came up on the call · warning cleared' },
+    { title: 'Proof of Income: Universal Credit', note: 'You asked for the statement · CAT accepted' },
+    { title: 'Family & Friends', note: 'The customer backed your reason · warning cleared' }];
+  // Today's CAT card in trigger_actions, as the server keeps sending it for older
+  // widgets - marked as one the CAT section draws instead.
+  var CARD_CAT_OLD = { id: 'cat.flag.poa', title: 'CAT needs an answer', label: 'CAT needs an answer', severity: 'high',
+    message: 'Ask the customer for proof of their current address.', action: null, script: null, coaching_only: false,
+    occurrence: 1, about: 'Proof of Address', source: 'cat', in_cat_section: true };
+  function catStage(items, done, extra) { return stage(Object.assign({ cat_section: { items: items, done: done || [] } }, extra || {})); }
+  var CAT_ALL = [CAT_PARTNER, CAT_RTR, CAT_FF, CAT_UC, CAT_INFLOW_BACK, CAT_AVIVA, CAT_POA_SENT];
+  function quietly(items, done, extra) {
+    return [live(Object.assign({ paused: true, elapsed: 1500 }, extra || {})), catStage(items, done), live(Object.assign({ elapsed: 1510 }, extra || {})), ieMsg('expenditure')];
+  }
+  S['cat-bar-zero'] = { size: [360, 900], steps: [live({ elapsed: 300 }), catStage([])] };
+  S['cat-bar-waiting'] = { size: [360, 900], steps: quietly([CAT_POA_SENT]) };
+  S['cat-bar-count'] = { size: [360, 900], steps: quietly([CAT_FF, CAT_UC, CAT_PARTNER, CAT_POA_SENT]) };
+  S['cat-bar-all-kinds'] = { size: [360, 900], steps: quietly([CAT_FF, CAT_PARTNER, CAT_AVIVA]) };
+  S['cat-paused'] = { size: [360, 900], steps: [live({ paused: true, elapsed: 1500 }), catStage([CAT_POA])] };
+  S['cat-pop-one'] = { size: [360, 900], steps: [live({ elapsed: 580 }), catStage([CAT_POA])] };
+  S['cat-pop-check'] = { size: [360, 900], steps: [live({ elapsed: 625 }), catStage([CAT_RTR])] };
+  S['cat-pop-unsure'] = { size: [360, 900], steps: [live({ elapsed: 1600 }), catStage([CAT_AVIVA]), ieMsg('expenditure')] };
+  S['cat-pop-many'] = { size: [360, 900], steps: [live({ elapsed: 1270 }), catStage([CAT_INFLOW, CAT_FF]), ieMsg('expenditure')] };
+  S['cat-pop-restart'] = { size: [360, 900], steps: [live({ elapsed: 1270 }), catStage([CAT_INFLOW]), ieMsg('expenditure')],
+    later: [catStage([CAT_INFLOW, CAT_FF])] };
+  S['cat-pop-leaves'] = { size: [360, 900], steps: [live({ elapsed: 1270 }), catStage([CAT_INFLOW, CAT_FF]), ieMsg('expenditure')],
+    later: [catStage([CAT_FF])], laterDelay: 600 };
+  S['cat-pop-empties'] = { size: [360, 900], steps: [live({ elapsed: 1270 }), catStage([CAT_INFLOW, CAT_FF])], later: [catStage([])] };
+  S['cat-pop-lands'] = { size: [360, 900], steps: [live({ elapsed: 1270 }), catStage([CAT_INFLOW, CAT_FF]), ieMsg('expenditure')],
+    clicks: ['[data-act="catNow"]'] };
+  S['cat-pop-open'] = { size: [360, 900], steps: [live({ elapsed: 580 }), catStage([CAT_POA])], clicks: ['.catpop [data-act="sheet"][data-v="cat"]'] };
+  S['cat-pop-other-sheet'] = { size: [360, 900], steps: [live({ elapsed: 580 }), catStage([CAT_POA])], clicks: ['[data-act="sheet"][data-v="list"]'] };
+  S['cat-pop-over-checklist'] = { size: [360, 900], steps: [live({ elapsed: 580 }), catStage([])], clicks: ['[data-act="sheet"][data-v="list"]'],
+    later: [catStage([CAT_POA])] };
+  S['cat-sheet'] = { size: [360, 900], steps: quietly(CAT_ALL, CAT_DONE), clicks: ['.catbar', '[data-act="catDone"]'] };
+  S['cat-sheet-tall'] = { size: [360, 3400], steps: quietly(CAT_ALL, CAT_DONE), clicks: ['.catbar', '[data-act="catDone"]'] };
+  S['cat-sheet-done-closed'] = { size: [360, 3400], steps: quietly(CAT_ALL, CAT_DONE), clicks: ['.catbar'] };
+  S['cat-sheet-empty'] = { size: [360, 900], steps: [live({ elapsed: 300 }), catStage([])], clicks: ['.catbar'] };
+  S['cat-sheet-new'] = { size: [360, 900], steps: [live({ elapsed: 600 }), catStage([CAT_POA])], clicks: ['.catpop [data-act="sheet"][data-v="cat"]'],
+    later: [catStage([CAT_POA, CAT_RTR])] };
+  S['cat-sheet-closed-not-new'] = { size: [360, 900], steps: [live({ elapsed: 600 }), catStage([CAT_POA])],
+    clicks: ['.catpop [data-act="sheet"][data-v="cat"]', '[data-act="closeSheet"].sh-x', '.catbar'] };
+  S['cat-collapsed'] = { size: [64, 900], steps: [live({ elapsed: 600 }), catStage([])], clicks: ['[data-act="collapse"]'], later: [catStage([CAT_POA])] };
+  S['cat-fold-drops-pop'] = { size: [360, 900], steps: [live({ elapsed: 600 }), catStage([CAT_POA])], clicks: ['[data-act="collapse"]', '.strip [data-act="expand"]'] };
+  S['cat-recording-only'] = { size: [360, 900], steps: [live({ livePipeline: false, elapsed: 600 }), catStage([CAT_POA])] };
+  S['cat-new-call'] = { size: [360, 900], steps: [live({ elapsed: 600 }), catStage([CAT_POA])], later: [live({ callSeq: 2, elapsed: 5 }), catStage([])] };
+  // Call 1's pop is still up when call 2 starts with the same flag: one pop, never the flag twice.
+  S['cat-new-call-pops-again'] = { size: [360, 900], steps: [live({ elapsed: 600 }), catStage([CAT_POA])],
+    later: [live({ callSeq: 2, elapsed: 5 }), catStage([CAT_POA])] };
+  // Left alone, the pop drops into the bar after 6 s and the count bumps.
+  S['cat-pop-times-out'] = { size: [360, 900], budget: 8000, steps: [live({ elapsed: 580 }), catStage([CAT_POA])] };
+  // A pop whose flags all went is gone for good: it never lands later and bumps the count.
+  S['cat-pop-empties-no-bump'] = { size: [360, 900], budget: 8000, steps: [live({ paused: true, elapsed: 600 }), catStage([CAT_FF]),
+    live({ elapsed: 600 }), catStage([CAT_FF, CAT_POA])], later: [catStage([CAT_FF])] };
+  // Paused while a pop is up: it goes, and does not come back when the call resumes.
+  S['cat-pause-drops-pop'] = { size: [360, 900], steps: [live({ elapsed: 600 }), catStage([CAT_POA]), live({ elapsed: 600, paused: true })],
+    later: [live({ elapsed: 610 })] };
+  // A flag that arrived while folded does not pop when a coached call opens the panel.
+  S['cat-folded-no-pop'] = { size: [360, 900], steps: [live({ elapsed: 600 }), catStage([])], clicks: ['[data-act="collapse"]'],
+    later: [catStage([CAT_POA]), live({ elapsed: 600, keepOpen: true })] };
+  // The server stops sending the section: the bar goes, and an open CAT sheet closes.
+  S['cat-section-goes'] = { size: [360, 900], steps: [live({ elapsed: 600 }), catStage([])], clicks: ['.catbar'], later: [stage()] };
+  S['cat-hides-its-cards'] = { size: [360, 900], steps: [live({ paused: true, elapsed: 790 }),
+    catStage([CAT_POA], [], { trigger_actions: [CARD_CAT_OLD, CARD_AFFORD] }), live({ elapsed: 790 })] };
+  S['cat-old-card-without-section'] = { size: [360, 900], steps: [live({ elapsed: 790 }), stage({ trigger_actions: [CARD_CAT_OLD, CARD_AFFORD] })] };
+  S['cat-hides-its-cards-strip'] = { size: [64, 900], steps: [live({ elapsed: 790 }), catStage([CAT_POA], [], { trigger_actions: [CARD_CAT_OLD, CARD_CTAX] })],
+    clicks: ['[data-act="collapse"]'] };
+  S['cat-old-card-strip'] = { size: [64, 900], steps: [live({ elapsed: 790 }), stage({ trigger_actions: [CARD_CAT_OLD, CARD_CTAX] })],
+    clicks: ['[data-act="collapse"]'] };
+
   root.FocusScenarios = S;
 }(typeof self !== 'undefined' ? self : this));

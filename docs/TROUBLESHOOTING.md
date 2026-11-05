@@ -119,6 +119,22 @@ screen never asks.
 agent can carry on - the call keeps the dialer's code. Picking again retries.
 `[dept] answer not saved (...)` in the log.
 
+## No CAT flags bar, or a CAT card shown twice (2.9.66)
+
+The bar on top of Checklist and I&E appears only when the recording server sends
+the CAT section (`cat_section` on the checklist state). An older server, or CAT
+flags off for the department, leaves the panel exactly as 2.9.65 - that is not a
+fault in the widget.
+
+**A CAT card shows in the section AND as a "put right" card:** the server sent it
+in `trigger_actions` without `in_cat_section`, which is the marker that tells the
+panel the section draws it.
+
+**A new flag did not pop:** it arrived while the call was paused, with the panel
+folded to the bar, or with the CAT flags sheet open. That is the design: it is in
+the bar's count (or marked "New" in the open sheet). A flag waiting for CAT never
+pops - there is nothing to do.
+
 ## Ask for the log file first
 
 ```

@@ -19,15 +19,17 @@ HERE = Path(__file__).resolve().parent
 def scenarios():
     text = (HERE / "scenarios.js").read_text(encoding="utf-8")
     out = []
-    for m in re.finditer(r"S\['([a-z0-9-]+)'\]\s*=\s*\{\s*size:\s*\[(\d+),\s*(\d+)\]", text):
-        out.append((m.group(1), int(m.group(2)), int(m.group(3))))
+    # An optional `budget` (ms of page time before the shot, default 3000) right
+    # after the size: a CAT flag's pop lands by itself only after 6.5 s (2.9.66).
+    for m in re.finditer(r"S\['([a-z0-9-]+)'\]\s*=\s*\{\s*size:\s*\[(\d+),\s*(\d+)\](?:,\s*budget:\s*(\d+))?", text):
+        out.append((m.group(1), int(m.group(2)), int(m.group(3)), int(m.group(4) or 3000)))
     # summary-all reuses another scenario's steps and has no size of its own
     if "summary-all" not in [n for n, *_ in out]:
-        out.append(("summary-all", 360, 900))
+        out.append(("summary-all", 360, 900, 3000))
     return out
 
 
-def shoot(name, w, h, out_dir):
+def shoot(name, w, h, out_dir, budget=3000):
     url = (HERE / "harness.html").as_uri() + "?s=" + name
     png = out_dir / f"{name}.png"
     if png.exists():
@@ -36,7 +38,7 @@ def shoot(name, w, h, out_dir):
            # Taller than the panel: headless Edge's visible area is a little
            # shorter than the window, which clipped the panel's last rows.
            "--force-device-scale-factor=1", f"--window-size={max(w, 800)},{h + 120}",
-           "--virtual-time-budget=3000", "--allow-file-access-from-files",
+           f"--virtual-time-budget={budget}", "--allow-file-access-from-files",
            f"--screenshot={png}", url]
     subprocess.run(cmd, capture_output=True, timeout=60)
     if not png.exists():
@@ -53,10 +55,10 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     wanted = set(sys.argv[2:])
     ok = bad = 0
-    for name, w, h in scenarios():
+    for name, w, h, budget in scenarios():
         if wanted and name not in wanted:
             continue
-        if shoot(name, w, h, out_dir):
+        if shoot(name, w, h, out_dir, budget):
             ok += 1
         else:
             bad += 1

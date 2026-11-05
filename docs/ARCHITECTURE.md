@@ -121,6 +121,41 @@ I&E pinned, 64 folded).
     "CAT figure from ...".
   An older widget ignores the new fields; with case continuity off they are never
   sent and the page is exactly as before (`case-*` scenarios in the harness).
+- **CAT flags** (2.9.66; Bilal's CAT requirement §8, 3 Nov, and the mockup
+  approved 4 Nov): what CAT raises gets a section of its own, never mixed in with
+  the I&E cards. The server adds `cat_section: {items, done}` to the full
+  `compliance_alert` state; each item is one card it has worded (`kind` ask, check,
+  unsure or waiting; `pill`, `title`, `section`, `text`; and when it has them the
+  reason, what was sent, CAT's rejection, payments, the customer's words, the
+  candidates, a status and a listening line). The page draws it and decides nothing
+  about what it says.
+  - A full-width **CAT flags** bar on top of the dock - Checklist and I&E keep
+    their size - with a summary ("2 to ask · 1 to check", "3 to act on", "1 waiting
+    for CAT", "Nothing to act on") and a red count of what is to ask, check or
+    confirm. Waiting for CAT is never counted.
+  - Tapping it opens a sheet like the others: "Check your action", "To ask", "Not
+    sure which one", "Waiting for CAT", in that order, each with its count; an
+    answer CAT turned down comes first in its group. Then "Done on this call · N",
+    which opens to the list, and a line saying the widget cannot check that a
+    document arrived.
+  - A flag this call has not shown before (id + occurrence: the occurrence goes up
+    when it comes back) **pops** just above the bar for 6 seconds, with "Open CAT
+    flags" and "Move it now", then drops into the bar and the count bumps. It is not
+    counted until it lands. Several at once are one pop listing each with its
+    section; more arriving while one is up start it again with all of them; one that
+    goes leaves it, and an empty pop closes. Waiting-for-CAT items never pop. No pop
+    with the CAT sheet open (they appear there marked "New"), while paused, with
+    live AI off or folded to the strip - they wait in the count. Opening any sheet
+    takes the pop away; a new call clears everything.
+  - The server keeps sending today's CAT cards in `trigger_actions` for older
+    widgets, marked `in_cat_section`. Beside a `cat_section` the page does not draw
+    them as corrections, nor count them on the strip, the state line or the queue;
+    without one they are drawn as before.
+  - No `cat_section` (an older server, or CAT flags off): the panel is 2.9.65's,
+    pixel for pixel - every earlier harness screen was compared. The strip, the
+    peek, the summary and the classic screen do not change. (`model.catView`,
+    `catPop`, `announceCat`; the page's `catBar`, `catSheet`, `catPopHtml`;
+    `cat-*` scenarios in the harness.)
 - The page's rules (card order, auto-clear, safety card) are tested in
   `focus/tests/` (node); every screen state is rendered and checked in Edge by
   `focus_dev/check_harness.py`; `focus_dev/qt_e2e.py` drives the real window.

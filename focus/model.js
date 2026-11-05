@@ -25,6 +25,10 @@
       // Case continuity (server 25 Oct): the "Continuing case" banner, or null on
       // a call that is not a case's second or later call.
       caseInfo: null,
+      // CAT flags (2.9.66): the server's `cat_section`, or null when it sends
+      // none - and then the panel is exactly as 2.9.65. catSeen: every flag
+      // (id + occurrence) this call has already announced, so each pops once.
+      cat: null, catSeen: {},
       conn: 'ok', transcription: 'ok',
       hasStage: false
     };
@@ -65,7 +69,7 @@
   /* Apply one server message. Returns what changed, so the panel can react
    * (a NEW card, for instance, is the only thing allowed to move the view). */
   function applyMessage(m, msg, nowMs, elapsed) {
-    var out = { changed: false, newCard: false };
+    var out = { changed: false, newCard: false, newCat: [] };
     if (!msg || typeof msg !== 'object') return out;
     var t = msg.type;
     if (t === 'crisis_alert') {
@@ -110,9 +114,21 @@
         m.still = (msg.still_to_do || []).filter(function (r) { return r && String(r.label || '').trim(); });
         m.openCrit = (msg.open_criticals || []).filter(function (r) { return r && String(r.label || '').trim(); });
         m.warnings = (msg.warnings || []).filter(function (w) { return w && String(w.text || '').trim(); });
-        out.newCard = setActions(m, msg.trigger_actions, nowMs, elapsed) || out.newCard;
+        // 2.9.66: the server keeps sending today's CAT bank and flag cards in
+        // trigger_actions, so a widget without the CAT section still draws them,
+        // and marks them `in_cat_section`. Beside a cat_section they ARE its
+        // cards: drawn there, never a second time as corrections - nor counted
+        // in the strip, the state line or the queue. Without one, as before.
+        var cat = catSection(msg.cat_section);
+        var rows = msg.trigger_actions;
+        if (cat) rows = (rows || []).filter(function (r) { return !(r && r.in_cat_section === true); });
+        out.newCard = setActions(m, rows, nowMs, elapsed) || out.newCard;
         if (msg.crisis_resolved && m.crisis) m.crisis = null;   // latch stays: never re-raised
         if (msg.case && typeof msg.case === 'object') m.caseInfo = msg.case;
+        // The whole section comes with every full state, like the cards: one
+        // without it is a server (or a switch) with no CAT section, so the bar goes.
+        m.cat = cat;
+        out.newCat = announceCat(m);
       }
       out.changed = true;
       return out;
@@ -307,7 +323,113 @@
     };
   }
 
+  /* ---------- CAT flags (2.9.66; Bilal's CAT requirement §8, 3 Nov) ----------
+   * The recording server sends the CAT section whole on every full state:
+   * `cat_section: {items: [...], done: [...]}`. Each item is one card the
+   * server has worded - the panel draws it, it does not decide what it says. */
+
+  // The four kinds of card the section draws. An item of any other kind is
+  // left out rather than drawn as something it is not.
+  var CAT_KINDS = { ask: 1, check: 1, unsure: 1, waiting: 1 };
+
+  // Sheet order and headings (the approved mockup, 4 Nov): the advisor's own
+  // action first, then what to ask, then what to confirm, then what CAT has.
+  var CAT_GROUPS = [
+    { kind: 'check', title: 'Check your action', color: 'var(--red)' },
+    { kind: 'ask', title: 'To ask', color: 'var(--amb)' },
+    { kind: 'unsure', title: 'Not sure which one', color: 'var(--brand)' },
+    { kind: 'waiting', title: 'Waiting for CAT', color: 'var(--mute)' }
+  ];
+
+  // A flag is one item AND one occurrence, as a correction card is (cardKey):
+  // the occurrence goes up when it comes back - CAT turned the answer down -
+  // and then it is new again and pops again.
+  function catKey(it) {
+    return String(it.id) + '#' + (it.occurrence == null ? '' : it.occurrence);
+  }
+
+  // Card colour by kind: to ask is amber, the advisor's own action red, not
+  // sure which one violet, waiting for CAT plain white.
+  function catFamily(kind) {
+    return { ask: 'high', check: 'critical', unsure: 'next', waiting: 'sent' }[kind] || 'high';
+  }
+
+  function catSection(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    var items = (Array.isArray(raw.items) ? raw.items : []).filter(function (it) {
+      return it && typeof it === 'object' && String(it.id == null ? '' : it.id).trim() && CAT_KINDS[it.kind] === 1;
+    });
+    var done = (Array.isArray(raw.done) ? raw.done : []).filter(function (d) {
+      return d && typeof d === 'object' && String(d.title || '').trim();
+    });
+    return { items: items, done: done };
+  }
+
+  // The flags this message brought that the call has not announced before.
+  // Waiting-for-CAT items never announce themselves: there is nothing to do.
+  function announceCat(m) {
+    var fresh = [];
+    (m.cat ? m.cat.items : []).forEach(function (it) {
+      if (it.kind === 'waiting') return;
+      var k = catKey(it);
+      if (!m.catSeen[k]) { m.catSeen[k] = true; fresh.push(k); }
+    });
+    return fresh;
+  }
+
+  // Of these keys, the ones whose item is still in the section, in order.
+  function catLive(m, keys) {
+    var have = {};
+    (m.cat ? m.cat.items : []).forEach(function (it) { have[catKey(it)] = it; });
+    return (keys || []).filter(function (k) { return !!have[k]; });
+  }
+
+  /* What the bar and the sheet show. `hidden`: keys still in a pop that has
+   * not landed - they are neither counted nor listed until they drop in.
+   * Null on a call whose server sends no CAT section (no bar at all). */
+  function catView(m, hidden) {
+    if (!m.cat) return null;
+    hidden = hidden || {};
+    var by = { check: [], ask: [], unsure: [], waiting: [] };
+    m.cat.items.forEach(function (it) { if (!hidden[catKey(it)]) by[it.kind].push(it); });
+    // An answer CAT turned down comes first in its group: it was already asked
+    // once, and the customer is waiting to be asked again.
+    Object.keys(by).forEach(function (k) {
+      by[k] = by[k].filter(function (it) { return !!it.back; }).concat(by[k].filter(function (it) { return !it.back; }));
+    });
+    var count = by.ask.length + by.check.length + by.unsure.length;
+    var bits = [];
+    if (by.ask.length) bits.push(by.ask.length + ' to ask');
+    if (by.check.length) bits.push(by.check.length + ' to check');
+    if (by.unsure.length) bits.push(by.unsure.length + ' to confirm');
+    var summary = count ? (bits.length > 2 ? count + ' to act on' : bits.join(' · '))
+      : (by.waiting.length ? by.waiting.length + ' waiting for CAT' : 'Nothing to act on');
+    return {
+      count: count, summary: summary, done: m.cat.done,
+      groups: CAT_GROUPS.filter(function (g) { return by[g.kind].length; }).map(function (g) {
+        return { kind: g.kind, title: g.title, color: g.color, items: by[g.kind] };
+      })
+    };
+  }
+
+  /* The pop for these keys: one flag shows its own pill and sentence; several
+   * at once are ONE pop listing each by title and section (a card each would
+   * cover the panel). Null when none of them is still there. */
+  function catPop(m, keys) {
+    var have = {};
+    (m.cat ? m.cat.items : []).forEach(function (it) { have[catKey(it)] = it; });
+    var items = (keys || []).map(function (k) { return have[k]; }).filter(Boolean);
+    if (!items.length) return null;
+    if (items.length === 1) {
+      var fam = catFamily(items[0].kind);
+      return { count: 1, cls: fam === 'sent' ? 'high' : fam, pill: 'New · ' + (items[0].pill || ''), text: items[0].text || '' };
+    }
+    return { count: items.length, cls: 'high', pill: items.length + ' new CAT flags',
+             list: items.map(function (it) { return { title: it.title || '', section: it.section || '' }; }) };
+  }
+
   return {
+    catKey: catKey, catFamily: catFamily, catLive: catLive, catView: catView, catPop: catPop,
     carriedText: carriedText, caseBanner: caseBanner,
     newCall: newCall, applyMessage: applyMessage, expire: expire, secondsLeft: secondsLeft,
     attention: attention, fixCount: fixCount, stageInfo: stageInfo, checklist: checklist,
