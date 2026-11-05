@@ -136,6 +136,10 @@ also reads `cat_section` on the full `compliance_alert` state - the CAT flags
 section, `{items, done}`, worded by the server - and then leaves out the
 `trigger_actions` rows the server marks `in_cat_section` (it keeps sending those for
 older widgets). With no `cat_section` nothing changes (see ARCHITECTURE, *CAT flags*).
+From 2.9.67 it also draws `silent_side` (TG1): `side: "customer"` - the client's side
+silent for 3 minutes - raises "We can't hear the client" on the panel, its foot and the
+folded bar; `side: null` takes it down. The classic screen ignores it, as an older
+widget does (see ARCHITECTURE, *"We can't hear the client"*).
 
 `_receiver_loop` reads on a worker thread and hands every message to
 `_handle_server_message` **on the main thread** via `QTimer.singleShot(0, ...)`.

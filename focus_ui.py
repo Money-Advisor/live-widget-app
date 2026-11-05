@@ -453,7 +453,9 @@ class FocusController:
 
     # -------------------------------------------------------------- messages
     FORWARD_ALWAYS = ("crisis_alert", "transcription_status", "connection_status")
-    FORWARD_WHEN_RECORDING = ("compliance_alert", "ie_panel")
+    # silent_side (TG1, 2.9.67): the client's side silent for 3 minutes - about the
+    # call in progress, so only while recording, like the checklist.
+    FORWARD_WHEN_RECORDING = ("compliance_alert", "ie_panel", "silent_side")
 
     def _on_server_message(self, msg):
         try:

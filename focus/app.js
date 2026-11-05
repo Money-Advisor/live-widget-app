@@ -438,6 +438,9 @@
     var h = '';
     if (call.transcription === 'failed') h += '<div class="banner red">' + I.alertR + '<span>Live checking unavailable \u2014 transcription stopped. Your call is still being recorded.</span></div>';
     else if (call.transcription === 'degraded') h += '<div class="banner amber">' + I.warnA + '<span>Live checking interrupted \u2014 reconnecting\u2026</span></div>';
+    // TG1 (2.9.67): nothing from the client's side for 3 minutes while the advisor
+    // talks. Not while paused for a card: nothing is recorded then, on purpose.
+    if (call.silent === 'customer' && !host.paused) h += '<div class="banner amber" role="alert">' + I.warnA + '<span>We can\u2019t hear the client \u2014 no sound from their side for 3 minutes. Check your headset and connection.</span></div>';
     if (host.paused) {
       return h + '<div class="focus quiet" style="background:#FFF3DA;border:1.5px solid #F2C46B"><div style="width:56px;height:56px;border-radius:28px;background:#F2B233;display:flex;align-items:center;justify-content:center;color:#3B2F12">' + I.pause + '</div>' +
         '<h2 style="color:var(--ambInk)">Paused for card payment</h2><p class="detail" style="color:#6B4F1C">Nothing is being recorded while the client reads out their card details.</p>' +
@@ -646,6 +649,7 @@
     if (call.conn === 'buffering') return '<div class="ft warn"><span class="dotc" style="background:var(--ambDot)"></span>Reconnecting \u2014 audio is saved on this PC</div>';
     if (call.conn === 'failed') return '<div class="ft bad"><span class="dotc" style="background:var(--red)"></span>Saved on this PC \u2014 will not upload</div>';
     if (host.paused) return '<div class="ft warn"><span class="dotc" style="background:var(--ambDot)"></span>Paused \u2014 nothing is being recorded</div>';
+    if (call.silent === 'customer') return '<div class="ft warn"><span class="dotc" style="background:var(--ambDot)"></span>No sound from the client \u2014 check your headset</div>';
     if (!host.livePipeline) return '<div class="ft"><span class="dotc" style="background:var(--grn)"></span>Recording</div>';
     if (call.transcription === 'failed') return '<div class="ft bad"><span class="dotc" style="background:var(--red)"></span>Live checking stopped \u2014 still recording</div>';
     if (call.transcription === 'degraded') return '<div class="ft warn"><span class="dotc" style="background:var(--ambDot)"></span>Live checking reconnecting</div>';
@@ -800,6 +804,8 @@
       (fixes ? '<button class="sb r" data-act="expand" aria-label="' + fixes + (onlyAsks(items, fixes) ? ' to clarify' : ' to put right') + '"><span class="mono">' + fixes + '</span><span class="cap">' + (onlyAsks(items, fixes) ? 'Ask' : 'Fix') + '</span></button>'
              : '<button class="sb ' + (hasNext ? 'v' : 'z') + '" data-act="expand" aria-label="Open the panel"><span class="mono">' + (hasNext ? '1' : '0') + '</span><span class="cap">Next</span></button>') +
       (host.livePipeline ? '<button class="sb g" data-act="openSheet" data-v="ie" aria-label="Disposable income"><span class="mono">' + esc(di) + '</span><span class="cap">DI</span></button>' : '') +
+      // TG1 (2.9.67): the same warning on the bar, so a folded panel still says it.
+      (call.silent === 'customer' && !host.paused ? '<button class="sb a" data-act="expand" aria-label="We can’t hear the client: open the panel" data-tip="We can’t hear the client"><span class="ok">' + I.warnA + '</span><span class="cap">Client</span></button>' : '') +
       '<div class="grow"></div>' +
       (host.paused ? '<button class="ib resume" data-act="pause" aria-label="Resume recording">' + I.play + '</button>' : '<button class="ib pause" data-act="pause" aria-label="Pause for card payment">' + I.pause + '</button>') +
       '<button class="ib stop" data-act="stop" aria-label="Stop recording">' + I.stop + '</button>' +

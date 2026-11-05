@@ -17,6 +17,23 @@ const stageMsg = (extra) => Object.assign({
   still_to_do: [], open_criticals: [], warnings: [], trigger_actions: []
 }, extra || {});
 
+test('TG1: the silent-client warning is raised and cleared by the server, nothing else', () => {
+  const m = M.newCall();
+  assert.equal(m.silent, null);
+  let out = M.applyMessage(m, { type: 'silent_side', side: 'customer', window_seconds: 180 }, 0, 10);
+  assert.equal(m.silent, 'customer');
+  assert.equal(out.changed, true);
+  assert.equal(M.applyMessage(m, { type: 'silent_side', side: 'customer' }, 0, 11).changed, false, 'the same again is no change');
+  M.applyMessage(m, stageMsg(), 0, 12);
+  assert.equal(m.silent, 'customer', 'a checklist update leaves it alone');
+  out = M.applyMessage(m, { type: 'silent_side', side: null }, 0, 13);
+  assert.equal(m.silent, null);
+  assert.equal(out.changed, true);
+  M.applyMessage(m, { type: 'silent_side', side: 'agent' }, 0, 14);
+  assert.equal(m.silent, null, 'only the client side is drawn');
+  assert.equal(M.newCall().silent, null, 'a new call starts without it');
+});
+
 const card = (id, extra) => Object.assign({ id, label: id + ' label', severity: 'high',
   message: id + ' message', script: 'say ' + id, alternatives: [], occurrence: 1 }, extra || {});
 

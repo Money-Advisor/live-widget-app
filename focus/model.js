@@ -29,6 +29,9 @@
       // none - and then the panel is exactly as 2.9.65. catSeen: every flag
       // (id + occurrence) this call has already announced, so each pops once.
       cat: null, catSeen: {},
+      // TG1 (2.9.67): the side the server says has been silent for 3 minutes while
+      // the advisor talks ("customer"), or null - and then the panel is as 2.9.66.
+      silent: null,
       conn: 'ok', transcription: 'ok',
       hasStage: false
     };
@@ -145,6 +148,14 @@
     if (t === 'connection_status') {
       m.conn = msg.state === 'resumed' ? 'ok' : (msg.state || 'ok');
       out.changed = true;
+      return out;
+    }
+    if (t === 'silent_side') {
+      // TG1: the server raises it once the client's side has been silent 3 minutes
+      // and clears it (side null) when sound is back or a hold begins.
+      var side = msg.side === 'customer' ? 'customer' : null;
+      out.changed = side !== m.silent;
+      m.silent = side;
       return out;
     }
     return out;

@@ -422,5 +422,16 @@
   S['cat-old-card-strip'] = { size: [64, 900], steps: [live({ elapsed: 790 }), stage({ trigger_actions: [CARD_CAT_OLD, CARD_CTAX] })],
     clicks: ['[data-act="collapse"]'] };
 
+  // TG1 (2.9.67): the server's silent_side - the client's side silent 3 minutes.
+  var SILENT = { kind: 'msg', data: { type: 'silent_side', side: 'customer', window_seconds: 180 } };
+  var HEARD = { kind: 'msg', data: { type: 'silent_side', side: null, window_seconds: 180 } };
+  S['live-silent-client'] = { size: [360, 900], steps: [live({ elapsed: 610 }), stage(), SILENT] };
+  S['live-silent-cleared'] = { size: [360, 900], steps: [live({ elapsed: 640 }), stage(), SILENT, HEARD] };
+  S['live-silent-paused'] = { size: [360, 900], steps: [live({ elapsed: 610 }), stage(), SILENT, live({ paused: true, elapsed: 615 })] };
+  S['live-silent-recording-only'] = { size: [360, 900], steps: [live({ livePipeline: false, elapsed: 610 }), SILENT] };
+  S['live-silent-strip'] = { size: [64, 900], steps: [live({ elapsed: 610 }), stage(), SILENT], clicks: ['[data-act="collapse"]'] };
+  S['live-silent-strip-paused'] = { size: [64, 900], steps: [live({ elapsed: 610 }), stage(), SILENT, live({ paused: true, elapsed: 615 })],
+    clicks: ['[data-act="collapse"]'] };
+
   root.FocusScenarios = S;
 }(typeof self !== 'undefined' ? self : this));

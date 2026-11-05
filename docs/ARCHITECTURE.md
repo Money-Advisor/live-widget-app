@@ -121,6 +121,18 @@ I&E pinned, 64 folded).
     "CAT figure from ...".
   An older widget ignores the new fields; with case continuity off they are never
   sent and the page is exactly as before (`case-*` scenarios in the harness).
+- **"We can't hear the client"** (2.9.67; TG1, Bilal 4-5 Nov): the recording
+  server sends `{"type": "silent_side", "side": "customer"|null, "window_seconds":
+  180}` once the client's side has been exact silence for 3 minutes while the
+  advisor talks, and `side: null` when sound is back or a hold begins. `focus_ui.py`
+  forwards it only while recording and keeps the newest for a reloaded page;
+  `model.js` keeps `silent`. The panel shows an amber banner at the top of the live
+  body ("We can't hear the client - no sound from their side for 3 minutes. Check
+  your headset and connection."), the foot says "No sound from the client", and the
+  folded bar gets an amber "Client" button that opens the panel - none of them while
+  paused for a card payment (nothing is recorded then). Only the client's side is
+  drawn. A server that never sends it leaves the panel exactly as 2.9.66
+  (`live-silent-*` scenarios; every other screen is checked to have none of it).
 - **CAT flags** (2.9.66; Bilal's CAT requirement §8, 3 Nov, and the mockup
   approved 4 Nov): what CAT raises gets a section of its own, never mixed in with
   the I&E cards. The server adds `cat_section: {items, done}` to the full

@@ -304,6 +304,18 @@ EXPECT = {
     "cat-old-card-without-section": (["2 things to put right", "Ask the customer for proof of their current address."], ["catbar"]),
     "cat-hides-its-cards-strip": (['class="strip"', 'aria-label="1 to put right"'], ['aria-label="2 to put right"']),
     "cat-old-card-strip": (['class="strip"', 'aria-label="2 to put right"'], []),
+    # TG1 (2.9.67): the client's side silent for 3 minutes - on the panel, its foot
+    # and the folded bar; gone when sound is back; never while paused for a card.
+    "live-silent-client": (["We can’t hear the client", "no sound from their side for 3 minutes",
+                            "No sound from the client"], ["Listening · live checking on"]),
+    "live-silent-cleared": (["Listening · live checking on"], ["We can’t hear the client", "No sound from the client"]),
+    "live-silent-paused": (["Paused for card payment", "Paused — nothing is being recorded"],
+                           ["We can’t hear the client", "No sound from the client"]),
+    "live-silent-recording-only": (["We can’t hear the client", "Live checking is off for this call",
+                                    "No sound from the client"], []),
+    "live-silent-strip": (['class="strip"', 'aria-label="We can’t hear the client: open the panel"'], []),
+    "live-silent-strip-paused": (['class="strip"', 'aria-label="Resume recording"'],
+                                 ['We can’t hear the client']),
 }
 
 
@@ -343,6 +355,9 @@ def main():
                 missing.append(f"(in order) {s}")
                 break
             at = i
+        # A server that sends no silent_side gets the 2.9.66 panel: no warning.
+        if not name.startswith("live-silent") and ("hear the client" in html or "No sound from the client" in html):
+            present.append("the silent-client warning on a screen the server never sent it to")
         # A server that sends no cat_section gets the 2.9.65 panel: no CAT bar, no pop.
         if not name.startswith("cat-") and ("catbar" in html or 'class="catpop' in html):
             present.append("a CAT bar or pop on a screen with no cat_section")

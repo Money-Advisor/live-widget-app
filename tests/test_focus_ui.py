@@ -281,6 +281,31 @@ def test_checklist_and_ie_messages_reach_the_page_only_during_a_call(app):
     assert [p["data"]["type"] for p in flat(got) if p["kind"] == "msg"] == ["compliance_alert"]
 
 
+def test_the_silent_client_warning_reaches_the_page_only_during_a_call(app):
+    """TG1 (2.9.67): the server's silent_side is about the call in progress."""
+    win = make(app)
+    got = pushes(win._focus)
+    win._recording = False
+    win.server_message.emit({"type": "silent_side", "side": "customer", "window_seconds": 180})
+    assert not [p for p in flat(got) if p["kind"] == "msg"]
+    win._recording = True
+    win.server_message.emit({"type": "silent_side", "side": "customer", "window_seconds": 180})
+    win._recording = False
+    assert [p["data"] for p in flat(got) if p["kind"] == "msg"] == [
+        {"type": "silent_side", "side": "customer", "window_seconds": 180}]
+
+
+def test_a_reloaded_page_gets_the_newest_silent_client_warning(app):
+    win = make(app)
+    ctl = win._focus
+    win._recording = True
+    ctl.push_state()
+    for side in ("customer", None, "customer"):
+        ctl._on_server_message({"type": "silent_side", "side": side})
+    win._recording = False
+    assert [m["side"] for m in ctl.replay() if m["type"] == "silent_side"] == ["customer"]
+
+
 def test_the_safety_card_reaches_the_page_even_when_not_recording(app):
     win = make(app)
     got = pushes(win._focus)

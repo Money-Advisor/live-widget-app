@@ -73,6 +73,11 @@ installer/installer.iss   the one installer - same AppId/folder/exe/Run entry as
   Proof: 16 `dept-*` screens, `tests/test_dept_question.py` 35,
   `focus_dev/minimise_e2e.py` 64/64 in the real window. Detail:
   `docs/ARCHITECTURE.md`.
+* **"We can't hear the client"** (2.9.67, 5 Nov; TG1): when the server says the
+  client's side has been silent for 3 minutes while the advisor talks
+  (`silent_side`), an amber banner on the live panel, "No sound from the client" in
+  its foot and an amber "Client" button on the folded bar; gone when sound is back,
+  and never while paused for a card. Detail: `docs/ARCHITECTURE.md`.
 * **CAT flags** (2.9.66, 5 Nov; the mockup approved 4 Nov): a "CAT flags" bar on
   top of the dock (Checklist and I&E keep their size) and a sheet of CAT's cards in
   four groups - your action, to ask, not sure which one, waiting for CAT - plus
