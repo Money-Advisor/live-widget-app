@@ -28,6 +28,8 @@ import webbrowser
 from pathlib import Path
 from urllib.parse import urlparse
 
+from send_queue import SendQueue, AUDIO as _Q_AUDIO, CONTROL as _Q_CONTROL
+
 try:
     import pyaudiowpatch as pyaudio
 except ImportError:
@@ -258,9 +260,10 @@ WS_HANDSHAKE_TIMEOUT = 30
 # treats any send failure as "the socket died mid-call", and a perfectly healthy call
 # was buffered, resumed, and — when the resume couldn't complete — stored as a dropped
 # recording. At fleet scale that was most calls.
-# The trade-off: the capture thread blocks on a stuck send for up to this long, and
-# the audio device's buffer can overflow meanwhile, so this must stay small. A few
-# seconds tolerates a server hiccup without pretending a genuinely dead link is fine.
+# Since GF1 (Nov 2026) it is the SENDER thread that waits on a stuck send, not the
+# capture threads - they only queue - so a stuck send no longer costs any sound. The
+# value is unchanged: after 5 s the link is treated as dead, buffered and resumed, which
+# on 4 Nov is what got a struggling call onto a fresh, healthy connection.
 WS_STREAM_TIMEOUT = 5
 
 ORG = "Spark Flow"
@@ -268,7 +271,7 @@ APP = "Widget"
 
 # This build's version. MUST be kept in step with installer/installer.iss AppVersion —
 # it's what the auto-updater compares against the release registry (GET /api/version).
-APP_VERSION = "2.9.67"
+APP_VERSION = "2.9.68"
 
 FF = "'Plus Jakarta Sans','DM Sans','Segoe UI',sans-serif"
 
@@ -1079,6 +1082,13 @@ class RecordingThread(QThread):
         self.gaps_filled = 0
         self.seconds_filled = 0.0
         self._gap_started_at = None      # seconds_filled when the current gap opened
+        # Gaps that were THIS thread being held up (a busy PC), not the device. Such a
+        # gap is real lost sound - Windows held only ~0.175 s of it for us - and the
+        # log must not blame the headset for it (Bilal, 4 Nov 2026).
+        self.held_up_seconds = 0.0       # time the loop itself was late, in total
+        self.seconds_lost_held_up = 0.0  # silence inserted for those lost stretches
+        self._held_up_pending = 0.0      # lateness not yet matched to a gap
+        self._gap_held_up = False        # the open gap is a held-up one
         self._stop_event = threading.Event()
         self._start_ack = threading.Event()
 
@@ -1091,6 +1101,11 @@ class RecordingThread(QThread):
     # How often to look for newly-available frames. A twentieth of a chunk: invisible
     # next to the 85ms a chunk takes to fill, and it keeps _stop_event responsive.
     POLL_S = 0.005
+    # A loop pass that comes round later than this means the thread itself was held
+    # up. Windows keeps only ~0.175 s of captured sound for us (measured 5 Nov 2026,
+    # mic and loopback), so a longer hold-up loses sound - and a gap that follows it
+    # is ours, not the device's.
+    HELD_UP_S = 0.15
 
     @classmethod
     def _gap_to_fill(cls, deficit_s: float, chunk_s: float) -> float:
@@ -1101,10 +1116,15 @@ class RecordingThread(QThread):
         normal running we are always up to a chunk behind — a chunk has to fill before
         it can be read, and that is not a gap.
 
-        This is what makes fabricating time impossible: if WE stalled (a slow socket
-        send), the device buffered through it and the backlog is sitting in the stream,
-        so `get_read_available()` returns it and we never reach this branch at all.
-        Only a device that has genuinely produced nothing leaves a deficit standing.
+        A deficit has two possible causes, and only one is the device. Windows holds
+        just ~0.175 s of captured sound for us: if THIS thread is held up for longer,
+        the rest is discarded by Windows and can never be read - the silence filled in
+        here then stands for sound that really was lost. This thread used to send each
+        chunk to the server itself, so a slow network did exactly that (Bilal, 4 Nov
+        2026: minutes of a client's side lost with a working headset). It no longer
+        sends anything - it queues - so what is left is a PC too busy to run it, and
+        the loop measures that and says so (HELD_UP_S). A device that has genuinely
+        produced nothing is the other cause.
         """
         over = deficit_s - chunk_s
         if over <= cls.GAP_TOLERANCE_S:
@@ -1117,10 +1137,13 @@ class RecordingThread(QThread):
         Deliberately routed through send_callback like real audio so it inherits
         every existing behaviour: PCI pause drops it, a dead socket spools it.
 
-        A dead device is topped up a fraction of a second at a time rather than in one
-        block, so the stream keeps flowing for the live pipeline and a resuming device
-        is picked up immediately. Gap ACCOUNTING is the loop's job — a device that
-        stays dead calls this many times over for what is one gap.
+        The whole deficit goes in one go, ahead of the chunk that ends the gap - the
+        missing time came BEFORE that chunk. That is instant: send_callback only
+        queues (GF1), so a long fill can no longer hold this thread up while the
+        device's next sound overflows. A device that stays dead is topped up a little
+        on each pass, because its deficit only grows as the clock runs. Gap
+        ACCOUNTING is the loop's job — a device that stays dead calls this many times
+        over for what is one gap.
         """
         total = int(seconds * rate)
         full = b"\x00" * (CHUNK * frame_bytes)
@@ -1134,11 +1157,22 @@ class RecordingThread(QThread):
         return sent
 
     def _gap_opened(self):
-        """First top-up of a new gap. One log line per gap, not per top-up."""
+        """First top-up of a new gap. One log line per gap, not per top-up.
+
+        Says which kind of gap it is: if this thread was itself held up just before,
+        the sound was lost on our side (a busy PC), not by the device."""
         self.gaps_filled += 1
         self._gap_started_at = self.seconds_filled
-        print(f"[gapfill] {self.stream_type}: device stopped producing — holding the "
-              f"channel on the clock with silence (gap #{self.gaps_filled})")
+        held, self._held_up_pending = self._held_up_pending, 0.0
+        self._gap_held_up = held > 0
+        if self._gap_held_up:
+            print(f"[gapfill] {self.stream_type}: the widget was held up {held:.2f}s "
+                  f"(busy PC) and Windows could not keep that sound - holding the "
+                  f"channel on the clock with silence (gap #{self.gaps_filled}; "
+                  f"the device is fine)")
+        else:
+            print(f"[gapfill] {self.stream_type}: device stopped producing — holding "
+                  f"the channel on the clock with silence (gap #{self.gaps_filled})")
 
     def _gap_closed(self, reason: str = "device resumed"):
         """Device came back (or the call ended). Report what the gap cost."""
@@ -1146,6 +1180,11 @@ class RecordingThread(QThread):
             return
         span = self.seconds_filled - self._gap_started_at
         self._gap_started_at = None
+        if self._gap_held_up:
+            self.seconds_lost_held_up += span
+            self._gap_held_up = False
+            if reason == "device resumed":
+                reason = "capture caught up"
         print(f"[gapfill] {self.stream_type}: {reason} after {span:.2f}s of silence "
               f"(total {self.seconds_filled:.2f}s over {self.gaps_filled} gap(s))")
 
@@ -1298,6 +1337,7 @@ class RecordingThread(QThread):
                 print(f"[gapfill] {self.stream_type}: device cannot report available "
                       f"frames — falling back to blocking reads, no gap detection")
 
+            last_pass = None
             while not self._stop_event.is_set():
                 try:
                     if not can_poll:
@@ -1305,6 +1345,14 @@ class RecordingThread(QThread):
                         delivered_frames += len(data) // frame_bytes
                         self.send_callback(self.stream_type, data)
                         continue
+
+                    # Was this thread itself held up since the last pass? Then any gap
+                    # found next is sound lost on our side, not a silent device.
+                    now = _now()
+                    if last_pass is not None and now - last_pass > self.HELD_UP_S:
+                        self.held_up_seconds += now - last_pass
+                        self._held_up_pending += now - last_pass
+                    last_pass = now
 
                     if stream.get_read_available() >= CHUNK:
                         data = stream.read(CHUNK, exception_on_overflow=False)
@@ -1324,6 +1372,8 @@ class RecordingThread(QThread):
                         delivered_frames += self._emit_silence(
                             fill, actual_rate, frame_bytes)
                     else:
+                        # On the clock: a hold-up just now cost nothing.
+                        self._held_up_pending = 0.0
                         time.sleep(self.POLL_S)
                 except OSError as exc:
                     self.error_occurred.emit(f"Stream read error: {exc}")
@@ -1338,6 +1388,9 @@ class RecordingThread(QThread):
             if self.gaps_filled:
                 print(f"[gapfill] {self.stream_type}: {self.seconds_filled:.2f}s of "
                       f"silence inserted across {self.gaps_filled} gap(s) this call")
+            if self.seconds_lost_held_up > 0:
+                print(f"[gapfill] {self.stream_type}: {self.seconds_lost_held_up:.2f}s of "
+                      f"that was the widget held up by a busy PC, not the device")
             if self._keepalive is not None:
                 try:
                     self._keepalive.stop()
@@ -1787,6 +1840,21 @@ class AudioStreamer:
         # rather than kicking off a pointless reconnect loop.
         self._session_live = threading.Event()
 
+        # ── The send queue (GF1, Bilal 4 Nov 2026) ─────────────────────────
+        # Once the session is live, nothing is sent by the thread that hands it
+        # over: audio and control frames go into one ordered queue and a single
+        # sender thread delivers them. A capture thread that waited on a slow send
+        # lost the sound Windows could not hold for it (~0.175 s) - see send_queue.
+        # None until connect() succeeds, so a streamer that never connected (the
+        # unit tests) still delivers synchronously, exactly as before.
+        self._sendq: SendQueue | None = None
+        self._sender_thread: threading.Thread | None = None
+        self._close_queued = False
+        self._stream_rates: dict = {}        # stream_type -> PCM bytes per second
+        self._backlog_next_report = self._BACKLOG_FIRST_S
+        self._backlog_episode_peak = 0.0
+        self._backlog_call_peak = 0.0
+
     def set_paused(self, paused: bool):
         """Set the pause state (idempotent). Paused = audio chunks dropped."""
         if paused:
@@ -1857,6 +1925,137 @@ class AudioStreamer:
             daemon=True, name="ws-receiver"
         )
         self._receiver_thread.start()
+        self._start_sender()
+
+    # ── the send queue ─────────────────────────────────────────────────────
+    # A backlog is reported when this much audio is waiting, then again at each
+    # doubling, and "caught up" once it is back under _BACKLOG_CLEAR_S.
+    _BACKLOG_FIRST_S = 2.0
+    _BACKLOG_CLEAR_S = 0.5
+
+    def _start_sender(self) -> None:
+        """Start the one thread that sends this call's frames, in order."""
+        if self._sender_thread is not None:
+            return
+        self._sendq = SendQueue(_spool_dir() / f"{self.session_id}.queue.spool")
+        self._sender_thread = threading.Thread(
+            target=self._sender_loop, daemon=True, name="ws-sender")
+        self._sender_thread.start()
+
+    def _queueing(self) -> bool:
+        """True when frames go through the send queue (a live, connected call)."""
+        t = self._sender_thread
+        return self._sendq is not None and t is not None and t.is_alive()
+
+    def _queue_control(self, op: dict) -> None:
+        self._sendq.put(_Q_CONTROL, json.dumps(op).encode("utf-8"))
+
+    def _sender_loop(self) -> None:
+        """Deliver queued frames in order until the queued close has run.
+
+        This thread may sit in a slow socket send for seconds at a time - that is
+        the point: nothing that captures sound ever waits here."""
+        q = self._sendq
+        while True:
+            try:
+                item = q.get(timeout=1.0)
+            except Exception as exc:  # noqa: BLE001 - this thread must never die:
+                # frames still queued would never be sent, and new ones would go
+                # out the old, capture-blocking way.
+                print(f"[send] queue read failed: {type(exc).__name__}: {exc}")
+                time.sleep(0.1)
+                continue
+            if item is None:
+                if self._closing.is_set():
+                    return                  # closed directly (no queued close)
+                continue
+            kind, payload = item
+            try:
+                if kind == _Q_AUDIO:
+                    self._deliver(payload)
+                else:
+                    op = json.loads(payload)
+                    what = op.get("op")
+                    if what == "json":
+                        self._send_json(op["data"])
+                    elif what == "status":
+                        # Informational only: never worth a "deferred" line or a
+                        # reconnect of its own.
+                        if not (self._degraded.is_set() or self._gave_up.is_set()
+                                or self._closing.is_set()):
+                            try:
+                                with self._lock:
+                                    self._ws.send(json.dumps(op["data"]))
+                            except Exception:
+                                pass
+                    elif what == "end_session":
+                        self._end_session_now()
+                    elif what == "close":
+                        self._close_now()
+                        return
+            except Exception as exc:  # noqa: BLE001 - one bad frame must not stop the rest
+                print(f"[send] frame not sent: {type(exc).__name__}: {exc}")
+            finally:
+                q.task_done()
+            try:
+                self._watch_backlog()
+            except Exception as exc:  # noqa: BLE001 - a report must never stop sending
+                print(f"[send] backlog report failed: {type(exc).__name__}: {exc}")
+
+    def _backlog_seconds(self) -> float:
+        rate = sum(self._stream_rates.values())
+        q = self._sendq
+        if q is None or rate <= 0:
+            return 0.0
+        return max(0.0, q.audio_bytes / float(rate))
+
+    def _watch_backlog(self) -> None:
+        """Say in the log - and tell the server - when audio is waiting to be sent.
+
+        A slow connection used to show up only as silence in the recording. Now it
+        shows up as audio arriving late, and this is where that is made visible."""
+        secs = self._backlog_seconds()
+        self._backlog_episode_peak = max(self._backlog_episode_peak, secs)
+        self._backlog_call_peak = max(self._backlog_call_peak, secs)
+        if secs >= self._backlog_next_report:
+            print(f"[send] the connection to the server is slow: {secs:.1f}s of audio "
+                  f"waiting to be sent - it is kept and sent in order, nothing is lost")
+            self._report_link("slow", secs)
+            while self._backlog_next_report <= secs:
+                self._backlog_next_report *= 2
+        elif (self._backlog_next_report > self._BACKLOG_FIRST_S
+              and secs < self._BACKLOG_CLEAR_S):
+            print(f"[send] caught up - the backlog peaked at "
+                  f"{self._backlog_episode_peak:.1f}s, nothing was lost")
+            self._report_link("ok", secs)
+            self._backlog_next_report = self._BACKLOG_FIRST_S
+            self._backlog_episode_peak = 0.0
+
+    def _report_link(self, state: str, secs: float) -> None:
+        """Tell the server how far behind this widget's audio is (old servers ignore
+        an unknown command). Sent ahead of the backlog, or it would arrive late."""
+        if self._sendq is None:
+            return
+        self._sendq.put_urgent(_Q_CONTROL, json.dumps({"op": "status", "data": {
+            "command": "link_status",
+            "client_id": self.client_id,
+            "session_id": self.session_id,
+            "state": state,
+            "backlog_seconds": round(secs, 1),
+            "peak_seconds": round(self._backlog_episode_peak, 1),
+        }}).encode("utf-8"))
+
+    def flush(self, timeout: float) -> bool:
+        """Wait up to `timeout` seconds for everything queued to be sent (used when
+        the widget quits mid-call, so stop/session_end still go out). True if done."""
+        if not self._queueing():
+            return True
+        deadline = time.monotonic() + max(0.0, timeout)
+        while time.monotonic() < deadline:
+            if self._sendq.empty() and self._sendq.idle():
+                return True
+            time.sleep(0.02)
+        return self._sendq.empty() and self._sendq.idle()
 
     def _receiver_loop(self, ws=None):
         """Drain inbound frames: keep pings answered AND dispatch JSON messages.
@@ -1913,23 +2112,37 @@ class AudioStreamer:
     def start_stream(self, stream_type: str, channels: int, sample_rate: int):
         if stream_type not in self._started_streams:
             self._started_streams.append(stream_type)
-        self._send_json({
+        try:
+            self._stream_rates[stream_type] = 2 * int(channels) * int(sample_rate)
+        except (TypeError, ValueError):
+            pass
+        data = {
             "command":     "start",
             "client_id":  self.client_id,
             "stream_type": stream_type,
             "channels":    channels,
             "sample_rate": sample_rate,
-        })
+        }
+        if self._queueing():
+            self._queue_control({"op": "json", "data": data})
+        else:
+            self._send_json(data)
 
     def send_audio(self, stream_type: str, audio_data: bytes):
-        """Send a raw PCM chunk with the binary framing the server expects.
+        """Hand over a raw PCM chunk with the binary framing the server expects.
 
-        If the socket is down the chunk is written to the local spool instead of
-        being discarded, and a reconnect is kicked off. Nothing is ever lost to a
-        dropped connection — the spool is replayed once the session resumes.
+        On a live call this only queues it - it never waits on the network, because
+        the capture thread calling it would lose the sound Windows cannot hold for
+        it (GF1). The sender thread delivers it in order. If the socket is down the
+        chunk is written to the local spool instead of being discarded, and a
+        reconnect is kicked off. Nothing is ever lost to a dropped connection — the
+        spool is replayed once the session resumes.
         """
         # PCI pause: drop the chunk while paused so card audio is never sent or
         # written. Both mic and speaker flow through here, so both pause together.
+        # Decided HERE, when the sound is captured - not when it is sent - so audio
+        # queued behind a slow connection is never caught by a pause that came
+        # after it, and audio captured during a pause never enters the queue.
         if self._pause_event.is_set():
             return
         # Resume already timed out: the server finalized this call, so nothing more can
@@ -1939,6 +2152,15 @@ class AudioStreamer:
             return
         type_bytes = stream_type.encode("utf-8")
         packet = struct.pack("I", len(type_bytes)) + type_bytes + audio_data
+        if self._queueing():
+            self._sendq.put(_Q_AUDIO, packet)
+            return
+        self._deliver(packet)
+
+    def _deliver(self, packet: bytes):
+        """Put one framed chunk on the socket, or in the spool while it is down."""
+        if self._gave_up.is_set():
+            return
 
         # Already buffering -> straight to disk, preserving order. The check and the
         # write happen under the SAME lock the drain uses to flip back to live, so a
@@ -2213,24 +2435,45 @@ class AudioStreamer:
         audio has landed, close the call down properly so the server finalizes a
         COMPLETE recording instead of timing the session out as dropped."""
         try:
+            # Directly, never through the send queue: by now the call is over and its
+            # sender thread may already have finished.
             for stream_type in list(self._started_streams):
-                self.stop_stream(stream_type)
-            self.end_session()
+                self._send_json({
+                    "command":     "stop",
+                    "client_id":  self.client_id,
+                    "stream_type": stream_type,
+                })
+            self._end_session_now()
             print("[buffer] deferred session_end delivered after resume")
         except Exception as exc:
             print(f"[buffer] deferred session_end failed: {exc}")
 
     def stop_stream(self, stream_type: str):
-        self._send_json({
+        data = {
             "command":     "stop",
             "client_id":  self.client_id,
             "stream_type": stream_type,
-        })
+        }
+        # Behind every chunk already queued: the server closes the stream's WAV on
+        # 'stop', so audio arriving after it would be thrown away.
+        if self._queueing():
+            self._queue_control({"op": "json", "data": data})
+        else:
+            self._send_json(data)
 
     def end_session(self):
         """Send session_end but KEEP the socket open — the Phase 4 server
         sends session_summary / upload_complete after this. Call close()
-        once those arrive (or on timeout)."""
+        once those arrive (or on timeout).
+
+        On a live call it is queued behind the call's audio and returns at once
+        (the window never waits on the network); the sender delivers it in order."""
+        if self._queueing():
+            self._queue_control({"op": "end_session"})
+            return
+        self._end_session_now()
+
+    def _end_session_now(self):
         if self._degraded.is_set():
             # The call is over but we're still offline. Record that NOW: the resume
             # thread may reconnect before close()'s 15s timer runs, and without this
@@ -2252,7 +2495,21 @@ class AudioStreamer:
         (as a daemon) so it can finish delivering this call's audio — closing here
         would throw away recording we already captured. It stops itself on success
         or at its own deadline.
+
+        On a live call the close is queued BEHIND everything still waiting to be
+        sent, so a slow connection finishes delivering the call first (GF1).
         """
+        if self._queueing() and threading.current_thread() is not self._sender_thread:
+            if not self._close_queued:
+                self._close_queued = True
+                self._queue_control({"op": "close"})
+            return
+        self._close_now()
+
+    def _close_now(self):
+        if self._backlog_call_peak >= self._BACKLOG_FIRST_S:
+            print(f"[send] this call's audio ran up to {self._backlog_call_peak:.1f}s "
+                  f"behind on a slow connection; everything queued has been handed over")
         if self._degraded.is_set():
             print("[buffer] call closed while offline — resume still in progress")
             self._final_stop.set()
@@ -2267,6 +2524,8 @@ class AudioStreamer:
             self._receiver_thread.join(timeout=3)
             self._receiver_thread = None
         self._spool_discard()
+        if self._sendq is not None:
+            self._sendq.discard()
 
     def _send_json(self, data: dict):
         """Send a control frame. While the socket is down these are dropped on
@@ -8598,6 +8857,16 @@ class MainWindow(QMainWindow):
     def _quit(self):
         if self._recording:
             self._stop_recording()
+            # stop + session_end are queued behind the call's audio now (GF1); give
+            # them a few seconds to go out before the process ends, as the old direct
+            # send did.
+            s = getattr(self, "_closing_streamer", None)
+            flush = getattr(s, "flush", None)
+            if callable(flush):
+                try:
+                    flush(5.0)
+                except Exception:
+                    pass
         self._stop_control_connection()
         _end_pyaudio(self._pa)
         QApplication.quit()

@@ -283,23 +283,39 @@ class FakeDevice:
     nominal rate; while not, it accrues nothing at all and get_read_available() returns
     0 forever, which is exactly what a WASAPI loopback does once the softphone stops
     rendering. Simulated time advances on each poll, so the test runs instantly.
+
+    It holds only as much as Windows does. Measured 5 Nov 2026 on a real mic and a
+    real loopback opened with the widget's own settings (frames_per_buffer=4096):
+    Windows kept 0.174-0.185 s at 48 kHz - two chunks and a little - and threw the
+    rest away, whatever the stall. This fake used to keep EVERYTHING, which is how
+    `test_our_own_slow_send_never_fabricates_time` passed while the real widget lost
+    minutes of a client's side to slow sends (Bilal, 4 Nov 2026).
     """
 
     TICK = 0.01
+    CAPACITY_FRAMES = 2 * main.CHUNK + 512
 
     def __init__(self, clock, rate, channels, script, stop_event):
         self.clock, self.rate, self.channels = clock, rate, channels
         self.script, self.stop_event = list(script), stop_event
         self.avail = 0.0
+        self.lost_frames = 0.0
         self.seg = 0
         self.left = self.script[0][0] if self.script else 0.0
+
+    def _accrue(self, frames):
+        room = self.CAPACITY_FRAMES - self.avail
+        if frames > room:
+            self.lost_frames += frames - room
+            frames = room
+        self.avail += frames
 
     def _tick(self):
         dt = self.TICK
         while dt > 1e-12 and self.seg < len(self.script):
             take = min(dt, self.left)
             if self.script[self.seg][1]:
-                self.avail += take * self.rate
+                self._accrue(take * self.rate)
             self.clock.advance(take)
             self.left -= take
             dt -= take
@@ -311,9 +327,10 @@ class FakeDevice:
             self.stop_event.set()
 
     def stall_but_keep_producing(self, seconds):
-        """OUR stall: wall time passes while the device happily buffers through it."""
+        """OUR stall: wall time passes while the device keeps producing - and, past
+        what Windows holds for us, that sound is gone."""
         self.clock.advance(seconds)
-        self.avail += seconds * self.rate
+        self._accrue(seconds * self.rate)
 
     def get_read_available(self):
         self._tick()
@@ -454,19 +471,80 @@ def test_silence_is_inserted_before_the_chunk_that_ends_the_gap(monkeypatch):
     assert "audio" in kinds[first_fill:], "the resuming chunk must follow the silence"
 
 
-def test_our_own_slow_send_never_fabricates_time(monkeypatch):
-    """THE safety property. The socket stalls 5s on the 3rd send while the device keeps
-    producing. The backlog is sitting in the stream, so get_read_available() hands it
-    straight back and the fill branch is never reached. Inserting silence here would
-    invent time and push the channel LATE — the very fault being fixed."""
+def test_a_held_up_capture_loses_what_windows_cannot_hold_and_says_so(monkeypatch):
+    """Replaces `test_our_own_slow_send_never_fabricates_time`, which assumed the
+    device holds a stall's sound for us. Windows holds ~0.175 s. So when THIS thread
+    is held up 5 s (it used to be a slow socket send; now only a busy PC can do it,
+    because sends are queued), ~4.8 s of sound is gone for good. The honest result:
+    the channel stays on the clock (silence stands in for what was lost), the gap is
+    put down to the widget being held up - never to the device - and is counted."""
     def hook(dev, n):
         if n == 3:
             dev.stall_but_keep_producing(5.0)
 
     t, sent, audio_s, elapsed, _ = _run_capture(
         monkeypatch, [(20.0, True)], send_hook=hook)
-    assert t.gaps_filled == 0, "silence was invented for a stall that was ours"
+    assert audio_s == pytest.approx(elapsed, abs=0.3), "the channel left the clock"
+    assert t.gaps_filled == 1
+    assert t.seconds_lost_held_up == pytest.approx(t.seconds_filled)
+    assert 4.5 < t.seconds_lost_held_up < 5.0
+    assert t.held_up_seconds >= 5.0
+
+
+def test_a_held_up_gap_is_never_blamed_on_the_device(monkeypatch, capsys):
+    """Bilal searched the logs for 'device stopped producing' and found 3,878 of them
+    on a working headset. A gap that was ours must not say that."""
+    def hook(dev, n):
+        if n == 3:
+            dev.stall_but_keep_producing(2.0)
+
+    _run_capture(monkeypatch, [(6.0, True)], send_hook=hook)
+    out = capsys.readouterr().out
+    assert "the widget was held up" in out
+    assert "the device is fine" in out
+    assert "device stopped producing" not in out
+    assert "capture caught up after" in out
+    assert "of that was the widget held up by a busy PC, not the device" in out
+
+
+def test_a_dead_device_is_still_called_a_dead_device(monkeypatch, capsys):
+    """The opposite case must not move: a loopback that stops producing while the
+    loop is running on time is the device, and is still reported as one."""
+    t, _, _, _, _ = _run_capture(monkeypatch, [(2.0, True), (4.0, False), (2.0, True)])
+    out = capsys.readouterr().out
+    assert t.gaps_filled >= 1
+    assert t.seconds_lost_held_up == 0.0
+    assert "device stopped producing" in out
+    assert "the widget was held up" not in out
+
+
+def test_a_hold_up_inside_what_windows_holds_costs_nothing(monkeypatch, capsys):
+    """Held up 0.17 s - noticed as a hold-up (over HELD_UP_S) but still inside what
+    Windows keeps for us - loses nothing, fills nothing, and must not colour a REAL
+    device gap that comes later."""
+    def hook(dev, n):
+        if n == 3:
+            dev.stall_but_keep_producing(0.17)
+
+    t, _, audio_s, elapsed, _ = _run_capture(
+        monkeypatch, [(3.0, True), (3.0, False), (2.0, True)], send_hook=hook)
+    out = capsys.readouterr().out
     assert audio_s == pytest.approx(elapsed, abs=0.3)
+    assert t.held_up_seconds >= 0.17, "the hold-up was not even noticed"
+    assert t.seconds_lost_held_up == 0.0
+    assert "device stopped producing" in out
+    assert "the widget was held up" not in out
+
+
+def test_the_device_holds_only_what_windows_holds():
+    """Pins the fake to the measurement, so no test can quietly assume a device that
+    buffers a stall for us again."""
+    clock, stop = Clock(), main.threading.Event()
+    dev = FakeDevice(clock, 48000, 2, [(60.0, True)], stop)
+    dev.stall_but_keep_producing(5.0)
+    assert dev.get_read_available() <= 2 * main.CHUNK + 512
+    assert dev.avail / 48000 == pytest.approx(0.181, abs=0.01)
+    assert dev.lost_frames / 48000 > 4.7
 
 
 def test_mono_and_odd_rate_devices_are_handled(monkeypatch):

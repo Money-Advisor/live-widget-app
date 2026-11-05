@@ -304,6 +304,26 @@ Nothing currently flags a pause that is never resumed. Until it does, the check 
 manual: if a recording ends abruptly and the session stayed open, ask whether the
 agent paused.
 
+### `[gapfill] … device stopped producing` many times, on a working headset
+
+**Before 2.9.68 (GF1) this was almost always a slow network, not the device (4 Nov 2026).** The
+capture threads used to send to the server themselves; Windows keeps only ~0.175 s of
+sound for them, so a slow send lost the sound and the gap-fill pasted exact silence
+under this message. Signs: hundreds of gaps a call, the mic's many and short (the agent
+glitches), the speaker's fewer and long (the client vanishes), both channels at the
+same moments, `[buffer] connection lost (send failed: WebSocketTimeoutException)` now
+and then, X-Dial's own recording complete, and other agents broken in the same time
+windows. Fix: widget 2.9.68 or later.
+
+From 2.9.68 on, a slow network shows as `[send] the connection to the server is slow: Ns
+of audio waiting to be sent - it is kept and sent in order, nothing is lost` and
+`[send] caught up …` - the recording is complete, only late. The server's log has the
+same as `[link] …` lines. A gap that the widget itself caused (a PC too busy to run the
+capture thread) now reads `the widget was held up Ns (busy PC) … the device is fine`;
+`device stopped producing` is left for a device that really went quiet. A client side
+silent for the WHOLE call with the client heard faintly on the agent's side is still
+the wrong speaker device (above).
+
 ### One sentence is clipped but the other side is intact
 
 Not a pause — a pause removes **both** sides. Either a small microphone-stream drop

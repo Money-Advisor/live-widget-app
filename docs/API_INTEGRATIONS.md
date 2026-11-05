@@ -151,7 +151,14 @@ Touching a widget from the reader thread would crash the process.
 | --- | --- | --- |
 | `WS_CONNECT_TIMEOUT` | 10s | Opening the socket |
 | `WS_HANDSHAKE_TIMEOUT` | 30s | Waiting for `session_start` to be accepted. This is why the server's database retry ladder is sized to finish inside it. |
-| `WS_STREAM_TIMEOUT` | 5s | Per-send |
+| `WS_STREAM_TIMEOUT` | 5s | Per-send, waited out by the sender thread only (2.9.68) - the capture threads only queue |
+
+A live call's frames go out through one ordered queue and one sender thread, so a slow
+link delays the recording instead of losing it (see ARCHITECTURE "The capture never
+waits on the network"). While audio is waiting the widget sends the server an optional
+`link_status` frame - `{"command": "link_status", "client_id", "session_id",
+"state": "slow"|"ok", "backlog_seconds", "peak_seconds"}` - which the server logs as
+`[link] …`; an older server ignores it.
 
 If the socket dies mid-call the widget spools audio locally and replays it on
 reconnect, so the recording has no gap. Its own resume deadline is **150 seconds**

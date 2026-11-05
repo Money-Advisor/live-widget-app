@@ -181,8 +181,9 @@ mirror image of the recording server, which is asyncio-only.
 main thread (Qt event loop)
 ├── every widget, every paint, every UI state change
 ├── ControlConnection      (QThread)  persistent socket to the recording server
-├── AudioStreamer          (thread)   capture + send, per call
-├── RecordingThread        (QThread)  the recording lifecycle
+├── AudioStreamer          (threads)  per call: ws-receiver, and ws-sender, the ONE
+│                                     thread that sends a live call's frames (GF1)
+├── RecordingThread        (QThread)  one per device: reads the sound, queues it
 ├── LoginWorker            (QThread)  POST /auth/login-widget
 ├── RefreshWorker          (QThread)  token renewal
 ├── ValidateWorker         (QThread)  token check on launch
@@ -229,6 +230,52 @@ first-run gate so an agent cannot start recording before choosing a microphone.
 not the device the call actually plays through — a swapped headset leaves the old
 name selected — the widget records an idle output and channel 2 comes out silent.
 That is the single most common audio fault reported from the field.
+
+### The capture never waits on the network (2.9.68, GF1, Nov 2026)
+
+**Windows holds only about 0.175 s of captured sound for the widget** (measured 5 Nov
+2026 on a mic and a speaker loopback opened with the widget's own settings - two
+chunks and a little, whatever the stall). A capture thread that is not back reading
+within that time loses the rest for good.
+
+Until GF1 the capture threads sent each chunk to the server themselves, so a slow
+network did exactly that: the send took longer than 0.175 s, Windows threw the sound
+away, and the gap-fill (below) pasted exact silence, logging `device stopped
+producing` on a working headset. On 4 Nov 2026 SFM agents lost up to the whole of a
+client's side for minutes at a time, several agents in the same windows. Reproduced on
+a real mic and loopback against the real recording server through a slowed link: 43%
+of the mic and 42% of the speaker became silence; with GF1, 0%.
+
+Now a live call has **one ordered send queue** (`send_queue.py`) and **one sender
+thread** (`ws-sender`, started by `connect()`):
+
+- `send_audio` only queues a chunk - it never touches the network - so a slow link
+  delays the recording and never shortens it.
+- Order on the wire is exactly the order of capture. `start`, `stop`,
+  `session_end` and the 15-second `close()` go through the same queue, so they wait
+  behind the audio: the server closes a stream's WAV on `stop`, and audio overtaken by
+  it would be thrown away. Stopping a call never waits on the network either.
+- **PCI pause is decided when the sound is captured**, not when it is sent: audio said
+  before the pause still goes; audio captured during it never enters the queue.
+- Past 16 MB (about a minute of a call) the backlog moves to
+  `<spool>/<session>.queue.spool` and comes back in order; the 7-day spool purge covers
+  the file. If the disk refuses a write the frame stays in memory.
+- When 2 s of audio is waiting the log says `[send] the connection to the server is
+  slow: Ns of audio waiting …` (again at each doubling) and `[send] caught up …` after;
+  the server is told with a `link_status` frame sent ahead of the backlog (older
+  servers ignore it).
+- If the link dies the existing buffering and resume take over (below), unchanged. A
+  quit mid-call waits up to 5 s for the queued end of the call to go out.
+
+A streamer that never connected (the unit tests) still sends synchronously, as before.
+
+**The gap-fill keeps each channel on the wall clock.** When a device has produced
+nothing for longer than a chunk plus 0.25 s, silence is inserted so the two WAVs stay
+the same length (the merge lines them up at sample 0). It now says whose gap it was:
+`device stopped producing` when the device went quiet while the loop ran on time; `the
+widget was held up Ns (busy PC) … the device is fine` when the capture thread itself
+came round late (`HELD_UP_S`, 0.15 s) - with the send off this thread, only a PC too
+busy to run it can do that.
 
 ## The WebSocket protocol
 
@@ -301,7 +348,8 @@ call's start, so this does not arise; it is noted here in case that ever changes
 
 Timeouts: `WS_CONNECT_TIMEOUT` 10s, `WS_HANDSHAKE_TIMEOUT` 30s,
 `WS_STREAM_TIMEOUT` 5s. The 30-second handshake deadline is why the recording
-server's database retry ladder is sized to finish well inside it.
+server's database retry ladder is sized to finish well inside it. Since GF1 only the
+sender thread waits out `WS_STREAM_TIMEOUT`; after it the link is buffered and resumed.
 
 ## Configuration and state
 
@@ -378,7 +426,9 @@ and could therefore still be minimised away.
 Pause is implemented at the single `send_audio` choke point, where the chunk is
 simply dropped. That means there is exactly one place in the code where audio can be
 suppressed, so the guarantee is easy to verify — and both channels pause together by
-construction rather than by coordination.
+construction rather than by coordination. Since GF1 that check happens as the chunk is
+handed over by the capture, before the send queue, so a chunk waiting behind a slow
+connection is judged by when it was captured.
 
 The consequence downstream is that a paused stretch is **absent** from the recording
 rather than silent, so the audio jumps from before the pause to after it. QA
